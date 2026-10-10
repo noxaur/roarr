@@ -11,8 +11,15 @@ import (
 type Prefs struct {
 	// Resolutions in order of preference. Anything not listed is rejected.
 	Resolutions []int `json:"resolutions"`
-	// PreferHEVC favours x265/HEVC (smaller files at the same quality).
-	PreferHEVC bool `json:"preferHevc"`
+	// VideoCodecs in order of preference (av1, x265, x264). The first
+	// gets the biggest bonus; codecs not listed get none.
+	VideoCodecs []string `json:"videoCodecs"`
+	// AudioCodecs in order of preference, as named by Info.Audio
+	// (Opus, AAC, DDP, DD, DTS, DTS-HD MA, TrueHD, Atmos, FLAC).
+	AudioCodecs []string `json:"audioCodecs"`
+	// Size is how file size weighs in among allowed releases:
+	// "smaller", "balanced", "ignore" or "larger".
+	Size string `json:"size"`
 	// AllowRemux keeps full-disc remuxes in play (they are huge).
 	AllowRemux bool `json:"allowRemux"`
 	// AllowHDR keeps HDR/DV releases in play.
@@ -35,7 +42,9 @@ type Prefs struct {
 func DefaultPrefs() Prefs {
 	return Prefs{
 		Resolutions:  []int{1080, 2160, 720},
-		PreferHEVC:   false,
+		VideoCodecs:  []string{"av1", "x265", "x264"},
+		AudioCodecs:  []string{"Opus", "DDP", "AAC"},
+		Size:         "balanced",
 		AllowRemux:   false,
 		AllowHDR:     true,
 		MaxGBPerHour: 12,
@@ -119,17 +128,13 @@ func Score(c Candidate, p Prefs, runtimeMin float64) Verdict {
 		add(3, "DVD")
 	}
 
-	switch i.Codec {
-	case "x265":
-		if p.PreferHEVC {
-			add(10, "HEVC")
-		}
-	case "av1":
-		if p.PreferHEVC {
-			add(6, "AV1")
-		}
-	case "xvid":
+	if i.Codec == "xvid" {
 		add(-15, "XviD")
+	} else if pts := rankBonus(p.VideoCodecs, i.Codec, 12, 4); pts > 0 {
+		add(pts, i.Codec)
+	}
+	if pts := rankBonus(p.AudioCodecs, i.Audio, 8, 3); pts > 0 {
+		add(pts, i.Audio)
 	}
 	if i.HDR != "" && !p.AllowHDR {
 		reject("HDR")
@@ -167,9 +172,16 @@ func Score(c Candidate, p Prefs, runtimeMin float64) Verdict {
 			reject(fmt.Sprintf("suspiciously small (%.2f GB/h)", gbh))
 		case p.MaxGBPerHour > 0 && gbh > p.MaxGBPerHour:
 			reject(fmt.Sprintf("too large (%.1f GB/h)", gbh))
-		case p.MaxGBPerHour > 0:
-			// Mild preference for leaner files inside the allowed band.
-			add(-6*gbh/p.MaxGBPerHour, "size")
+		default:
+			// Lean towards smaller or larger files inside the allowed band,
+			// measured against the cap (or 12 GB/h when there is none).
+			ref := p.MaxGBPerHour
+			if ref <= 0 {
+				ref = 12
+			}
+			if w := sizeWeight(p.Size); w != 0 {
+				add(w*math.Min(gbh/ref, 1.5), "size")
+			}
 		}
 	}
 
@@ -194,4 +206,31 @@ func Score(c Candidate, p Prefs, runtimeMin float64) Verdict {
 	}
 	v.Score = math.Round(v.Score*10) / 10
 	return v
+}
+
+// rankBonus gives top points to the first entry of prefs, step fewer for
+// each rank after it, and nothing for values not listed.
+func rankBonus(prefs []string, v string, top, step float64) float64 {
+	if v == "" {
+		return 0
+	}
+	for idx, x := range prefs {
+		if strings.EqualFold(x, v) {
+			return math.Max(top-float64(idx)*step, 1)
+		}
+	}
+	return 0
+}
+
+// sizeWeight is the score swing between an empty file and one at the cap.
+func sizeWeight(s string) float64 {
+	switch s {
+	case "smaller":
+		return -15
+	case "ignore":
+		return 0
+	case "larger":
+		return 8
+	}
+	return -6 // balanced
 }

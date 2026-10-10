@@ -4,6 +4,16 @@ import { useToast } from "../components/Toasts";
 import { RefreshIcon } from "../components/Icons";
 import { cls } from "../lib/format";
 
+const VIDEO_CODECS = ["av1", "x265", "x264"];
+const AUDIO_CODECS = ["Opus", "AAC", "DDP", "DD", "DTS", "DTS-HD MA", "TrueHD", "Atmos", "FLAC"];
+const SIZES = [
+  ["smaller", "Smaller", "Strongly favour compact files"],
+  ["balanced", "Balanced", "Mildly favour compact files"],
+  ["ignore", "Doesn't matter", "Size only matters for the max-size limit"],
+  ["larger", "Larger", "Favour higher bitrates, up to the max size"],
+] as const;
+const codecLabel = (c: string) => ({ av1: "AV1", x265: "HEVC / x265", x264: "H.264 / x264" })[c] ?? c;
+
 const SERVICES: { key: keyof Settings & ("sonarr" | "radarr" | "prowlarr" | "seerr" | "jellyfin" | "qbittorrent"); name: string; env: string; hint: string; user?: boolean }[] = [
   { key: "prowlarr", name: "Prowlarr", env: "PROWLARR", hint: "Required. All searches go through Prowlarr's indexers." },
   { key: "sonarr", name: "Sonarr", env: "SONARR", hint: "Shows. Found automatically from Prowlarr's app links if left empty." },
@@ -121,22 +131,23 @@ export function SettingsPage() {
       <div className="section-title">Picking releases</div>
       <div className="panel panel-body form-grid">
         <label>Resolutions</label>
-        <div className="row wrap">
-          {p.resolutions.map((r, i) => (
-            <span key={r} className="chip on" title="click to remove">
-              <span className="mono">{i + 1}.</span> {r === 2160 ? "4K" : `${r}p`}
-              <button className="btn ghost xs" style={{ height: 16, padding: 0 }} onClick={() => update((x) => (x.prefs.resolutions = x.prefs.resolutions.filter((y) => y !== r)))}>
-                ×
-              </button>
-            </span>
+        <Ranked
+          value={p.resolutions}
+          options={resOrder}
+          label={(r) => (r === 2160 ? "4K" : `${r}p`)}
+          onChange={(v) => update((x) => (x.prefs.resolutions = v))}
+        />
+        <label>Video codecs</label>
+        <Ranked value={p.videoCodecs ?? []} options={VIDEO_CODECS} label={codecLabel} onChange={(v) => update((x) => (x.prefs.videoCodecs = v))} />
+        <label>Audio codecs</label>
+        <Ranked value={p.audioCodecs ?? []} options={AUDIO_CODECS} label={(c) => c} onChange={(v) => update((x) => (x.prefs.audioCodecs = v))} />
+        <label>File size</label>
+        <div className="seg">
+          {SIZES.map(([k, name, hint]) => (
+            <button key={k} title={hint} className={cls((p.size || "balanced") === k && "on")} onClick={() => update((x) => (x.prefs.size = k))}>
+              {name}
+            </button>
           ))}
-          {resOrder
-            .filter((r) => !p.resolutions.includes(r))
-            .map((r) => (
-              <button key={r} className="chip" onClick={() => update((x) => x.prefs.resolutions.push(r))}>
-                + {r === 2160 ? "4K" : `${r}p`}
-              </button>
-            ))}
         </div>
         <label>Audio language</label>
         <input className="field" value={p.language} onChange={(e) => update((x) => (x.prefs.language = e.target.value))} placeholder="English" />
@@ -149,9 +160,6 @@ export function SettingsPage() {
         <input className="field" style={{ width: 90 }} type="number" min={0} value={p.minSeeders} onChange={(e) => update((x) => (x.prefs.minSeeders = +e.target.value))} />
         <label>Prefer</label>
         <div className="row wrap" style={{ gap: 16 }}>
-          <label className="check">
-            <input type="checkbox" checked={p.preferHevc} onChange={(e) => update((x) => (x.prefs.preferHevc = e.target.checked))} /> HEVC / x265
-          </label>
           <label className="check">
             <input type="checkbox" checked={p.preferDualAudio} onChange={(e) => update((x) => (x.prefs.preferDualAudio = e.target.checked))} /> Dual audio
           </label>
@@ -237,6 +245,30 @@ export function SettingsPage() {
           {saving ? <span className="spinner" /> : null} Save
         </button>
       </div>
+    </div>
+  );
+}
+
+// Ranked is an ordered preference list: chips in rank order (× removes),
+// followed by the unused options (+ appends at the lowest rank).
+function Ranked<T extends string | number>({ value, options, label, onChange }: { value: T[]; options: readonly T[]; label: (v: T) => string; onChange: (v: T[]) => void }) {
+  return (
+    <div className="row wrap">
+      {value.map((v, i) => (
+        <span key={v} className="chip on" title="click to remove">
+          <span className="mono">{i + 1}.</span> {label(v)}
+          <button className="btn ghost xs" style={{ height: 16, padding: 0 }} onClick={() => onChange(value.filter((y) => y !== v))}>
+            ×
+          </button>
+        </span>
+      ))}
+      {options
+        .filter((v) => !value.includes(v))
+        .map((v) => (
+          <button key={v} className="chip" onClick={() => onChange([...value, v])}>
+            + {label(v)}
+          </button>
+        ))}
     </div>
   );
 }
