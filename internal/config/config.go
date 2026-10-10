@@ -25,9 +25,6 @@ type Service struct {
 
 // Behaviour holds workflow switches.
 type Behaviour struct {
-	// DefaultMode is "manual" (show releases, human picks) or "auto"
-	// (roarr picks and grabs the best plan).
-	DefaultMode string `json:"defaultMode"`
 	// WatchFirst downloads packs episode-by-episode in order and imports
 	// each episode the moment it completes (qBittorrent only).
 	WatchFirst bool `json:"watchFirst"`
@@ -66,7 +63,6 @@ func Defaults() Settings {
 		JellyfinAdminOnly: true,
 		Prefs:             release.DefaultPrefs(),
 		Behaviour: Behaviour{
-			DefaultMode:    "manual",
 			WatchFirst:     true,
 			Prefetch:       true,
 			IndexerTimeout: 30,
@@ -96,7 +92,6 @@ var envSpec = []struct {
 	{"AUTH_MODE", func(s *Settings, v string) { s.AuthMode = strings.ToLower(v) }},
 	{"AUTH_PASSWORD", func(s *Settings, v string) { s.AuthPassword = v }},
 	{"JELLYFIN_ADMIN_ONLY", func(s *Settings, v string) { s.JellyfinAdminOnly = truthy(v) }},
-	{"DEFAULT_MODE", func(s *Settings, v string) { s.Behaviour.DefaultMode = strings.ToLower(v) }},
 	{"WATCH_FIRST", func(s *Settings, v string) { s.Behaviour.WatchFirst = truthy(v) }},
 	{"PREFETCH", func(s *Settings, v string) { s.Behaviour.Prefetch = truthy(v) }},
 	{"INDEXER_TIMEOUT", func(s *Settings, v string) { s.Behaviour.IndexerTimeout = atoi(v, 30) }},

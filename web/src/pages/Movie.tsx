@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type MovieDetail, type Release } from "../lib/api";
-import { useSearch } from "../lib/useSearch";
-import { useRouter } from "../lib/router";
-import { useStore } from "../lib/store";
-import { Releases, type GrabOpts } from "../components/Releases";
-import { PosterImg } from "../components/Poster";
-import { useToast } from "../components/Toasts";
-import { BoltIcon, CheckIcon } from "../components/Icons";
-import { bytes, cls } from "../lib/format";
-import { TitleSkeleton } from "./Series";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check } from "lucide-react";
+import { api, type MovieDetail, type Release } from "@/lib/api";
+import { autoGet } from "@/lib/actions";
+import { bytes } from "@/lib/format";
+import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
+import { useRouter } from "@/lib/router";
+import { useStore } from "@/lib/store";
+import { useSearch } from "@/lib/useSearch";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label, Notice } from "@/components/kit";
+import { ReleaseSheet } from "@/components/ReleaseSheet";
+import { Crumbs, GetCard, PosterColumn, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
 
 export function MoviePage({ id, tmdb }: { id?: number; tmdb?: number }) {
   const [d, setD] = useState<MovieDetail | null>(null);
@@ -23,18 +27,18 @@ export function MoviePage({ id, tmdb }: { id?: number; tmdb?: number }) {
   useEffect(() => {
     load();
   }, [load]);
-  if (error) return <div className="notice bad">{error}</div>;
+  if (error) return <Notice tone="bad">{error}</Notice>;
   if (!d) return <TitleSkeleton />;
   return <MovieView d={d} reload={load} />;
 }
 
+type Scope = "this" | "missing" | "all" | "custom";
+
 function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
-  const { mode, setMode, reloadActivity, reloadLibrary } = useStore();
-  const { navigate } = useRouter();
-  const toast = useToast();
-  const [sel, setSel] = useState<Set<number>>(() => new Set([d.tmdbId!]));
-  const [busy, setBusy] = useState(false);
+  const { reloadActivity, reloadLibrary } = useStore();
+  const { navigate, search: params } = useRouter();
   const parts = d.collection?.movies ?? [];
+  const inCollection = parts.length > 1;
   const titles = useMemo(() => {
     const m = new Map<number, string>([[d.tmdbId!, d.title]]);
     for (const p of parts) m.set(p.tmdbId, p.title);
@@ -42,161 +46,184 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
   }, [d, parts]);
   const missingParts = parts.filter((p) => !p.hasFile).map((p) => p.tmdbId);
 
-  const selArr = useMemo(() => [...sel].sort((a, b) => a - b), [sel]);
+  const [scope, setScope] = useState<Scope>("this");
+  const [ticked, setTicked] = useState<Set<number>>(new Set());
+  const [sheet, setSheet] = useState(params.get("pick") === "1");
+  const [busy, setBusy] = useState(false);
+  const [gotFor, setGotFor] = useState<string | null>(null);
+
+  const selArr = useMemo(() => {
+    const ids = scope === "this" ? [d.tmdbId!] : scope === "missing" ? missingParts : scope === "all" ? parts.map((p) => p.tmdbId) : [...ticked];
+    return [...ids].sort((a, b) => a - b);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, ticked, d.tmdbId, parts.length, missingParts.join(",")]);
+  const sel = useMemo(() => new Set(selArr), [selArr]);
+  const selKey = selArr.join(",");
+
   const streams = useMemo(() => selArr.map((t) => ({ kind: "movie", tmdb: String(t) })), [selArr]);
   const search = useSearch(`movie:${d.tmdbId}`, streams);
   const relevant = useCallback((r: Release) => r.movieTmdb !== undefined && sel.has(r.movieTmdb), [sel]);
+  const plan = useLivePlan(search, relevant, selArr, "movie");
 
-  const libraryIdFor = (tmdb: number) => (tmdb === d.tmdbId && d.inLibrary ? d.id : parts.find((p) => p.tmdbId === tmdb)?.libraryId ?? 0);
+  const libraryIdFor = (tmdb: number) => (tmdb === d.tmdbId && d.inLibrary ? d.id : (parts.find((p) => p.tmdbId === tmdb)?.libraryId ?? 0));
 
+  const later = useRef(0);
   const after = (movieId?: number, tmdb?: number) => {
     reloadActivity();
-    setTimeout(() => {
+    clearTimeout(later.current);
+    later.current = window.setTimeout(() => {
       reloadLibrary();
       if (!d.inLibrary && movieId && tmdb === d.tmdbId) navigate(`/movie/${movieId}`, { replace: true });
       else reload();
     }, 1200);
   };
 
-  const onGrab = async (r: Release, opts: GrabOpts) => {
-    const res = await api.grab({ kind: "movie", movieId: libraryIdFor(r.movieTmdb!), tmdbId: r.movieTmdb, release: r, force: opts.force });
-    if (res.ok) after(res.movieId, r.movieTmdb);
-    return res;
-  };
+  const grabber = useGrabber(
+    useCallback(
+      async (r: Release, opts: GrabOpts) => {
+        const res = await api.grab({ kind: "movie", movieId: libraryIdFor(r.movieTmdb!), tmdbId: r.movieTmdb, release: r, force: opts.force });
+        if (res.ok) after(res.movieId, r.movieTmdb);
+        return res;
+      },
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [d],
+    ),
+  );
 
-  const runAuto = async (ids: number[]) => {
+  const get = async () => {
     setBusy(true);
-    toast(`Finding the best release${ids.length > 1 ? "s" : ""}…`);
     try {
-      const res = await api.auto({ kind: "movie", movies: ids });
-      const ok = (res.grabs ?? []).filter((g) => g.result.ok);
-      toast(
-        <div>
-          <b>{res.message}</b>
-          {(res.grabs ?? []).map((g) => (
-            <div key={g.release} className="small muted ellipsis">
-              {g.result.ok ? "✓" : "✕"} {g.release}
-            </div>
-          ))}
-        </div>,
-        ok.length ? "ok" : "bad",
-      );
-      if (ok.length) after(ok[0].result.movieId, ids[0]);
-    } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), "bad");
+      if (search.done && plan.picks.length) {
+        if (await grabber.grabAll(plan.picks.map((x) => x.release))) setGotFor(selKey);
+      } else {
+        const res = await autoGet({ kind: "movie", movies: selArr }, selArr.length === 1 ? (titles.get(selArr[0]) ?? d.title) : `${selArr.length} movies`);
+        if (res) {
+          setGotFor(selKey);
+          after(res.grabs?.find((g) => g.result.ok)?.result.movieId, selArr[0]);
+        }
+      }
     } finally {
       setBusy(false);
     }
   };
 
-  const scopeLabel = sel.size === 1 ? titles.get(selArr[0]) ?? "Movie" : `${sel.size} movies from ${d.collection?.title ?? "the collection"}`;
+  const toggle = (tmdb: number) => {
+    const n = new Set(scope === "custom" ? ticked : sel);
+    if (n.has(tmdb)) n.delete(tmdb);
+    else n.add(tmdb);
+    setTicked(n);
+    setScope("custom");
+  };
+
+  const n = selArr.length;
+  const options: GetOption[] = [
+    { value: "this", label: d.title, sub: [d.year, d.hasFile ? "on disk" : d.queued ? "downloading" : "not on disk"].filter(Boolean).join(" · "), count: 1 },
+    ...(inCollection
+      ? [
+          { value: "missing", label: `Missing from the collection`, sub: d.collection?.title, count: missingParts.length, disabled: missingParts.length === 0 },
+          { value: "all", label: "Whole collection", sub: d.collection?.title, count: parts.length },
+          { value: "custom", label: "Movies I tick", sub: "in the list below", count: scope === "custom" ? ticked.size || "–" : "–" },
+        ]
+      : []),
+  ];
+  const cta =
+    n === 0 ? "Tick movies to get" : n === 1 ? (selArr[0] === d.tmdbId && d.hasFile ? "Get it again" : `Get ${titles.get(selArr[0]) === d.title ? "it" : titles.get(selArr[0])}`) : `Get ${n} movies`;
+  const sheetTitle = n === 1 ? (titles.get(selArr[0]) ?? d.title) : `${n} movies from ${d.collection?.title ?? "the collection"}`;
 
   return (
     <>
-      <div className="hero">
-        {d.fanart && <div className="backdrop" style={{ backgroundImage: `url(${d.fanart})` }} />}
-        <div className="hero-inner">
-          <div className="poster">
-            <PosterImg src={d.poster} title={d.title} />
-          </div>
-          <div className="grow">
-            <div className="small muted">{[d.year, d.network, d.runtime ? `${d.runtime} min` : null, d.genres?.slice(0, 3).join(", ")].filter(Boolean).join(" · ")}</div>
-            <h1>{d.title}</h1>
-            {d.overview && <p className="overview">{d.overview}</p>}
-            <div className="row wrap" style={{ marginTop: 12 }}>
-              {d.hasFile ? (
-                <span className="tag good">On disk{d.sizeOnDisk ? ` · ${bytes(d.sizeOnDisk)}` : ""}</span>
+      <Crumbs section="Movies" />
+      <TitleLayout
+        poster={<PosterColumn poster={d.poster} title={d.title} year={d.year} />}
+        head={
+          <TitleHead
+            poster={d.poster}
+            title={d.title}
+            year={d.year}
+            meta={["Movie", d.year, d.network, d.runtime && `${d.runtime} min`, d.genres?.slice(0, 3).join(", ")]}
+            overview={d.overview}
+            badges={
+              d.hasFile ? (
+                <Badge variant="ok">
+                  <Check /> On disk{d.sizeOnDisk ? ` · ${bytes(d.sizeOnDisk)}` : ""}
+                </Badge>
               ) : d.queued ? (
-                <span className="tag info">Downloading</span>
+                <Badge variant="ice">Downloading</Badge>
               ) : d.inLibrary ? (
-                <span className="tag warn">Missing</span>
+                <Badge variant="pink">Missing</Badge>
               ) : (
-                <span className="tag info">Not in Radarr yet. Added automatically when you grab.</span>
-              )}
-              <span className="spacer" />
-              <div className="seg">
-                <button className={cls(mode === "manual" && "on")} onClick={() => setMode("manual")}>
-                  Manual
-                </button>
-                <button className={cls(mode === "auto" && "on")} onClick={() => setMode("auto")}>
-                  <BoltIcon width={12} height={12} /> Auto
-                </button>
-              </div>
-              {mode === "auto" && (
-                <button className="btn primary sm" disabled={busy} onClick={() => runAuto(selArr)}>
-                  <BoltIcon width={12} height={12} /> Get {sel.size > 1 ? `${sel.size} movies` : "it"}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className={parts.length > 1 ? "title-layout" : ""} style={parts.length > 1 ? undefined : { marginTop: 18 }}>
-        {parts.length > 1 && (
-          <div className="seasons">
-            <div className="season">
-              <div className="season-head" style={{ cursor: "default" }}>
-                <b>{d.collection?.title}</b>
-                <span className="small muted mono">
-                  {parts.filter((p) => p.hasFile).length}/{parts.length}
-                </span>
-                <span className="spacer" />
-                <button className="btn xs" onClick={() => setSel(new Set(missingParts.length ? missingParts : parts.map((p) => p.tmdbId)))}>
-                  {missingParts.length ? "All missing" : "All"}
-                </button>
-              </div>
-              <div className="episodes">
-                {parts.map((p) => (
-                  <div
-                    key={p.tmdbId}
-                    className={cls("episode", sel.has(p.tmdbId) && "sel")}
-                    onClick={(ev) => {
-                      if (ev.shiftKey || ev.metaKey || ev.ctrlKey) {
-                        const n = new Set(sel);
-                        if (n.has(p.tmdbId)) n.delete(p.tmdbId);
-                        else n.add(p.tmdbId);
-                        setSel(n);
-                      } else setSel(new Set([p.tmdbId]));
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={sel.has(p.tmdbId)}
-                      onClick={(ev) => ev.stopPropagation()}
-                      onChange={() => {
-                        const n = new Set(sel);
-                        if (n.has(p.tmdbId)) n.delete(p.tmdbId);
-                        else n.add(p.tmdbId);
-                        setSel(n);
-                      }}
-                      style={{ accentColor: "var(--accent)" }}
-                    />
-                    <span className="num">{p.year ?? ""}</span>
-                    <span className="grow ellipsis">{p.title}</span>
-                    {p.hasFile ? <CheckIcon style={{ color: "var(--accent)" }} /> : p.inLibrary ? <span className="dot warn" title="missing" /> : <span className="tiny faint">not added</span>}
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="small faint" style={{ padding: "4px 2px" }}>
-              Shift-click to fetch several movies at once.
-            </div>
-          </div>
-        )}
-        <div className={parts.length > 1 ? "sticky" : ""}>
-          <Releases
-            state={search}
-            relevant={relevant}
-            wanted={selArr}
-            kind="movie"
-            scopeLabel={scopeLabel}
-            movieLabel={(t) => titles.get(t) ?? String(t)}
-            onGrab={onGrab}
-            watchFirstDefault={false}
+                <Badge variant="ice">Not in Radarr yet · added when you get it</Badge>
+              )
+            }
           />
-        </div>
-      </div>
+        }
+        aside={
+          <GetCard
+            options={options}
+            value={scope}
+            onValueChange={(v) => {
+              if (v === "custom" && scope !== "custom") setTicked(new Set(sel));
+              setScope(v as Scope);
+            }}
+            cta={cta}
+            onGet={get}
+            busy={busy}
+            done={gotFor === selKey}
+            disabled={n === 0}
+            state={search}
+            plan={plan}
+            wantedCount={n}
+            onChoose={() => setSheet(true)}
+          />
+        }
+        body={
+          inCollection && (
+            <section className="border-t border-dashed border-dash pt-5">
+              <div className="mb-3 flex items-baseline gap-3">
+                <Label>{d.collection?.title}</Label>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {parts.filter((p) => p.hasFile).length}/{parts.length} on disk
+                </span>
+              </div>
+              {parts.map((p) => {
+                const on = sel.has(p.tmdbId);
+                return (
+                  <label
+                    key={p.tmdbId}
+                    className={cn(
+                      "-mx-2.5 flex min-h-11 cursor-pointer items-center gap-3.5 rounded-lg px-2.5 transition-colors hover:bg-muted/60",
+                      on && "bg-lime/45 hover:bg-lime/55 dark:bg-lime/12 dark:hover:bg-lime/18",
+                    )}
+                  >
+                    <Checkbox checked={on} onCheckedChange={() => toggle(p.tmdbId)} aria-label={p.title} />
+                    <span className="w-10 shrink-0 font-mono text-xs text-muted-foreground">{p.year ?? ""}</span>
+                    <span className={cn("min-w-0 flex-1 truncate", p.tmdbId === d.tmdbId && "font-semibold")}>{p.title}</span>
+                    {p.hasFile ? (
+                      <span className="font-mono text-[11px] tracking-wide text-ok uppercase">✓ on disk</span>
+                    ) : p.inLibrary ? (
+                      <Badge variant="pink">Missing</Badge>
+                    ) : (
+                      <span className="font-mono text-[11px] text-muted-foreground uppercase">not added</span>
+                    )}
+                  </label>
+                );
+              })}
+            </section>
+          )
+        }
+      />
+      <ReleaseSheet
+        open={sheet}
+        onOpenChange={setSheet}
+        title={sheetTitle}
+        detail={n > 1 ? selArr.map((t) => titles.get(t)).join(" · ") : d.year ? String(d.year) : undefined}
+        kind="movie"
+        state={search}
+        plan={plan}
+        wanted={selArr}
+        grabber={grabber}
+        movieLabel={(t) => titles.get(t) ?? String(t)}
+      />
     </>
   );
 }

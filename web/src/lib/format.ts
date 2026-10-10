@@ -53,3 +53,16 @@ export function fold(s: string): string {
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }
+
+/** "5 hours ago" style relative time for ISO timestamps. */
+export function ago(iso: string): string {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!isFinite(s)) return "";
+  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  if (s < 60) return "just now";
+  if (s < 3600) return rtf.format(-Math.round(s / 60), "minute");
+  if (s < 86400) return rtf.format(-Math.round(s / 3600), "hour");
+  if (s < 86400 * 14) return rtf.format(-Math.round(s / 86400), "day");
+  if (s < 86400 * 60) return rtf.format(-Math.round(s / 604800), "week");
+  return new Date(iso).toLocaleDateString();
+}

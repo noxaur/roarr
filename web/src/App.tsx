@@ -1,21 +1,23 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { api, setUnauthorizedHandler } from "./lib/api";
-import { Link, Router, match, useRouter } from "./lib/router";
-import { StoreProvider, useStore, type Mode } from "./lib/store";
-import { ToastProvider } from "./components/Toasts";
-import { Logo, SearchIcon } from "./components/Icons";
+import { Router, match, useRouter } from "./lib/router";
+import { StoreProvider } from "./lib/store";
+import { Toaster } from "./components/ui/sonner";
+import { TooltipProvider } from "./components/ui/tooltip";
+import { Nav } from "./components/Nav";
+import { SearchPalette } from "./components/SearchPalette";
 import { Home } from "./pages/Home";
-import { SeriesPage } from "./pages/Series";
-import { MoviePage } from "./pages/Movie";
-import { ActivityPage } from "./pages/Activity";
-import { RequestsPage } from "./pages/Requests";
-import { SettingsPage } from "./pages/Settings";
 import { Login } from "./pages/Login";
-import { cls } from "./lib/format";
+
+// Home ships with the first load; every other page is fetched on demand.
+const SeriesPage = lazy(() => import("./pages/Series").then((m) => ({ default: m.SeriesPage })));
+const MoviePage = lazy(() => import("./pages/Movie").then((m) => ({ default: m.MoviePage })));
+const ActivityPage = lazy(() => import("./pages/Activity").then((m) => ({ default: m.ActivityPage })));
+const RequestsPage = lazy(() => import("./pages/Requests").then((m) => ({ default: m.RequestsPage })));
+const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
 
 export function App() {
   const [me, setMe] = useState<{ authMode: string; authenticated: boolean; user?: string } | null>(null);
-  const [defaultMode, setDefaultMode] = useState<Mode>("manual");
 
   const check = () =>
     api
@@ -26,53 +28,39 @@ export function App() {
     check();
     setUnauthorizedHandler(() => setMe((m) => (m ? { ...m, authenticated: false } : m)));
   }, []);
-  useEffect(() => {
-    if (me?.authenticated)
-      api
-        .settings()
-        .then((s) => setDefaultMode(s.settings.behaviour.defaultMode))
-        .catch(() => {});
-  }, [me?.authenticated]);
 
   if (!me) return null;
-  if (!me.authenticated) return <Login mode={me.authMode} onDone={check} />;
   return (
-    <ToastProvider>
-      <Router>
-        <StoreProvider defaultMode={defaultMode}>
-          <Shell user={me.user} authMode={me.authMode} />
-        </StoreProvider>
-      </Router>
-    </ToastProvider>
+    <TooltipProvider delayDuration={300}>
+      {me.authenticated ? (
+        <Router>
+          <StoreProvider user={me.user}>
+            <Shell authMode={me.authMode} />
+          </StoreProvider>
+        </Router>
+      ) : (
+        <Login mode={me.authMode} onDone={check} />
+      )}
+      <Toaster position="bottom-right" />
+    </TooltipProvider>
   );
 }
 
-function Shell({ user, authMode }: { user?: string; authMode: string }) {
-  const { path, search, navigate } = useRouter();
-  const { activity } = useStore();
-  const q = path === "/" ? (search.get("q") ?? "") : "";
-  const [text, setText] = useState(q);
-  const input = useRef<HTMLInputElement>(null);
+function Shell({ authMode }: { authMode: string }) {
+  const { path, search } = useRouter();
+  const [searching, setSearching] = useState(false);
 
-  useEffect(() => setText(q), [q]);
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      if (e.key === "/" && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
+      const typing = e.target instanceof HTMLElement && (e.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName));
+      if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing)) {
         e.preventDefault();
-        input.current?.focus();
+        setSearching((s) => !s);
       }
     };
     addEventListener("keydown", on);
     return () => removeEventListener("keydown", on);
   }, []);
-
-  const onType = (v: string) => {
-    setText(v);
-    navigate(v ? `/?q=${encodeURIComponent(v)}` : "/", { replace: path === "/" });
-  };
-
-  const active = activity.filter((a) => a.status === "downloading" || a.status === "queued" || a.status === "importing").length;
-  const problems = activity.filter((a) => a.status === "warning" || a.status === "failed").length;
 
   let page = <Home />;
   let m: Record<string, string> | null;
@@ -86,54 +74,11 @@ function Shell({ user, authMode }: { user?: string; authMode: string }) {
 
   return (
     <>
-      <header className="topbar">
-        <Link to="/" className="brand">
-          <Logo />
-          <span>roarr</span>
-        </Link>
-        <div className="search">
-          <SearchIcon className="icon" />
-          <input
-            ref={input}
-            value={text}
-            placeholder="Search shows and movies…"
-            onChange={(e) => onType(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                onType("");
-                input.current?.blur();
-              }
-            }}
-          />
-          {!text && <kbd>/</kbd>}
-        </div>
-        <nav className="nav">
-          <Link to="/" className={cls(path === "/" && "active")}>
-            Library
-          </Link>
-          <Link to="/activity" className={cls(path === "/activity" && "active")}>
-            Activity
-            {active > 0 && <span className="badge">{active}</span>}
-            {problems > 0 && <span className="badge" style={{ background: "var(--warn)" }}>{problems}</span>}
-          </Link>
-          <Link to="/requests" className={cls(path === "/requests" && "active")}>
-            Requests
-          </Link>
-          <Link to="/settings" className={cls(path === "/settings" && "active")}>
-            Settings
-          </Link>
-        </nav>
-        {authMode !== "none" && (
-          <button
-            className="btn ghost sm"
-            title={user ? `Signed in as ${user}` : undefined}
-            onClick={() => api.logout().then(() => location.reload())}
-          >
-            Sign out
-          </button>
-        )}
-      </header>
-      <main>{page}</main>
+      <Nav onSearch={() => setSearching(true)} authMode={authMode} />
+      <main className="mx-auto max-w-[1360px] px-4 pt-8 pb-24 sm:px-8 lg:px-10 lg:pt-10">
+        <Suspense fallback={null}>{page}</Suspense>
+      </main>
+      <SearchPalette open={searching} onOpenChange={setSearching} />
     </>
   );
 }

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode, type MouseEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ComponentProps, type ReactNode, type MouseEvent } from "react";
 
 // A tiny history router: roarr has a handful of routes and does not need a
 // dependency for them.
@@ -47,16 +47,13 @@ export function match(pattern: string, path: string): Record<string, string> | n
   return out;
 }
 
-export function Link({ to, children, className, title }: { to: string; children: ReactNode; className?: string; title?: string }) {
+export function Link({ to, onClick, ...rest }: { to: string } & Omit<ComponentProps<"a">, "href">) {
   const { navigate } = useRouter();
-  const onClick = (e: MouseEvent) => {
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+  const go = (e: MouseEvent<HTMLAnchorElement>) => {
+    onClick?.(e);
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
     e.preventDefault();
     navigate(to);
   };
-  return (
-    <a href={to} onClick={onClick} className={className} title={title}>
-      {children}
-    </a>
-  );
+  return <a href={to} onClick={go} {...rest} />;
 }

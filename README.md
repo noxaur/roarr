@@ -58,10 +58,9 @@ settings can also be changed in **Settings**, and is saved in `/config`.
 | `QBIT_URL`, `QBIT_USERNAME`, `QBIT_PASSWORD` | host/user from Sonarr | Watch-first packs and "download anyway". Sonarr hides the password, so set `QBIT_PASSWORD`. |
 | `AUTH_MODE` | `jellyfin` if `JELLYFIN_URL` set, else `none` | `jellyfin`, `password` (with `AUTH_PASSWORD`), or `none`. |
 | `JELLYFIN_ADMIN_ONLY` | `true` | Only Jellyfin admins may sign in. |
-| `DEFAULT_MODE` | `manual` | `manual` (you pick) or `auto` (roarr picks). Switchable in the UI. |
 | `WATCH_FIRST` | `true` | Download packs in episode order and import as each finishes. |
 | `PREFETCH` | `true` | Start searching a show as soon as its page opens. |
-| `SEERR_AUTO_FETCH` | `false` | Grab newly approved Seerr requests automatically (Auto mode). Turn on Seerr's "prevent search" for its Sonarr/Radarr servers so they don't search too. |
+| `SEERR_AUTO_FETCH` | `false` | Grab newly approved Seerr requests automatically. Turn on Seerr's "prevent search" for its Sonarr/Radarr servers so they don't search too. |
 | `INDEXER_TIMEOUT` | `30` | Seconds before giving up on a slow indexer. |
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |
 | `PORT` | `3847` | |
@@ -71,11 +70,13 @@ runs as uid 65532. Add `user: "1000:1000"` (your uid) to the service.
 
 ## What it does
 
-**Search anything.** Typing filters your library instantly; the whole library
-is sent to the browser once, so it needs no requests. Everything else comes
-from TMDB through Seerr in about 250 ms, or from Sonarr/Radarr lookups.
-Titles that are not in Sonarr/Radarr yet can be browsed and searched, and are
-added (unmonitored, no automatic search) the moment you grab something.
+**Search anything.** Press <kbd>⌘K</kbd> (or <kbd>/</kbd>) on any page.
+Typing filters your library instantly; the whole library is sent to the
+browser once, so it needs no requests. Everything else comes from TMDB
+through Seerr in about 250 ms, or from Sonarr/Radarr lookups. Titles that are
+not in Sonarr/Radarr yet can be browsed and searched, and are added
+(unmonitored, no automatic search) the moment you grab something. Movies can
+be fetched straight from the search list with <kbd>⌘↵</kbd>.
 
 **See what indexers have, fast.** roarr talks to Prowlarr one indexer at a
 time *in parallel* and streams each answer to the page as it arrives. A slow
@@ -84,17 +85,20 @@ on arrival. It is labelled as an episode, multi-episode, season pack,
 multi-season pack or complete series, and mapped to the exact episodes it
 contains.
 
-**Choose how much.** Click an episode, shift-click several, take a season,
-"Missing" or "Whole show". On a movie page, pick any movies from its collection.
-The release list re-ranks for that selection, so a 60-episode pack drops
-below the single episode you asked for.
+**One question, one button.** A show page asks *what do you want?*:
+missing episodes, a season, the whole show, or the episodes you tick. A movie
+page asks the same about its collection. Missing is picked for you, and the
+show is already being searched, so the usual case is a single press of
+**Get**.
 
-**Auto or manual.** *Best pick* always shows what roarr would grab: the
-cheapest set of releases covering your selection. It prefers one season pack
-over ten equal singles, and better singles over a worse pack. Grab that
-plan with one click, or pick any release yourself. In **Auto** mode, the
-*Get* buttons search, wait until the plan is stable, and grab. They do not
-wait for the slowest indexer once every wanted episode is covered.
+**roarr picks, or you do.** *Best pick* always shows what **Get** will grab:
+the cheapest set of releases covering your selection. It prefers one season
+pack over ten equal singles, and better singles over a worse pack. Once every
+indexer has answered, **Get** grabs exactly that plan. Before then, roarr
+waits until the plan is stable, without waiting for the slowest indexer once
+every wanted episode is covered. **Choose release myself** opens the full
+list, re-ranked for your selection so a 60-episode pack drops below the
+single episode you asked for.
 
 **Watch-first packs.** When a pack goes to qBittorrent, roarr:
 1. Downloads its files in episode order: a rolling priority window plus
@@ -113,9 +117,10 @@ and import pipeline all apply. If the *arr declines a release you explicitly
 chose, roarr shows the reason and offers **Download anyway**. That sends it
 to qBittorrent in the *arr's category, and the *arr still imports it.
 
-**Requests.** The Seerr inbox: approve, decline, or open a request and fetch
-it. With `SEERR_AUTO_FETCH` on, approved requests are fetched automatically
-with roarr's search and planner.
+**Requests.** The Seerr inbox: **Approve & get** approves a request and
+fetches it in one go, or approve and decline as usual. With `SEERR_AUTO_FETCH`
+on, every approved request is fetched automatically with roarr's search and
+planner.
 
 ## Why it is fast (measured)
 

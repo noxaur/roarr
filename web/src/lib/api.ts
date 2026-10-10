@@ -287,7 +287,6 @@ export interface Settings {
   jellyfinAdminOnly: boolean;
   prefs: Prefs;
   behaviour: {
-    defaultMode: "manual" | "auto";
     watchFirst: boolean;
     prefetch: boolean;
     indexerTimeout: number;

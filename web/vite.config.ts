@@ -1,14 +1,17 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // Built assets go straight into the Go embed directory.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: {
     outDir: "../internal/webui/dist",
     emptyOutDir: true,
     target: "es2022",
-    chunkSizeWarningLimit: 400,
+    chunkSizeWarningLimit: 500,
   },
   server: {
     port: 5173,

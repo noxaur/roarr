@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type EpisodeDetail, type Release, type SeriesDetail } from "../lib/api";
-import { useSearch } from "../lib/useSearch";
-import { useRouter } from "../lib/router";
-import { useStore } from "../lib/store";
-import { Releases, type GrabOpts } from "../components/Releases";
-import { PosterImg } from "../components/Poster";
-import { useToast } from "../components/Toasts";
-import { BoltIcon, ChevronIcon, CheckIcon, DownloadIcon } from "../components/Icons";
-import { bytes, cls, epCode, pad } from "../lib/format";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronRight } from "lucide-react";
+import { api, type EpisodeDetail, type Release, type SeriesDetail } from "@/lib/api";
+import { autoGet } from "@/lib/actions";
+import { bytes, epCode, pad } from "@/lib/format";
+import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
+import { useRouter } from "@/lib/router";
+import { useStore } from "@/lib/store";
+import { useSearch } from "@/lib/useSearch";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Notice } from "@/components/kit";
+import { ReleaseSheet } from "@/components/ReleaseSheet";
+import { Crumbs, GetCard, PosterColumn, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
 
 export function SeriesPage({ id, tvdb, tmdb }: { id?: number; tvdb?: number; tmdb?: number }) {
   const [d, setD] = useState<SeriesDetail | null>(null);
@@ -29,50 +35,69 @@ export function SeriesPage({ id, tvdb, tmdb }: { id?: number; tvdb?: number; tmd
       .catch(() => {});
   }, [load]);
 
-  if (error) return <div className="notice bad">{error}</div>;
+  if (error) return <Notice tone="bad">{error}</Notice>;
   if (!d) return <TitleSkeleton />;
   return <SeriesView d={d} reload={() => load(true)} prefs={prefs} />;
 }
 
-export function TitleSkeleton() {
-  return (
-    <div className="row" style={{ gap: 22, alignItems: "flex-start" }}>
-      <div className="skeleton" style={{ width: 132, aspectRatio: "2/3" }} />
-      <div className="grow">
-        <div className="skeleton" style={{ height: 28, width: "40%", marginBottom: 12 }} />
-        <div className="skeleton" style={{ height: 14, width: "70%", marginBottom: 8 }} />
-        <div className="skeleton" style={{ height: 14, width: "60%" }} />
-      </div>
-    </div>
-  );
-}
+type Scope = "missing" | "all" | "season" | "custom";
 
 function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void; prefs: { prefetch: boolean; watchFirst: boolean } }) {
-  const { mode, setMode, reloadActivity, reloadLibrary } = useStore();
-  const { navigate } = useRouter();
-  const toast = useToast();
+  const { reloadActivity, reloadLibrary } = useStore();
+  const { navigate, search: params } = useRouter();
   const seasons = useMemo(() => d.seasons.filter((s) => s.episodes.length > 0 || d.synthetic), [d]);
   const allEps = useMemo(() => seasons.flatMap((s) => s.episodes), [seasons]);
   const byId = useMemo(() => new Map(allEps.map((e) => [e.id, e])), [allEps]);
   const missing = useMemo(() => allEps.filter((e) => e.season > 0 && e.aired && !e.hasFile && !e.queued).map((e) => e.id), [allEps]);
   const everything = useMemo(() => allEps.filter((e) => e.season > 0 && e.aired).map((e) => e.id), [allEps]);
 
-  const [sel, setSel] = useState<Set<number>>(() => new Set(missing.length ? missing : everything));
-  const [openSeasons, setOpenSeasons] = useState<Set<number>>(() => {
-    const first = seasons.find((s) => s.episodes.some((e) => missing.includes(e.id)));
-    return new Set(first ? [first.number] : seasons.length === 1 ? [seasons[0].number] : []);
-  });
-  const [autoBusy, setAutoBusy] = useState(false);
+  // The season offered as a one-click option: where the gaps start, or the
+  // latest season; for shows not in Sonarr yet, the first one.
+  const focusSeason = useMemo(() => {
+    const regular = seasons.filter((s) => s.number > 0);
+    if (!d.inLibrary) return regular[0]?.number ?? seasons[0]?.number ?? 1;
+    const gap = missing.length ? byId.get(missing[0])?.season : undefined;
+    return gap ?? regular[regular.length - 1]?.number ?? 1;
+  }, [seasons, missing, byId, d.inLibrary]);
 
-  const selArr = useMemo(() => [...sel].sort((a, b) => a - b), [sel]);
+  const seasonWanted = useCallback(
+    (n: number) => {
+      const s = seasons.find((x) => x.number === n);
+      if (!s) return [];
+      const aired = s.episodes.filter((e) => e.aired);
+      const miss = aired.filter((e) => !e.hasFile && !e.queued);
+      return (miss.length ? miss : aired).map((e) => e.id);
+    },
+    [seasons],
+  );
+
+  const [scope, setScope] = useState<Scope>(() => {
+    if (!d.inLibrary) return seasons.filter((s) => s.number > 0).length > 1 ? "season" : "all";
+    return missing.length ? "missing" : "custom";
+  });
+  const [ticked, setTicked] = useState<Set<number>>(new Set());
+  const [openSeasons, setOpenSeasons] = useState<Set<number>>(() => new Set(seasons.length === 1 ? [seasons[0].number] : [focusSeason]));
+  const [sheet, setSheet] = useState(params.get("pick") === "1");
+  const [watchFirst, setWatchFirst] = useState(prefs.watchFirst);
+  const [busy, setBusy] = useState(false);
+  const [gotFor, setGotFor] = useState<string | null>(null);
+  useEffect(() => setWatchFirst(prefs.watchFirst), [prefs.watchFirst]);
+
+  const selArr = useMemo(() => {
+    const ids = scope === "missing" ? missing : scope === "all" ? everything : scope === "season" ? seasonWanted(focusSeason) : [...ticked];
+    return [...ids].sort((a, b) => a - b);
+  }, [scope, missing, everything, seasonWanted, focusSeason, ticked]);
+  const sel = useMemo(() => new Set(selArr), [selArr]);
+  const selKey = selArr.join(",");
+
   const ref: Record<string, string> = d.inLibrary ? { id: String(d.id) } : { tvdb: String(d.tvdbId ?? 0), tmdb: String(d.tmdbId ?? 0) };
 
   // Streams: the whole show (prefetched as soon as the page opens) plus
   // exact episode queries when only a few episodes are selected.
   const streams = useMemo(() => {
     const out: Record<string, string>[] = [];
-    if (prefs.prefetch || sel.size > 3) out.push({ kind: "tv", ...ref, show: "1" });
-    if (sel.size > 0 && sel.size <= 3) {
+    if (prefs.prefetch || selArr.length > 3) out.push({ kind: "tv", ...ref, show: "1" });
+    if (selArr.length > 0 && selArr.length <= 3) {
       out.push({ kind: "tv", ...ref, episodes: selArr.filter((x) => x > 0).join(",") });
       if (!prefs.prefetch) {
         const ss = [...new Set(selArr.map((x) => byId.get(x)?.season).filter((x) => x !== undefined))];
@@ -81,7 +106,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     }
     return out.filter((s) => s.episodes !== "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selArr.join(","), prefs.prefetch, d.key]);
+  }, [selKey, prefs.prefetch, d.key]);
   const search = useSearch(d.key, streams);
 
   const relevant = useCallback(
@@ -91,31 +116,13 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     },
     [sel, d.synthetic],
   );
+  const plan = useLivePlan(search, relevant, selArr, "tv");
 
-  const scopeLabel = useMemo(() => describeSelection(selArr, byId, seasons, missing, everything), [selArr, byId, seasons, missing, everything]);
-  const epLabel = (id: number) => {
-    const e = byId.get(id);
-    return e ? epCode(e.season, e.number) : `#${id}`;
-  };
-
-  const onGrab = async (r: Release, opts: GrabOpts) => {
-    const fills = (r.covers ?? []).filter((x) => sel.has(x));
-    const res = await api.grab({
-      kind: "tv",
-      seriesId: d.inLibrary ? d.id : 0,
-      tvdbId: d.tvdbId,
-      episodeIds: fills.length ? fills : selArr,
-      release: r,
-      force: opts.force,
-      watchFirst: opts.watchFirst,
-    });
-    if (res.ok) afterGrab(res.seriesId);
-    return res;
-  };
-
+  const later = useRef(0);
   const afterGrab = (seriesId?: number) => {
     reloadActivity();
-    setTimeout(() => {
+    clearTimeout(later.current);
+    later.current = window.setTimeout(() => {
       if (!d.inLibrary && seriesId) {
         reloadLibrary();
         navigate(`/tv/${seriesId}`, { replace: true });
@@ -123,241 +130,246 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     }, 1200);
   };
 
-  const runAuto = async (episodeIds: number[], label: string) => {
-    if (episodeIds.length === 0) return;
-    setAutoBusy(true);
-    toast(`Finding the best release for ${label}…`);
+  const grabber = useGrabber(
+    useCallback(
+      async (r: Release, opts: GrabOpts) => {
+        const fills = (r.covers ?? []).filter((x) => sel.has(x));
+        const res = await api.grab({
+          kind: "tv",
+          seriesId: d.inLibrary ? d.id : 0,
+          tvdbId: d.tvdbId,
+          episodeIds: fills.length ? fills : selArr,
+          release: r,
+          force: opts.force,
+          watchFirst: opts.watchFirst,
+        });
+        if (res.ok) afterGrab(res.seriesId);
+        return res;
+      },
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [selKey, d],
+    ),
+  );
+
+  const label = (id: number) => {
+    const e = byId.get(id);
+    if (!e) return `#${id}`;
+    return d.anime && e.absolute ? `#${e.absolute}` : epCode(e.season, e.number);
+  };
+
+  // One button: grab exactly the plan we are showing once every indexer has
+  // answered; until then let the server wait for a stable plan.
+  const get = async () => {
+    setBusy(true);
     try {
-      const res = await api.auto({ kind: "tv", seriesId: d.inLibrary ? d.id : 0, tvdbId: d.tvdbId, tmdbId: d.tmdbId, episodeIds });
-      const ok = (res.grabs ?? []).filter((g) => g.result.ok);
-      toast(
-        <div>
-          <b>{res.message}</b>
-          {(res.grabs ?? []).map((g) => (
-            <div key={g.release} className="small muted ellipsis">
-              {g.result.ok ? "✓" : "✕"} {g.release}
-              {!g.result.ok && (g.error || g.result.rejections?.join(", "))}
-            </div>
-          ))}
-          <div className="tiny faint">decided after {(res.waitedMs / 1000).toFixed(1)}s</div>
-        </div>,
-        ok.length ? "ok" : "bad",
-      );
-      if (ok.length) afterGrab(ok[0].result.seriesId);
-    } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), "bad");
+      if (search.done && plan.picks.length) {
+        const ok = await grabber.grabAll(
+          plan.picks.map((x) => x.release),
+          { watchFirst },
+        );
+        if (ok) setGotFor(selKey);
+      } else {
+        const res = await autoGet({ kind: "tv", seriesId: d.inLibrary ? d.id : 0, tvdbId: d.tvdbId, tmdbId: d.tmdbId, episodeIds: selArr }, scopeTitle);
+        if (res) {
+          setGotFor(selKey);
+          afterGrab(res.grabs?.find((g) => g.result.ok)?.result.seriesId);
+        }
+      }
     } finally {
-      setAutoBusy(false);
+      setBusy(false);
     }
   };
 
-  const seasonWanted = (n: number) => {
-    const s = seasons.find((x) => x.number === n);
-    if (!s) return [];
-    const aired = s.episodes.filter((e) => e.aired);
-    const miss = aired.filter((e) => !e.hasFile && !e.queued);
-    return (miss.length ? miss : aired).map((e) => e.id);
-  };
-
-  const pickSeason = (n: number) => {
-    const ids = seasonWanted(n);
-    if (mode === "auto") return runAuto(ids, `season ${n}`);
-    setSel(new Set(ids));
-  };
-  const pickEpisode = (e: EpisodeDetail, additive: boolean) => {
-    if (!additive) {
-      if (mode === "auto") return runAuto([e.id], epCode(e.season, e.number));
-      setSel(new Set([e.id]));
-      return;
-    }
-    const n = new Set(sel);
+  const toggle = (e: EpisodeDetail) => {
+    const n = new Set(scope === "custom" ? ticked : sel);
     if (n.has(e.id)) n.delete(e.id);
     else n.add(e.id);
-    setSel(n);
+    setTicked(n);
+    setScope("custom");
+  };
+  const tickSeason = (num: number) => {
+    const ids = seasons.find((s) => s.number === num)?.episodes.filter((e) => e.aired).map((e) => e.id) ?? [];
+    const all = ids.every((x) => sel.has(x));
+    const n = new Set(scope === "custom" ? ticked : sel);
+    for (const x of ids) {
+      if (all) n.delete(x);
+      else n.add(x);
+    }
+    setTicked(n);
+    setScope("custom");
   };
 
   const have = allEps.filter((e) => e.season > 0 && e.hasFile).length;
-  const total = allEps.filter((e) => e.season > 0 && e.aired).length;
+  const queued = allEps.filter((e) => e.season > 0 && e.queued).length;
+  const n = selArr.length;
+  const scopeTitle =
+    scope === "all" ? "the whole show" : scope === "missing" ? `${n} missing episode${n === 1 ? "" : "s"}` : n === 1 ? label(selArr[0]) : `${n} episodes of ${d.title}`;
+  const sheetTitle = n === 1 ? `${d.title} · ${label(selArr[0])}` : scope === "season" ? `${d.title} · Season ${focusSeason}` : `${d.title} · ${n} episodes`;
+  const focusAired = seasons.find((s) => s.number === focusSeason)?.episodes.filter((e) => e.aired) ?? [];
+  const focusMissing = focusAired.filter((e) => !e.hasFile && !e.queued).length;
+  const regularSeasons = seasons.filter((s) => s.number > 0).length;
+
+  const options: GetOption[] = [
+    ...(d.inLibrary ? [{ value: "missing", label: "Missing episodes", sub: missing.length ? rangeLabel(missing.map(label)) : "nothing missing", count: missing.length, disabled: missing.length === 0 }] : []),
+    ...(regularSeasons > 1 || !d.inLibrary
+      ? [
+          {
+            value: "season",
+            label: `Season ${focusSeason}`,
+            sub: d.inLibrary && focusMissing ? `${focusMissing} missing of ${focusAired.length}` : `${focusAired.length} episodes`,
+            count: seasonWanted(focusSeason).length,
+          },
+        ]
+      : []),
+    { value: "all", label: "Whole show", sub: `${regularSeasons} season${regularSeasons === 1 ? "" : "s"}`, count: everything.length },
+    { value: "custom", label: "Episodes I tick", sub: "in the list below", count: scope === "custom" ? ticked.size || "–" : "–" },
+  ];
 
   return (
     <>
-      <div className="hero">
-        {d.fanart && <div className="backdrop" style={{ backgroundImage: `url(${d.fanart})` }} />}
-        <div className="hero-inner">
-          <div className="poster">
-            <PosterImg src={d.poster} title={d.title} />
-          </div>
-          <div className="grow">
-            <div className="small muted">
-              {[d.year, d.network, d.status, d.anime ? "anime" : null, d.runtime ? `${d.runtime} min` : null].filter(Boolean).join(" · ")}
-            </div>
-            <h1>{d.title}</h1>
-            {d.overview && <p className="overview">{d.overview}</p>}
-            <div className="row wrap" style={{ marginTop: 12 }}>
-              {d.inLibrary ? (
-                <span className="tag good">
-                  {have}/{total} episodes{d.sizeOnDisk ? ` · ${bytes(d.sizeOnDisk)}` : ""}
-                </span>
+      <Crumbs section="Shows" />
+      <TitleLayout
+        poster={<PosterColumn poster={d.poster} title={d.title} year={d.year} />}
+        head={
+          <TitleHead
+            poster={d.poster}
+            title={d.title}
+            year={d.year}
+            meta={["Show", d.network, d.year && `${d.year}–`, d.status, d.anime && "anime", d.runtime && `${d.runtime} min`]}
+            overview={d.overview}
+            badges={
+              d.inLibrary ? (
+                <>
+                  <Badge variant="ok">
+                    <Check /> {have}/{everything.length} on disk
+                  </Badge>
+                  {queued > 0 && <Badge variant="ice">{queued} downloading</Badge>}
+                  {missing.length > 0 && <Badge variant="pink">{missing.length} missing</Badge>}
+                  {d.sizeOnDisk ? <Badge>{bytes(d.sizeOnDisk)}</Badge> : null}
+                </>
               ) : (
-                <span className="tag info">Not in Sonarr yet. Added automatically when you grab.</span>
-              )}
-              <span className="spacer" />
-              <div className="seg" title="Manual: you pick the release. Auto: roarr picks and grabs the best one.">
-                <button className={cls(mode === "manual" && "on")} onClick={() => setMode("manual")}>
-                  Manual
-                </button>
-                <button className={cls(mode === "auto" && "on")} onClick={() => setMode("auto")}>
-                  <BoltIcon width={12} height={12} /> Auto
-                </button>
-              </div>
-              <button className="btn sm" disabled={missing.length === 0 || autoBusy} onClick={() => (mode === "auto" ? runAuto(missing, "everything missing") : setSel(new Set(missing)))}>
-                Missing · {missing.length}
-              </button>
-              <button className="btn sm" disabled={autoBusy} onClick={() => (mode === "auto" ? runAuto(everything, "the whole show") : setSel(new Set(everything)))}>
-                Whole show
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="title-layout">
-        <div className="seasons">
-          {seasons.map((s) => {
-            const aired = s.episodes.filter((e) => e.aired);
-            const haveS = aired.filter((e) => e.hasFile).length;
-            const isOpen = openSeasons.has(s.number);
-            const selected = s.episodes.length > 0 && s.episodes.filter((e) => e.aired).every((e) => sel.has(e.id));
-            return (
-              <div key={s.number} className={cls("season", selected && "selected")}>
-                <div
-                  className="season-head"
-                  onClick={() => {
-                    const n = new Set(openSeasons);
-                    if (n.has(s.number)) n.delete(s.number);
-                    else n.add(s.number);
-                    setOpenSeasons(n);
-                  }}
-                >
-                  <ChevronIcon className={cls("caret", isOpen && "open")} />
-                  <b>{s.number === 0 ? "Specials" : `Season ${s.number}`}</b>
-                  <span className="small muted mono">
-                    {d.synthetic ? `${s.episodes.length} eps` : `${haveS}/${aired.length}`}
-                  </span>
-                  {!d.synthetic && aired.length > 0 && (
-                    <div className="progress-mini">
-                      <i style={{ width: `${(haveS / aired.length) * 100}%` }} />
-                    </div>
-                  )}
-                  <span className="spacer" />
-                  {s.episodes.length > 0 && (
+                <Badge variant="ice">Not in Sonarr yet · added when you get something</Badge>
+              )
+            }
+          />
+        }
+        aside={
+          <GetCard
+            options={options}
+            value={scope}
+            onValueChange={(v) => {
+              if (v === "custom" && scope !== "custom") setTicked(new Set(sel));
+              setScope(v as Scope);
+            }}
+            cta={n === 0 ? "Tick episodes to get" : n === 1 ? `Get ${label(selArr[0])}` : `Get ${n} episodes`}
+            onGet={get}
+            busy={busy}
+            done={gotFor === selKey}
+            disabled={n === 0}
+            state={search}
+            plan={plan}
+            wantedCount={n}
+            onChoose={() => setSheet(true)}
+            watchFirst={watchFirst}
+            onWatchFirst={setWatchFirst}
+          />
+        }
+        body={
+          <div className="border-t border-dashed border-dash">
+            {seasons.map((s) => {
+              const aired = s.episodes.filter((e) => e.aired);
+              const haveS = aired.filter((e) => e.hasFile).length;
+              const isOpen = openSeasons.has(s.number);
+              const complete = !d.synthetic && aired.length > 0 && haveS === aired.length;
+              const allTicked = aired.length > 0 && aired.every((e) => sel.has(e.id));
+              return (
+                <section key={s.number} className="border-b border-dashed border-dash">
+                  <div className="flex min-h-14 items-center gap-3">
                     <button
-                      className={cls("btn xs", mode === "auto" && "primary")}
-                      disabled={autoBusy}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        pickSeason(s.number);
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left outline-none focus-visible:underline"
+                      aria-expanded={isOpen}
+                      onClick={() => {
+                        const next = new Set(openSeasons);
+                        if (next.has(s.number)) next.delete(s.number);
+                        else next.add(s.number);
+                        setOpenSeasons(next);
                       }}
                     >
-                      {mode === "auto" ? <BoltIcon width={11} height={11} /> : null}
-                      {mode === "auto" ? "Get" : "Select"}
-                    </button>
-                  )}
-                </div>
-                {isOpen && s.episodes.length > 0 && (
-                  <div className="episodes">
-                    {s.episodes.map((e) => (
-                      <div
-                        key={e.id}
-                        className={cls("episode", sel.has(e.id) && "sel", !e.aired && "unaired")}
-                        onClick={(ev) => pickEpisode(e, ev.shiftKey || ev.metaKey || ev.ctrlKey)}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={sel.has(e.id)}
-                          onClick={(ev) => ev.stopPropagation()}
-                          onChange={() => pickEpisode(e, true)}
-                          style={{ accentColor: "var(--accent)" }}
-                        />
-                        <span className="num">
-                          {e.absolute && d.anime ? `#${e.absolute}` : `E${pad(e.number)}`}
+                      <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", isOpen && "rotate-90")} />
+                      <b className="text-[17px] font-semibold tracking-tight">{s.number === 0 ? "Specials" : `Season ${s.number}`}</b>
+                      <span className="font-mono text-xs text-muted-foreground">{d.synthetic ? `${s.episodes.length} eps` : `${haveS}/${aired.length}`}</span>
+                      {!d.synthetic && aired.length > 0 && (
+                        <span className="hidden h-1 w-28 overflow-hidden rounded-full bg-foreground/10 sm:block">
+                          <i className="block h-full rounded-full bg-foreground" style={{ width: `${(haveS / aired.length) * 100}%` }} />
                         </span>
-                        <span className="grow ellipsis">{e.title}</span>
-                        {e.hasFile ? (
-                          <CheckIcon style={{ color: "var(--accent)" }} />
-                        ) : e.queued ? (
-                          <span className="dot info pulse" title="downloading" />
-                        ) : e.aired ? (
-                          <span className="dot warn" title="missing" />
-                        ) : (
-                          <span className="tiny faint">{e.airDate ?? "TBA"}</span>
-                        )}
-                        {e.aired && mode === "auto" && (
-                          <button
-                            className="btn xs quick"
-                            disabled={autoBusy}
-                            title="Grab the best release for this episode"
-                            onClick={(ev) => {
-                              ev.stopPropagation();
-                              runAuto([e.id], epCode(e.season, e.number));
-                            }}
-                          >
-                            <DownloadIcon width={11} height={11} />
-                          </button>
-                        )}
-                      </div>
-                    ))}
+                      )}
+                    </button>
+                    {complete && !allTicked ? (
+                      <Badge variant="ok">Complete</Badge>
+                    ) : (
+                      aired.length > 0 && (
+                        <Button variant="outline" size="xs" onClick={() => tickSeason(s.number)}>
+                          {allTicked ? "Untick season" : "Tick season"}
+                        </Button>
+                      )
+                    )}
                   </div>
-                )}
-              </div>
-            );
-          })}
-          <div className="small faint" style={{ padding: "4px 2px" }}>
-            Click an episode to look at just that one; shift-click to pick several.
+                  {isOpen && s.episodes.length > 0 && (
+                    <div className="pb-3">
+                      {s.episodes.map((e) => {
+                        const on = sel.has(e.id);
+                        return (
+                          <label
+                            key={e.id}
+                            className={cn(
+                              "-mx-2.5 flex min-h-11 cursor-pointer items-center gap-3.5 rounded-lg px-2.5 transition-colors hover:bg-muted/60",
+                              on && "bg-lime/45 hover:bg-lime/55 dark:bg-lime/12 dark:hover:bg-lime/18",
+                              !e.aired && "cursor-default opacity-55",
+                            )}
+                          >
+                            <Checkbox checked={on} disabled={!e.aired} onCheckedChange={() => toggle(e)} aria-label={`${label(e.id)} ${e.title}`} />
+                            <span className="w-9 shrink-0 font-mono text-xs text-muted-foreground">{e.absolute && d.anime ? `#${e.absolute}` : `E${pad(e.number)}`}</span>
+                            <span className="min-w-0 flex-1 truncate">{e.title}</span>
+                            {e.hasFile ? (
+                              <span className="font-mono text-[11px] tracking-wide text-ok uppercase">✓ on disk</span>
+                            ) : e.queued ? (
+                              <Badge variant="ice">Downloading</Badge>
+                            ) : e.aired ? (
+                              <Badge variant="pink">Missing</Badge>
+                            ) : (
+                              <span className="font-mono text-[11px] text-muted-foreground">{e.airDate ?? "TBA"}</span>
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
           </div>
-        </div>
-
-        <div className="sticky">
-          <Releases
-            state={search}
-            relevant={relevant}
-            wanted={selArr}
-            kind="tv"
-            scopeLabel={scopeLabel}
-            epLabel={epLabel}
-            onGrab={onGrab}
-            watchFirstDefault={prefs.watchFirst}
-            empty={sel.size === 0 ? "Pick episodes or a season on the left." : undefined}
-          />
-        </div>
-      </div>
+        }
+      />
+      <ReleaseSheet
+        open={sheet}
+        onOpenChange={setSheet}
+        title={sheetTitle}
+        detail={n > 0 && n <= 8 ? selArr.map(label).join(" · ") : n > 8 ? rangeLabel(selArr.map(label)) : undefined}
+        kind="tv"
+        state={search}
+        plan={plan}
+        wanted={selArr}
+        grabber={grabber}
+        watchFirst={watchFirst}
+        epLabel={label}
+      />
     </>
   );
 }
 
-function describeSelection(
-  sel: number[],
-  byId: Map<number, EpisodeDetail>,
-  seasons: SeriesDetail["seasons"],
-  missing: number[],
-  everything: number[],
-): string {
-  if (sel.length === 0) return "Nothing selected";
-  const same = (a: number[], b: number[]) => a.length === b.length && a.every((x, i) => x === b[i]);
-  const sortedMissing = [...missing].sort((a, b) => a - b);
-  const sortedAll = [...everything].sort((a, b) => a - b);
-  if (same(sel, sortedAll)) return `Whole show · ${sel.length} episodes`;
-  if (same(sel, sortedMissing)) return `Everything missing · ${sel.length} episode${sel.length > 1 ? "s" : ""}`;
-  if (sel.length === 1) {
-    const e = byId.get(sel[0]);
-    return e ? `${epCode(e.season, e.number)} · ${e.title}` : "1 episode";
-  }
-  const ss = new Set(sel.map((id) => byId.get(id)?.season));
-  if (ss.size === 1) {
-    const n = [...ss][0]!;
-    const season = seasons.find((s) => s.number === n);
-    const full = season && season.episodes.filter((e) => e.aired).length === sel.length;
-    return full ? `Season ${n}` : `Season ${n} · ${sel.length} episodes`;
-  }
-  return `${sel.length} episodes across ${ss.size} seasons`;
+/** "S02E08 – S02E10" for a sorted list of episode codes. */
+function rangeLabel(codes: string[]): string {
+  if (codes.length === 0) return "";
+  if (codes.length === 1) return codes[0];
+  return `${codes[0]} – ${codes[codes.length - 1]}`;
 }

@@ -1,202 +1,266 @@
-import { useEffect, useMemo, useState } from "react";
-import { api, type DiscoverItem, type LibraryItem } from "../lib/api";
-import { useRouter } from "../lib/router";
-import { useStore } from "../lib/store";
-import { PosterCard } from "../components/Poster";
-import { cls, fold } from "../lib/format";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowRight } from "lucide-react";
+import type { LibraryItem } from "@/lib/api";
+import { bytes } from "@/lib/format";
+import { libraryHref } from "@/lib/rank";
+import { Link } from "@/lib/router";
+import { isActive, useStore } from "@/lib/store";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Empty, Label, Notice, PageHeader, SectionHead, Stat, Stats } from "@/components/kit";
+import { PosterCard } from "@/components/Poster";
 
 type Filter = "all" | "tv" | "movie" | "missing";
+type Sort = "title" | "year" | "missing";
+
+const missingOf = (it: LibraryItem) => Math.max(0, it.total - it.have);
+
+function greeting(user?: string) {
+  const h = new Date().getHours();
+  const part = h < 5 ? "Up late" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  return user ? `${part}, ${user}` : part;
+}
 
 export function Home() {
-  const { search } = useRouter();
-  const q = search.get("q") ?? "";
-  return q ? <Results q={q} /> : <Library />;
-}
-
-function hrefFor(it: LibraryItem) {
-  return it.kind === "tv" ? `/tv/${it.id}` : `/movie/${it.id}`;
-}
-
-function missingPill(it: LibraryItem) {
-  const missing = it.total - it.have;
-  if (it.kind === "movie") return it.have ? null : <span className="pill warn">missing</span>;
-  if (missing > 0) return <span className="pill warn">{missing} missing</span>;
-  return null;
-}
-
-function Library() {
-  const { library, libraryLoaded, libraryErrors, activity } = useStore();
-  const [filter, setFilter] = useState<Filter>(() => (localStorage.getItem("roarr.filter") as Filter) || "all");
-  const set = (f: Filter) => {
+  const { user, library, libraryLoaded, libraryErrors, activity, pendingRequests } = useStore();
+  const [filter, setFilterState] = useState<Filter>(() => (localStorage.getItem("roarr.filter") as Filter) || "all");
+  const [sort, setSortState] = useState<Sort>(() => (localStorage.getItem("roarr.sort") as Sort) || "title");
+  const shelf = useRef<HTMLDivElement>(null);
+  const setFilter = (f: Filter) => {
     localStorage.setItem("roarr.filter", f);
-    setFilter(f);
+    setFilterState(f);
   };
-  const items = useMemo(
-    () =>
-      library.filter((it) => {
-        switch (filter) {
-          case "tv":
-            return it.kind === "tv";
-          case "movie":
-            return it.kind === "movie";
-          case "missing":
-            return it.have < it.total;
-        }
-        return true;
-      }),
-    [library, filter],
-  );
-  const downloading = activity.filter((a) => a.status !== "failed").slice(0, 8);
+  const setSort = (s: Sort) => {
+    localStorage.setItem("roarr.sort", s);
+    setSortState(s);
+  };
 
-  return (
-    <>
-      {Object.entries(libraryErrors).map(([svc, err]) => (
-        <div key={svc} className="notice warn" style={{ marginBottom: 14 }}>
-          {svc}: {err}
-        </div>
-      ))}
-      {downloading.length > 0 && (
-        <>
-          <div className="section-title">Downloading</div>
-          <div className="grid">
-            {downloading.map((a) => (
-              <PosterCard
-                key={a.id}
-                to={a.href ?? "/activity"}
-                poster={a.poster}
-                title={a.title}
-                sub={a.subtitle || a.status}
-                progress={a.progress}
-                corner={<span className="pill accent">{Math.floor(a.progress * 100)}%</span>}
-              />
-            ))}
-          </div>
-        </>
-      )}
-      <div className="section-title">
-        Library <span className="faint">{items.length}</span>
-        <span className="spacer" />
-        <div className="row" style={{ textTransform: "none", letterSpacing: 0 }}>
-          {(["all", "tv", "movie", "missing"] as Filter[]).map((f) => (
-            <button key={f} className={cls("chip", filter === f && "on")} onClick={() => set(f)}>
-              {{ all: "All", tv: "Shows", movie: "Movies", missing: "Missing" }[f]}
-            </button>
-          ))}
-        </div>
-      </div>
-      {!libraryLoaded ? (
-        <div className="grid">
-          {Array.from({ length: 12 }, (_, i) => (
-            <div key={i} className="skeleton" style={{ aspectRatio: "2/3" }} />
-          ))}
-        </div>
-      ) : items.length === 0 ? (
-        <div className="empty">
-          {library.length === 0 ? "Your library is empty. Search above to find something." : "Nothing matches this filter."}
-        </div>
-      ) : (
-        <div className="grid">
-          {items.map((it) => (
-            <PosterCard
-              key={it.key}
-              to={hrefFor(it)}
-              poster={it.poster}
-              title={it.title}
-              sub={[it.year, it.kind === "tv" ? `${it.have}/${it.total} eps` : it.have ? "on disk" : null].filter(Boolean).join(" · ")}
-              corner={missingPill(it)}
-            />
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-/** Ranks library hits: exact > prefix > word prefix > substring. */
-function rankLibrary(items: LibraryItem[], q: string): LibraryItem[] {
-  const f = fold(q);
-  if (!f) return [];
-  const scored: [number, LibraryItem][] = [];
-  for (const it of items) {
-    let best = 0;
-    for (const t of [it.title, ...(it.aliases ?? [])]) {
-      const ft = fold(t);
-      let s = 0;
-      if (ft === f) s = 100;
-      else if (ft.startsWith(f)) s = 80;
-      else if ((" " + ft).includes(" " + f)) s = 60;
-      else if (ft.includes(f)) s = 40;
-      else if (f.split(" ").every((w) => ft.includes(w))) s = 25;
-      best = Math.max(best, s);
-    }
-    if (best > 0) scored.push([best, it]);
-  }
-  scored.sort((a, b) => b[0] - a[0] || a[1].title.localeCompare(b[1].title));
-  return scored.map((x) => x[1]);
-}
-
-function Results({ q }: { q: string }) {
-  const { library } = useStore();
-  const local = useMemo(() => rankLibrary(library, q), [library, q]);
-  const [remote, setRemote] = useState<DiscoverItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    let alive = true;
-    const t = setTimeout(() => {
-      api
-        .discover(q)
-        .then((r) => alive && setRemote(r.results))
-        .catch((e) => alive && setError(String(e.message ?? e)))
-        .finally(() => alive && setLoading(false));
-    }, 220);
-    return () => {
-      alive = false;
-      clearTimeout(t);
+  const counts = useMemo(() => {
+    const shows = library.filter((i) => i.kind === "tv");
+    const movies = library.filter((i) => i.kind === "movie");
+    const gaps = library.filter((i) => missingOf(i) > 0);
+    return {
+      shows: shows.length,
+      movies: movies.length,
+      gaps: gaps.length,
+      episodes: shows.reduce((n, i) => n + missingOf(i), 0),
+      missingMovies: movies.filter((i) => missingOf(i) > 0).length,
+      disk: library.reduce((n, i) => n + (i.sizeOnDisk ?? 0), 0),
     };
-  }, [q]);
+  }, [library]);
 
-  const libKeys = new Set(local.map((l) => `${l.kind}:${l.id}`));
-  const others = (remote ?? []).filter((r) => !(r.inLibrary && libKeys.has(`${r.kind}:${r.libraryId}`)));
+  const items = useMemo(() => {
+    const xs = library.filter((it) => (filter === "all" ? true : filter === "missing" ? missingOf(it) > 0 : it.kind === filter));
+    if (sort === "year") return [...xs].sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+    if (sort === "missing") return [...xs].sort((a, b) => missingOf(b) - missingOf(a));
+    return xs;
+  }, [library, filter, sort]);
+
+  const moving = activity.filter(isActive);
+  const [diskValue, diskUnit] = bytes(counts.disk).split(" ");
 
   return (
-    <>
-      {local.length > 0 && (
-        <>
-          <div className="section-title">In your library</div>
-          <div className="grid">
-            {local.slice(0, 24).map((it) => (
-              <PosterCard key={it.key} to={hrefFor(it)} poster={it.poster} title={it.title} sub={[it.year, it.kind === "tv" ? "Show" : "Movie"].filter(Boolean).join(" · ")} corner={missingPill(it)} />
-            ))}
+    <div className="space-y-10">
+      <PageHeader label={greeting(user)} title="Library">
+        {libraryLoaded && (
+          <Stats>
+            <Stat value={counts.shows} label="Shows" />
+            <Stat value={counts.movies} label="Movies" />
+            {counts.disk > 0 && <Stat value={diskValue} unit={diskUnit} label="On disk" />}
+            <Stat value={counts.gaps} label="Have gaps" />
+          </Stats>
+        )}
+      </PageHeader>
+
+      {Object.entries(libraryErrors).map(([svc, err]) => (
+        <Notice key={svc}>
+          <b className="capitalize">{svc}</b>: {err}
+        </Notice>
+      ))}
+
+      <div className={cn("grid gap-3.5", pendingRequests !== null ? "md:grid-cols-[1.3fr_1fr_1fr]" : "md:grid-cols-2")}>
+        <Tile tone="ice" index={1} title="Downloading" to="/activity">
+          <div className="mt-auto flex items-end gap-5">
+            <Big>{moving.length}</Big>
+            <div className="min-w-0 flex-1 space-y-1.5 pb-1.5">
+              {moving.length === 0 && <p className="text-sm">Nothing in flight right now.</p>}
+              {moving.slice(0, 3).map((a) => (
+                <div key={a.id}>
+                  <div className="flex justify-between gap-3 text-[13px]">
+                    <span className="truncate">
+                      {a.title}
+                      {a.subtitle && ` · ${a.subtitle}`}
+                    </span>
+                    <b className="font-mono text-xs font-medium">{Math.floor(a.progress * 100)}%</b>
+                  </div>
+                  <div className="mt-1 h-1 overflow-hidden rounded-full bg-ink/12">
+                    <i className="block h-full rounded-full bg-ink" style={{ width: `${a.progress * 100}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-        </>
-      )}
-      <div className="section-title">
-        Everything else {loading && <span className="spinner" />}
+        </Tile>
+        {pendingRequests !== null && (
+          <Tile tone="pink" index={2} title="Requests" to="/requests">
+            <Big className="my-auto">{pendingRequests}</Big>
+            <p className="mb-3 text-sm">{pendingRequests === 0 ? "No one is waiting on you." : `${pendingRequests === 1 ? "request is" : "requests are"} waiting for a yes or no.`}</p>
+            <ChipLink>{pendingRequests ? "Review requests" : "See all requests"}</ChipLink>
+          </Tile>
+        )}
+        <Tile
+          tone="lime"
+          index={pendingRequests !== null ? 3 : 2}
+          title="Gaps"
+          onClick={() => {
+            setFilter("missing");
+            shelf.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+        >
+          <Big className="my-auto">{counts.gaps}</Big>
+          <p className="mb-3 text-sm">
+            {counts.gaps === 0
+              ? "Everything you track is on disk."
+              : `titles are missing something: ${[counts.episodes && `${counts.episodes} episode${counts.episodes > 1 ? "s" : ""}`, counts.missingMovies && `${counts.missingMovies} movie${counts.missingMovies > 1 ? "s" : ""}`].filter(Boolean).join(" and ")}.`}
+          </p>
+          <ChipLink>Show what's missing</ChipLink>
+        </Tile>
       </div>
-      {error && <div className="notice bad">{error}</div>}
-      {!loading && remote && others.length === 0 && !error && <div className="empty">No other matches for “{q}”.</div>}
-      <div className="grid">
-        {others.map((r) => (
-          <PosterCard
-            key={`${r.kind}:${r.tmdbId ?? r.tvdbId}`}
-            to={discoverHref(r)}
-            poster={r.poster}
-            title={r.title}
-            sub={[r.year, r.kind === "tv" ? "Show" : "Movie"].filter(Boolean).join(" · ")}
-            corner={r.inLibrary ? <span className="pill accent">in library</span> : r.requested ? <span className="pill">requested</span> : null}
-          />
-        ))}
-      </div>
-    </>
+
+      <section ref={shelf} className="scroll-mt-24 space-y-6 border-t border-dashed border-dash pt-6">
+        <SectionHead index={pendingRequests !== null ? 4 : 3} title="Everything">
+          <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
+            <TabsList className="max-w-full overflow-x-auto">
+              {(
+                [
+                  ["all", "All", library.length],
+                  ["tv", "Shows", counts.shows],
+                  ["movie", "Movies", counts.movies],
+                  ["missing", "Missing", counts.gaps],
+                ] as const
+              ).map(([v, name, n]) => (
+                <TabsTrigger key={v} value={v} className="flex-none">
+                  {name} <span className="font-mono text-[11px] text-muted-foreground">{n}</span>
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          <div className="ml-auto">
+            <Select value={sort} onValueChange={(v) => setSort(v as Sort)}>
+              <SelectTrigger className="h-9 rounded-full px-4" aria-label="Sort">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="title">Title A–Z</SelectItem>
+                <SelectItem value="year">Newest first</SelectItem>
+                <SelectItem value="missing">Most missing</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </SectionHead>
+
+        {!libraryLoaded ? (
+          <Grid>
+            {Array.from({ length: 12 }, (_, i) => (
+              <div key={i}>
+                <Skeleton className="aspect-[2/3] rounded-lg" />
+                <Skeleton className="mt-2.5 h-4 w-3/4" />
+              </div>
+            ))}
+          </Grid>
+        ) : items.length === 0 ? (
+          <Empty>
+            {library.length === 0 ? (
+              <>
+                Your library is empty. Press <b>⌘K</b> to find something.
+              </>
+            ) : (
+              "Nothing matches this filter."
+            )}
+          </Empty>
+        ) : (
+          <Grid>
+            {items.map((it) => {
+              const miss = missingOf(it);
+              return (
+                <PosterCard
+                  key={it.key}
+                  to={libraryHref(it)}
+                  poster={it.poster}
+                  title={it.title}
+                  year={it.year}
+                  sub={[it.year, it.kind === "tv" ? `${it.have}/${it.total} eps` : it.have ? "Movie" : null].filter(Boolean).join(" · ")}
+                  corner={miss > 0 ? <Badge variant="pink">{it.kind === "movie" ? "missing" : `${miss} missing`}</Badge> : null}
+                />
+              );
+            })}
+          </Grid>
+        )}
+      </section>
+    </div>
   );
 }
 
-export function discoverHref(r: DiscoverItem): string {
-  if (r.inLibrary && r.libraryId) return r.kind === "tv" ? `/tv/${r.libraryId}` : `/movie/${r.libraryId}`;
-  if (r.kind === "movie") return `/movie/tmdb/${r.tmdbId}`;
-  return `/tv/tvdb/${r.tvdbId ?? 0}${r.tmdbId ? `?tmdb=${r.tmdbId}` : ""}`;
+function Grid({ children }: { children: ReactNode }) {
+  return <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-x-4 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(168px,1fr))] sm:gap-x-5">{children}</div>;
 }
+
+function Big({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn("font-display text-[4rem] leading-none tracking-[-0.05em]", className)}>{children}</div>;
+}
+
+function ChipLink({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex h-8 w-fit items-center gap-1.5 rounded-full bg-ink px-3.5 text-[13px] font-medium text-paper">
+      {children}
+    </span>
+  );
+}
+
+function Tile({
+  tone,
+  index,
+  title,
+  to,
+  onClick,
+  children,
+}: {
+  tone: "ice" | "pink" | "lime";
+  index: number;
+  title: string;
+  to?: string;
+  onClick?: () => void;
+  children: ReactNode;
+}) {
+  const cls = cn(
+    "group flex min-h-[200px] flex-col rounded-2xl p-5 text-left text-ink outline-none transition-transform hover:-translate-y-0.5 focus-visible:ring-[3px] focus-visible:ring-ring/50",
+    tone === "ice" && "bg-ice",
+    tone === "pink" && "bg-pink",
+    tone === "lime" && "bg-lime",
+  );
+  const head = (
+    <div className="flex items-center justify-between">
+      <Label className="text-ink/60">
+        {String(index).padStart(2, "0")} — {title}
+      </Label>
+      <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+    </div>
+  );
+  if (to)
+    return (
+      <Link to={to} className={cls}>
+        {head}
+        {children}
+      </Link>
+    );
+  return (
+    <button onClick={onClick} className={cn(cls, "cursor-pointer")}>
+      {head}
+      {children}
+    </button>
+  );
+}
+
