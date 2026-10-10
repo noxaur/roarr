@@ -1,0 +1,141 @@
+# Lab stack for developing and benchmarking roarr against real *arr services.
+# Everything shares one /data tree (TRaSH layout) so hardlinks and imports work
+# without remote path mappings. Indexers are fake (lab/mockindexer).
+#
+#   docker compose -f lab/docker-compose.yml up -d --build
+#   python3 lab/scripts/bootstrap.py
+name: roarr-lab
+
+x-lsio: &lsio
+  environment:
+    PUID: "1000"
+    PGID: "1000"
+    TZ: Etc/UTC
+  restart: unless-stopped
+
+services:
+  mockindexer:
+    build:
+      context: ..
+      dockerfile: lab/mockindexer/Dockerfile
+    command: ["-addr", ":9117", "-torrents", "/torrents"]
+    # One hostname per fake indexer: Prowlarr rate-limits per host, exactly
+    # like it would against seven real trackers.
+    networks:
+      default:
+        aliases: [swiftbay, torrentgala, eztvish, slowtracker, flarecf, deadpool, nyaaish]
+    volumes:
+      - ./state/torrents:/torrents
+    ports: ["9117:9117"]
+
+  prowlarr:
+    <<: *lsio
+    image: lscr.io/linuxserver/prowlarr:latest
+    volumes:
+      - ./state/prowlarr:/config
+    ports: ["9696:9696"]
+
+  sonarr:
+    <<: *lsio
+    image: lscr.io/linuxserver/sonarr:latest
+    volumes:
+      - ./state/sonarr:/config
+      - ./state/data:/data
+    ports: ["8989:8989"]
+
+  radarr:
+    <<: *lsio
+    image: lscr.io/linuxserver/radarr:latest
+    volumes:
+      - ./state/radarr:/config
+      - ./state/data:/data
+    ports: ["7878:7878"]
+
+  qbittorrent:
+    <<: *lsio
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+      WEBUI_PORT: "8080"
+    volumes:
+      - ./state/qbittorrent:/config
+      - ./state/data:/data
+    ports: ["8080:8080"]
+
+  roarr:
+    build:
+      context: ..
+      args:
+        VERSION: lab
+    environment:
+      PROWLARR_URL: http://prowlarr:9696
+      PROWLARR_API_KEY: 0123456789abcdef0123456789abcd03
+      SONARR_URL: http://sonarr:8989
+      SONARR_API_KEY: 0123456789abcdef0123456789abcd01
+      RADARR_URL: http://radarr:7878
+      RADARR_API_KEY: 0123456789abcdef0123456789abcd02
+      QBIT_URL: http://qbittorrent:8080
+      QBIT_USERNAME: admin
+      QBIT_PASSWORD: adminadmin
+      SEERR_URL: ${SEERR_URL:-}
+      SEERR_API_KEY: ${SEERR_API_KEY:-}
+      JELLYFIN_URL: ${JELLYFIN_URL:-}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
+      AUTH_MODE: ${AUTH_MODE:-none}
+      SEERR_AUTO_FETCH: ${SEERR_AUTO_FETCH:-false}
+      LOG_LEVEL: debug
+    volumes:
+      - roarr-config:/config
+    ports: ["3847:3847"]
+
+  seed1:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment: {PUID: "1000", PGID: "1000", TZ: Etc/UTC, WEBUI_PORT: "8080"}
+    volumes:
+      - ./state/seed1:/config
+      - ./state/swarm/payload:/seed
+    ports: ["8091:8080"]
+    profiles: ["swarm"]
+
+  seed2:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment: {PUID: "1000", PGID: "1000", TZ: Etc/UTC, WEBUI_PORT: "8080"}
+    volumes:
+      - ./state/seed2:/config
+      - ./state/swarm/payload:/seed
+    ports: ["8092:8080"]
+    profiles: ["swarm"]
+
+  seed3:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment: {PUID: "1000", PGID: "1000", TZ: Etc/UTC, WEBUI_PORT: "8080"}
+    volumes:
+      - ./state/seed3:/config
+      - ./state/swarm/payload:/seed
+    ports: ["8093:8080"]
+    profiles: ["swarm"]
+
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    user: "1000:1000"
+    volumes:
+      - ./state/jellyfin/config:/config
+      - ./state/jellyfin/cache:/cache
+      - ./state/data/media:/media
+    ports: ["8096:8096"]
+    profiles: ["full"]
+
+  seerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    init: true
+    environment:
+      TZ: Etc/UTC
+    volumes:
+      - ./state/seerr:/app/config
+    ports: ["5055:5055"]
+    profiles: ["full"]
+
+volumes:
+  roarr-config:

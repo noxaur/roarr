@@ -1,0 +1,206 @@
+// Package app is roarr's domain layer: it ties the upstream clients together
+// into library browsing, streaming search, grabbing, watch-first downloads
+// and the activity feed. HTTP handlers live in internal/server.
+package app
+
+import (
+	"context"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/noxaur/roarr/internal/arr"
+	"github.com/noxaur/roarr/internal/config"
+	"github.com/noxaur/roarr/internal/jellyfin"
+	"github.com/noxaur/roarr/internal/qbit"
+	"github.com/noxaur/roarr/internal/search"
+	"github.com/noxaur/roarr/internal/seerr"
+)
+
+// Clients is one consistent set of upstream clients built from settings.
+type Clients struct {
+	Sonarr   *arr.Sonarr
+	Radarr   *arr.Radarr
+	Prowlarr *arr.Prowlarr
+	Seerr    *seerr.Client
+	Jellyfin *jellyfin.Client
+	QBit     *qbit.Client
+	Search   *search.Engine
+}
+
+// App is the running application.
+type App struct {
+	Settings *config.Store
+	DataDir  string
+
+	mu      sync.RWMutex
+	clients *Clients
+
+	Library  *Library
+	Watch    *WatchFirst
+	detailMu sync.Mutex
+	details  map[string]cachedDetail
+}
+
+// New builds the app and starts background loops.
+func New(ctx context.Context, store *config.Store, dataDir string) *App {
+	a := &App{Settings: store, DataDir: dataDir, details: map[string]cachedDetail{}}
+	a.rebuild(store.Get())
+	store.Subscribe(func(s config.Settings) {
+		a.rebuild(s)
+		a.Library.Refresh(context.Background())
+	})
+	a.Library = newLibrary(a)
+	a.Watch = newWatchFirst(a, dataDir)
+	go a.Library.loop(ctx)
+	go a.Watch.loop(ctx)
+	go a.sweepLoop(ctx)
+	go a.seerrLoop(ctx)
+	return a
+}
+
+func (a *App) rebuild(s config.Settings) {
+	c := &Clients{}
+	if s.Sonarr.URL != "" {
+		c.Sonarr = arr.NewSonarr(s.Sonarr.URL, s.Sonarr.APIKey)
+	}
+	if s.Radarr.URL != "" {
+		c.Radarr = arr.NewRadarr(s.Radarr.URL, s.Radarr.APIKey)
+	}
+	if s.Prowlarr.URL != "" {
+		c.Prowlarr = arr.NewProwlarr(s.Prowlarr.URL, s.Prowlarr.APIKey)
+		c.Search = search.NewEngine(c.Prowlarr)
+		c.Search.Timeout = time.Duration(s.Behaviour.IndexerTimeout) * time.Second
+		c.Search.TTL = time.Duration(s.Behaviour.CacheMinutes) * time.Minute
+	}
+	if s.Seerr.URL != "" {
+		c.Seerr = seerr.New(s.Seerr.URL, s.Seerr.APIKey)
+	}
+	if s.Jellyfin.URL != "" {
+		c.Jellyfin = jellyfin.New(s.Jellyfin.URL, s.Jellyfin.APIKey)
+	}
+	if s.QBit.URL != "" {
+		c.QBit = qbit.New(s.QBit.URL, s.QBit.Username, s.QBit.Password)
+	}
+	a.mu.Lock()
+	old := a.clients
+	a.clients = c
+	a.mu.Unlock()
+	if old != nil && old.Search != nil {
+		old.Search.Close()
+	}
+	go a.discover(c, s)
+}
+
+// C returns the current clients.
+func (a *App) C() *Clients {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.clients
+}
+
+// discover fills gaps from what other services already know: Sonarr/Radarr
+// URLs from Prowlarr's app links, and the qBittorrent host from Sonarr's
+// download client settings (the password must still come from config).
+func (a *App) discover(orig *Clients, s config.Settings) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cp := *orig
+	c := &cp
+	changed := false
+	if c.Prowlarr != nil && (c.Sonarr == nil || c.Radarr == nil) {
+		apps, err := c.Prowlarr.Applications(ctx)
+		if err == nil {
+			for _, p := range apps {
+				base, key := p.FieldString("baseUrl"), p.FieldString("apiKey")
+				if base == "" || key == "" || key == "********" {
+					continue
+				}
+				switch p.Implementation {
+				case "Sonarr":
+					if c.Sonarr == nil {
+						c.Sonarr = arr.NewSonarr(base, key)
+						changed = true
+						slog.Info("discovered Sonarr via Prowlarr", "url", base)
+					}
+				case "Radarr":
+					if c.Radarr == nil {
+						c.Radarr = arr.NewRadarr(base, key)
+						changed = true
+						slog.Info("discovered Radarr via Prowlarr", "url", base)
+					}
+				}
+			}
+		}
+	}
+	if c.QBit == nil && s.QBit.Password != "" {
+		var srcs []*arr.Client
+		if c.Sonarr != nil {
+			srcs = append(srcs, c.Sonarr.Client)
+		}
+		if c.Radarr != nil {
+			srcs = append(srcs, c.Radarr.Client)
+		}
+		for _, src := range srcs {
+			dcs, err := src.DownloadClients(ctx)
+			if err != nil {
+				continue
+			}
+			for _, d := range dcs {
+				if d.Implementation != "QBittorrent" || !d.Enable {
+					continue
+				}
+				scheme := "http"
+				if d.FieldBool("useSsl") {
+					scheme = "https"
+				}
+				base := scheme + "://" + d.FieldString("host") + ":" + d.FieldString("port") + d.FieldString("urlBase")
+				user := s.QBit.Username
+				if user == "" {
+					user = d.FieldString("username")
+				}
+				c.QBit = qbit.New(base, user, s.QBit.Password)
+				changed = true
+				slog.Info("discovered qBittorrent via "+src.Service, "url", base)
+				break
+			}
+			if c.QBit != nil {
+				break
+			}
+		}
+	}
+	if !changed {
+		return
+	}
+	a.mu.Lock()
+	swapped := a.clients == orig
+	if swapped {
+		a.clients = c
+	}
+	a.mu.Unlock()
+	if swapped && a.Library != nil {
+		a.Library.Refresh(context.Background())
+	}
+}
+
+func (a *App) sweepLoop(ctx context.Context) {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if c := a.C(); c.Search != nil {
+				c.Search.Sweep()
+			}
+			a.detailMu.Lock()
+			for k, d := range a.details {
+				if time.Since(d.at) > 10*time.Minute {
+					delete(a.details, k)
+				}
+			}
+			a.detailMu.Unlock()
+		}
+	}
+}

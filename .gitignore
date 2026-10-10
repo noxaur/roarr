@@ -1,0 +1,8 @@
+/lab/state/
+/web/node_modules/
+/web/dist/
+/internal/webui/dist/*
+!/internal/webui/dist/.keep
+/bin/
+.DS_Store
+*.local

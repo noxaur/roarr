@@ -1,0 +1,7 @@
+.git
+bin
+lab/state
+web/node_modules
+internal/webui/dist/*
+!internal/webui/dist/.keep
+**/.DS_Store
