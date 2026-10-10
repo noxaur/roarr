@@ -255,7 +255,9 @@ export interface ServiceStatus {
 
 export interface Prefs {
   resolutions: number[];
-  preferHevc: boolean;
+  videoCodecs: string[] | null;
+  audioCodecs: string[] | null;
+  size: "smaller" | "balanced" | "ignore" | "larger";
   allowRemux: boolean;
   allowHdr: boolean;
   maxGbPerHour: number;
