@@ -2,29 +2,29 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { api, type ActivityItem, type LibraryItem } from "./api";
 
 // App-wide data that many pages share: the library (shipped once, then
-// filtered locally), activity counts for the nav badge, and the UI mode.
-
-export type Mode = "manual" | "auto";
+// filtered locally), activity for the nav badge, and the request count.
 
 interface Store {
+  user?: string;
   library: LibraryItem[];
   libraryErrors: Record<string, string>;
   libraryLoaded: boolean;
   reloadLibrary: (hard?: boolean) => Promise<void>;
   activity: ActivityItem[];
   reloadActivity: () => void;
-  mode: Mode;
-  setMode: (m: Mode) => void;
+  /** Pending Seerr requests; null when Seerr is not set up. */
+  pendingRequests: number | null;
+  reloadRequests: () => void;
 }
 
 const Ctx = createContext<Store | null>(null);
 
-export function StoreProvider({ children, defaultMode }: { children: ReactNode; defaultMode: Mode }) {
+export function StoreProvider({ children, user }: { children: ReactNode; user?: string }) {
   const [library, setLibrary] = useState<LibraryItem[]>([]);
   const [libraryErrors, setLibraryErrors] = useState<Record<string, string>>({});
   const [libraryLoaded, setLoaded] = useState(false);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
-  const [mode, setModeState] = useState<Mode>(() => (localStorage.getItem("roarr.mode") as Mode) || defaultMode);
+  const [pendingRequests, setPending] = useState<number | null>(null);
   const etag = useRef<string | null>(null);
 
   const reloadLibrary = useCallback(async (hard = false) => {
@@ -47,26 +47,35 @@ export function StoreProvider({ children, defaultMode }: { children: ReactNode; 
       .catch(() => {});
   }, []);
 
+  const reloadRequests = useCallback(() => {
+    api
+      .requests("pending")
+      .then((r) => setPending(r.items.length))
+      .catch(() => setPending(null));
+  }, []);
+
   useEffect(() => {
     reloadLibrary();
     reloadActivity();
+    reloadRequests();
     const a = setInterval(() => reloadLibrary(), 60_000);
     const b = setInterval(() => {
       if (!document.hidden) reloadActivity();
     }, 5_000);
+    const c = setInterval(() => {
+      if (!document.hidden) reloadRequests();
+    }, 60_000);
     return () => {
       clearInterval(a);
       clearInterval(b);
+      clearInterval(c);
     };
-  }, [reloadLibrary, reloadActivity]);
-
-  const setMode = (m: Mode) => {
-    localStorage.setItem("roarr.mode", m);
-    setModeState(m);
-  };
+  }, [reloadLibrary, reloadActivity, reloadRequests]);
 
   return (
-    <Ctx.Provider value={{ library, libraryErrors, libraryLoaded, reloadLibrary, activity, reloadActivity, mode, setMode }}>{children}</Ctx.Provider>
+    <Ctx.Provider value={{ user, library, libraryErrors, libraryLoaded, reloadLibrary, activity, reloadActivity, pendingRequests, reloadRequests }}>
+      {children}
+    </Ctx.Provider>
   );
 }
 
@@ -75,3 +84,8 @@ export function useStore(): Store {
   if (!s) throw new Error("useStore outside provider");
   return s;
 }
+
+/** Downloads that are moving (or about to). */
+export const isActive = (a: ActivityItem) => a.status === "downloading" || a.status === "queued" || a.status === "importing";
+/** Downloads that need a human. */
+export const needsYou = (a: ActivityItem) => a.status === "warning" || a.status === "failed";

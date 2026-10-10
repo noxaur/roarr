@@ -128,6 +128,7 @@ export function useSearch(key: string, streams: Record<string, string>[], enable
       active.current.clear();
       keyRef.current = null;
       if (raf.current) cancelAnimationFrame(raf.current);
+      raf.current = 0;
     },
     [],
   );
