@@ -10,18 +10,25 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@fontsource-variable/special-gothic": "^5.3.0",
-    "@fontsource/rubik": "^5.3.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "date-fns": "^4.4.0",
+    "embla-carousel-react": "^8.6.0",
+    "input-otp": "^1.5.0",
     "lucide-react": "^1.55.0",
     "radix-ui": "^1.7.0",
     "react": "^19.1.0",
+    "react-day-picker": "^10.0.2",
     "react-dom": "^19.1.0",
+    "react-resizable-panels": "^4.14.5",
+    "recharts": "^3.8.0",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0",
-    "tw-animate-css": "^1.4.0"
+    "tw-animate-css": "^1.4.0",
+    "vaul": "^1.1.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

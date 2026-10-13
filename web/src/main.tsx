@@ -7,7 +7,7 @@ import "./styles.css";
 const dark = matchMedia("(prefers-color-scheme: dark)");
 const applyTheme = () => {
   document.documentElement.classList.toggle("dark", dark.matches);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark.matches ? "#151717" : "#f9f4eb");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark.matches ? "#0a0a0a" : "#ffffff");
 };
 applyTheme();
 dark.addEventListener("change", applyTheme);

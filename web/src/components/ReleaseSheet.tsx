@@ -121,7 +121,7 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
               <Label className="flex items-center gap-1.5 text-ink/65">
                 <Star className="size-3 fill-current" /> Recommended · {coversAll ? `covers all ${p.wanted.length}` : `covers ${p.wanted.length - plan.missing.length} of ${p.wanted.length}`} · {bytes(plan.size)}
               </Label>
-              <Button variant="ink" size="sm" className="ml-auto" disabled={allGot || grabber.busy.size > 0} onClick={() => grabber.grabAll(plan.picks.map((x) => x.release), opts)}>
+              <Button variant="default" size="sm" className="ml-auto" disabled={allGot || grabber.busy.size > 0} onClick={() => grabber.grabAll(plan.picks.map((x) => x.release), opts)}>
                 {allGot ? <Check /> : grabber.busy.size > 0 ? <Spinner /> : <Download />}
                 {allGot ? "Grabbed" : "Get recommended"}
               </Button>
