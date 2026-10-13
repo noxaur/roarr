@@ -118,7 +118,7 @@ export function RequestsPage() {
             const canGet = r.kind === "movie" || !!r.tvdbId || !!r.libraryId;
             const b = busy[r.id];
             return (
-              <div key={r.id} className="grid grid-cols-[48px_minmax(0,1fr)] items-center gap-x-4 gap-y-3 border-t border-dashed border-dash py-4 sm:grid-cols-[54px_minmax(0,1fr)_auto] sm:gap-x-5">
+              <div key={r.id} className="grid grid-cols-[48px_minmax(0,1fr)] items-center gap-x-4 gap-y-3 border-t border-border py-4 sm:grid-cols-[54px_minmax(0,1fr)_auto] sm:gap-x-5">
                 <Thumb src={r.poster} title={r.title} className="w-12 sm:w-[54px]" />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">

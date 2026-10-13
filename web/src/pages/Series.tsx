@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, Download, ListChecks, Radar, RefreshCw, Trash2 } from "lucide-react";
+import { Bookmark, Check, ChevronRight, Download, ListChecks, Radar, RefreshCw, Trash2 } from "lucide-react";
 import { api, type EpisodeAction, type EpisodeDetail, type Release, type SeriesDetail } from "@/lib/api";
 import { autoGet, run } from "@/lib/actions";
 import { bytes, epCode, pad } from "@/lib/format";
 import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
 import { useRouter } from "@/lib/router";
+import { usePointerSelect } from "@/lib/select";
 import { useStore } from "@/lib/store";
 import { useSearch } from "@/lib/useSearch";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Notice } from "@/components/kit";
 import { useConfirm } from "@/components/Confirm";
@@ -359,6 +361,96 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     setSheet(true);
   };
 
+  // One episode's actions, shared by its ⋯ menu and its right-click menu.
+  const epMenu = (e: EpisodeDetail, C: MenuParts) => {
+    const code = label(e.id);
+    return (
+      <>
+      <C.Label className="font-mono text-[11px] font-normal">
+        {code}
+        {e.file && <span className="mt-0.5 block break-all text-muted-foreground">{e.file.path}</span>}
+      </C.Label>
+      {e.hasFile ? (
+        <>
+          <C.Item onSelect={() => replace([e.id])}>
+            <RefreshCw /> Replace…
+          </C.Item>
+          <C.Item onSelect={() => replace([e.id], true)}>
+            <ListChecks /> Choose a replacement…
+          </C.Item>
+        </>
+      ) : (
+        <>
+          <C.Item onSelect={() => getNow([e.id])}>
+            <Download /> Get it now
+          </C.Item>
+          <C.Item onSelect={() => choose([e.id])}>
+            <ListChecks /> Choose release…
+          </C.Item>
+        </>
+      )}
+      {lib && (
+        <C.Item onSelect={() => episodesDo("search", [e.id], "Asking Sonarr…")}>
+          <Radar /> Let Sonarr search
+        </C.Item>
+      )}
+      <C.Sep />
+      <C.Item onSelect={() => toggle(e)}>
+        <Check /> {sel.has(e.id) && scope === "custom" ? "Untick" : "Tick"}
+      </C.Item>
+      {lib && (
+        <C.Item onSelect={() => setMonitored([e.id], !isMon(e))}>
+          <Bookmark /> {isMon(e) ? "Stop monitoring" : "Monitor"}
+        </C.Item>
+      )}
+      {e.hasFile && (
+        <>
+          <C.Sep />
+          <C.Item variant="destructive" onSelect={() => deleteFiles([e.id])}>
+            <Trash2 /> Delete file…
+          </C.Item>
+        </>
+      )}
+      </>
+    );
+  };
+
+  // Actions for every ticked episode, when one of several is right-clicked.
+  const bulkMenu = (C: MenuParts) => (
+    <>
+      <C.Label className="text-xs font-normal text-muted-foreground">{plural(tickedArr.length, "episode")} ticked</C.Label>
+      {tickedMissing.length > 0 && (
+        <C.Item onSelect={() => getNow(tickedMissing)}>
+          <Download /> Get {plural(tickedMissing.length, "missing episode")}
+        </C.Item>
+      )}
+      <C.Item onSelect={() => setSheet(true)}>
+        <ListChecks /> Choose releases…
+      </C.Item>
+      {lib && tickedOnDisk.length > 0 && (
+        <C.Item onSelect={() => replace(tickedOnDisk.map((e) => e.id))}>
+          <RefreshCw /> Replace {plural(tickedOnDisk.length, "file")}…
+        </C.Item>
+      )}
+      {lib && (
+        <C.Item onSelect={() => setMonitored(tickedArr, !allMon)}>
+          <Bookmark /> {allMon ? "Stop monitoring" : "Monitor"} them
+        </C.Item>
+      )}
+      <C.Item onSelect={clearTicks}>
+        <Check /> Untick all
+      </C.Item>
+      {lib && tickedOnDisk.length > 0 && (
+        <>
+          <C.Sep />
+          <C.Item variant="destructive" onSelect={() => deleteFiles(tickedArr)}>
+            <Trash2 /> Delete {plural(tickedOnDisk.length, "file")}…
+          </C.Item>
+        </>
+      )}
+    </>
+  );
+
   const tickedArr = scope === "custom" ? selArr : [];
   const tickedOnDisk = onDisk(tickedArr);
   const tickedMissing = tickedArr.filter((id) => {
@@ -369,6 +461,17 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     const e = byId.get(id);
     return e ? isMon(e) : true;
   });
+
+  // Drag down the list (or press and hold, then move) to tick a run of episodes.
+  const tickedKeys = useMemo(() => new Set(tickedArr.map(String)), [tickedArr]);
+  const onPaint = useCallback(
+    (next: Set<string>) => {
+      setTicked(new Set([...next].map(Number)));
+      setScope("custom");
+    },
+    [],
+  );
+  const pointer = usePointerSelect({ selected: tickedKeys, onChange: onPaint, paintOnDrag: true, clearOnBlankClick: false });
 
   const have = allEps.filter((e) => e.season > 0 && e.hasFile).length;
   const queued = allEps.filter((e) => e.season > 0 && e.queued).length;
@@ -456,7 +559,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
           />
         }
         body={
-          <div className="border-t border-dashed border-dash">
+          <div className="border-t border-border select-none" onMouseDown={pointer.onMouseDown}>
             {seasons.map((s) => {
               const aired = s.episodes.filter((e) => e.aired);
               const haveS = aired.filter((e) => e.hasFile).length;
@@ -468,7 +571,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
               const seasonMissing = aired.filter((e) => !e.hasFile && !e.queued).map((e) => e.id);
               const seasonSize = s.episodes.reduce((n, e) => n + (e.file?.size ?? 0), 0);
               return (
-                <section key={s.number} className="border-b border-dashed border-dash">
+                <section key={s.number} className="border-b border-border">
                   <div className="flex min-h-14 items-center gap-3">
                     <button
                       className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left outline-none focus-visible:underline"
@@ -531,9 +634,14 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                         const on = sel.has(e.id);
                         const code = label(e.id);
                         return (
+                          <ContextMenu key={e.id}>
+                          <ContextMenuTrigger asChild disabled={!e.aired}>
                           <div
-                            key={e.id}
-                            onClick={(ev) => e.aired && toggle(e, ev.shiftKey)}
+                            data-sel={e.aired ? String(e.id) : undefined}
+                            onClick={(ev) => {
+                              if (pointer.swallowClick()) return;
+                              if (e.aired) toggle(e, ev.shiftKey);
+                            }}
                             className={cn(
                               "group -mx-2.5 flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-2.5 py-1 transition-colors select-none hover:bg-muted/60",
                               on && "bg-lime/45 hover:bg-lime/55 dark:bg-lime/12 dark:hover:bg-lime/18",
@@ -568,47 +676,15 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                             {lib && <MonitorToggle on={isMon(e)} label={code} onToggle={() => setMonitored([e.id], !isMon(e))} />}
                             {e.aired ? (
                               <RowMenu label={`${code} actions`} className="opacity-60 group-hover:opacity-100 focus-visible:opacity-100">
-                                <DropdownMenuLabel className="font-mono text-[11px] font-normal">
-                                  {code}
-                                  {e.file && <span className="mt-0.5 block break-all text-muted-foreground">{e.file.path}</span>}
-                                </DropdownMenuLabel>
-                                {e.hasFile ? (
-                                  <>
-                                    <DropdownMenuItem onSelect={() => replace([e.id])}>
-                                      <RefreshCw /> Replace…
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => replace([e.id], true)}>
-                                      <ListChecks /> Choose a replacement…
-                                    </DropdownMenuItem>
-                                  </>
-                                ) : (
-                                  <>
-                                    <DropdownMenuItem onSelect={() => getNow([e.id])}>
-                                      <Download /> Get it now
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onSelect={() => choose([e.id])}>
-                                      <ListChecks /> Choose release…
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                                {lib && (
-                                  <DropdownMenuItem onSelect={() => episodesDo("search", [e.id], "Asking Sonarr…")}>
-                                    <Radar /> Let Sonarr search
-                                  </DropdownMenuItem>
-                                )}
-                                {e.hasFile && (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem variant="destructive" onSelect={() => deleteFiles([e.id])}>
-                                      <Trash2 /> Delete file…
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
+                                {epMenu(e, DM)}
                               </RowMenu>
                             ) : (
                               <span className="w-7 shrink-0" />
                             )}
                           </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="w-64">{tickedKeys.has(String(e.id)) && tickedArr.length > 1 ? bulkMenu(CM) : epMenu(e, CM)}</ContextMenuContent>
+                          </ContextMenu>
                         );
                       })}
                     </div>
@@ -673,3 +749,7 @@ function rangeLabel(codes: string[]): string {
   if (codes.length === 1) return codes[0];
   return `${codes[0]} – ${codes[codes.length - 1]}`;
 }
+
+type MenuParts = { Item: typeof DropdownMenuItem | typeof ContextMenuItem; Label: typeof DropdownMenuLabel | typeof ContextMenuLabel; Sep: typeof DropdownMenuSeparator | typeof ContextMenuSeparator };
+const DM: MenuParts = { Item: DropdownMenuItem, Label: DropdownMenuLabel, Sep: DropdownMenuSeparator };
+const CM: MenuParts = { Item: ContextMenuItem, Label: ContextMenuLabel, Sep: ContextMenuSeparator };

@@ -2,18 +2,18 @@ import { useState, type ReactNode } from "react";
 import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
 
-// When there is no artwork we set the title on a pastel card instead of
-// showing a broken image. The colour is stable per title.
+// When there is no artwork we set the title on a quiet, dark tone instead of
+// showing a broken image. The tone is stable per title.
 const PALETTE: [string, string][] = [
-  ["#ffc6da", "#1a1c1c"],
-  ["#d0ff7e", "#1a1c1c"],
-  ["#dcf2f4", "#1a1c1c"],
-  ["#1a1c1c", "#f9f4eb"],
-  ["#e75d60", "#f9f4eb"],
-  ["#e7dcc6", "#1a1c1c"],
-  ["#2f4a3e", "#f2ede3"],
-  ["#3a3f86", "#f2ede3"],
-  ["#f0b44a", "#1a1c1c"],
+  ["#1f2a2e", "#f4f4f2"],
+  ["#3a2a1e", "#f4f4f2"],
+  ["#2b2621", "#f4f4f2"],
+  ["#2e1e1e", "#f4f4f2"],
+  ["#262b22", "#f4f4f2"],
+  ["#1e2433", "#f4f4f2"],
+  ["#2a1e33", "#f4f4f2"],
+  ["#1c2b2b", "#f4f4f2"],
+  ["#331e2a", "#f4f4f2"],
 ];
 
 function hash(s: string): number {
@@ -30,13 +30,8 @@ export function PosterImg({ src, title, year, className }: { src?: string; title
   const [bg, fg] = PALETTE[h % PALETTE.length];
   return (
     <div className={cn("@container relative flex size-full flex-col justify-between overflow-hidden p-[7%]", className)} style={{ background: bg, color: fg }}>
-      <span
-        aria-hidden
-        className="absolute aspect-square w-[120%] rounded-full"
-        style={{ left: `${10 + (h % 30)}%`, top: `${8 + (h % 22)}%`, background: fg === "#1a1c1c" ? "rgb(26 28 28 / .13)" : "rgb(249 244 235 / .15)" }}
-      />
       <span className="relative font-mono text-[10px] tracking-wider opacity-70 @max-[60px]:hidden">{year ?? ""}</span>
-      <span className="relative font-display text-[clamp(10px,13cqw,30px)] leading-[0.95] @max-[60px]:hidden">{title}</span>
+      <span className="relative text-[clamp(10px,12cqw,28px)] leading-[1.02] font-semibold tracking-[-0.04em] text-balance @max-[60px]:hidden">{title}</span>
     </div>
   );
 }

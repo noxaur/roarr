@@ -3,7 +3,7 @@ import { Command as CommandPrimitive } from "cmdk";
 import { Download, Search } from "lucide-react";
 import { api, type DiscoverItem, type LibraryItem } from "@/lib/api";
 import { autoGet } from "@/lib/actions";
-import { bytes } from "@/lib/format";
+import { bytes, fold } from "@/lib/format";
 import { discoverHref, libraryHref, rankLibrary } from "@/lib/rank";
 import { useRouter } from "@/lib/router";
 import { useStore } from "@/lib/store";
@@ -15,12 +15,19 @@ import { Thumb } from "./Poster";
 
 type Row = { key: string; href: string; lib?: LibraryItem; remote?: DiscoverItem };
 
+export interface Command {
+  id: string;
+  label: string;
+  kbd?: string;
+  run: () => void;
+}
+
 /**
  * Search from anywhere. Library hits are instant (the library is already in
  * the browser); everything else comes from TMDB through Seerr. Movies can be
  * fetched straight from here with ⌘↵.
  */
-export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boolean; onOpenChange: (o: boolean) => void; commands?: Command[] }) {
   const { library, reloadActivity, reloadLibrary } = useStore();
   const { navigate } = useRouter();
   const [q, setQ] = useState("");
@@ -109,28 +116,33 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
   };
 
   const term = q.trim();
+  const cmds = commands.filter((c) => !term || fold(c.label).includes(fold(term)));
+  const runCmd = (c: Command) => {
+    onOpenChange(false);
+    c.run();
+  };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent showCloseButton={false} className="top-[12vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-[680px]">
         <DialogTitle className="sr-only">Search</DialogTitle>
         <DialogDescription className="sr-only">Search your library and everything on TMDB</DialogDescription>
         <CommandPrimitive shouldFilter={false} loop value={selected} onValueChange={setSelected} onKeyDown={onKeyDown} className="flex flex-col">
-          <div className="flex h-[68px] items-center gap-3 border-b border-dashed border-dash px-5">
+          <div className="flex h-14 items-center gap-3 border-b border-border px-5">
             <Search className="size-5 shrink-0 text-muted-foreground" />
             <CommandPrimitive.Input
               value={q}
               onValueChange={setQ}
-              placeholder="Search shows & movies…"
-              className="h-full flex-1 bg-transparent text-2xl font-medium tracking-tight outline-none placeholder:text-muted-foreground/60"
+              placeholder="Search shows, movies, commands…"
+              className="h-full flex-1 bg-transparent text-lg font-medium tracking-tight outline-none placeholder:text-muted-foreground/70"
             />
             {loading && <Spinner />}
             <Kbd>esc</Kbd>
           </div>
           <CommandPrimitive.List className="max-h-[min(60vh,520px)] overflow-y-auto px-2.5 py-2">
             {term.length === 0 && (
-              <div className="px-3 py-8 text-center text-sm text-muted-foreground">Type a title. Your library answers instantly; TMDB follows in a blink.</div>
+              <div className="px-3 pt-3 pb-1 text-sm text-muted-foreground">Type a title. Your library answers instantly; TMDB follows in a blink.</div>
             )}
-            {term.length > 0 && !loading && rows.a.length + rows.b.length === 0 && (
+            {term.length > 0 && !loading && rows.a.length + rows.b.length + cmds.length === 0 && (
               <CommandPrimitive.Empty className="px-3 py-8 text-center text-sm text-muted-foreground">{error ?? `Nothing found for “${term}”.`}</CommandPrimitive.Empty>
             )}
             {rows.a.length > 0 && (
@@ -185,8 +197,19 @@ export function SearchPalette({ open, onOpenChange }: { open: boolean; onOpenCha
                 })}
               </CommandPrimitive.Group>
             )}
+            {cmds.length > 0 && (
+              <CommandPrimitive.Group heading="Commands" className="**:[[cmdk-group-heading]]:label **:[[cmdk-group-heading]]:px-2.5 **:[[cmdk-group-heading]]:py-2">
+                {cmds.map((c) => (
+                  <Item key={c.id} value={`cmd:${c.id}`} onSelect={() => runCmd(c)}>
+                    <span className="size-2 shrink-0 rounded-[2px] bg-muted-foreground/40" />
+                    <span className="flex-1 text-sm">{c.label}</span>
+                    {c.kbd && <Kbd>{c.kbd}</Kbd>}
+                  </Item>
+                ))}
+              </CommandPrimitive.Group>
+            )}
           </CommandPrimitive.List>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-dashed border-dash px-5 py-3 font-mono text-[11px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border px-5 py-3 font-mono text-[11px] text-muted-foreground">
             <span>
               <Kbd>↑↓</Kbd> move
             </span>
@@ -209,7 +232,7 @@ function Item({ value, onSelect, children }: { value: string; onSelect: () => vo
     <CommandPrimitive.Item
       value={value}
       onSelect={onSelect}
-      className="flex cursor-pointer items-center gap-3.5 rounded-xl px-2.5 py-2 outline-none data-[selected=true]:bg-muted"
+      className="flex cursor-pointer items-center gap-3.5 rounded-lg px-2.5 py-2 outline-none data-[selected=true]:bg-accent"
     >
       {children}
     </CommandPrimitive.Item>

@@ -174,7 +174,7 @@ export function GetCard({
       </Button>
 
       {wantedCount > 0 && (
-        <div className="mt-3 rounded-xl border border-dashed border-dash px-3.5 py-3">
+        <div className="mt-3 rounded-xl border border-border px-3.5 py-3">
           <div className="flex items-center gap-2 font-mono text-xs">
             {pending && !ready ? <Spinner className="size-3" /> : <i className={cn("size-2 rounded-full", ready ? "bg-lime ring-1 ring-ink/25" : "bg-pink")} />}
             <span>{ready ? (pending ? "Best pick so far" : "Best pick ready") : pending ? "Searching indexers…" : "Nothing suitable yet"}</span>

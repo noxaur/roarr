@@ -310,7 +310,7 @@ function ServiceRow({
   const line = status?.ok ? [`v${status.version}`, `${status.ms} ms`, svc.hint].join(" · ") : status?.configured ? status.error : svc.hint;
 
   return (
-    <div className={cn("border-t border-dashed border-dash", open && "my-2 rounded-2xl border-transparent bg-muted/70 px-4 md:-mx-4")}>
+    <div className={cn("border-t border-border", open && "my-2 rounded-2xl border-transparent bg-muted/70 px-4 md:-mx-4")}>
       <div className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-x-3.5 gap-y-1 py-4 sm:grid-cols-[10px_140px_minmax(0,1fr)_auto]">
         <i className={cn("size-2 rounded-full", status?.ok ? "bg-ok" : broken ? "bg-destructive" : "bg-muted-foreground/40")} />
         <b className="text-base font-semibold tracking-tight">{svc.name}</b>
@@ -400,7 +400,7 @@ function LockedInput({ locked, type, value, placeholder, onChange }: { locked?: 
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
-    <div className="grid gap-x-8 gap-y-2.5 border-t border-dashed border-dash py-5 sm:grid-cols-[200px_minmax(0,1fr)]">
+    <div className="grid gap-x-8 gap-y-2.5 border-t border-border py-5 sm:grid-cols-[200px_minmax(0,1fr)]">
       <div>
         <div className="font-semibold tracking-tight">{label}</div>
         {hint && <p className="mt-1 text-[13px] leading-snug text-muted-foreground">{hint}</p>}

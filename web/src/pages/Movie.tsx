@@ -257,7 +257,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
         body={
           <>
             {d.file && (
-              <section className="mb-8 border-t border-dashed border-dash pt-5">
+              <section className="mb-8 border-t border-border pt-5">
                 <div className="mb-3 flex items-center gap-3">
                   <Label>On disk</Label>
                   <span className="ml-auto flex gap-1">
@@ -273,7 +273,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
               </section>
             )}
             {inCollection && (
-              <section className="border-t border-dashed border-dash pt-5">
+              <section className="border-t border-border pt-5">
                 <div className="mb-3 flex items-baseline gap-3">
                   <Label>{d.collection?.title}</Label>
                   <span className="font-mono text-xs text-muted-foreground">

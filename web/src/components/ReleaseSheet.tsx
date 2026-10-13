@@ -128,7 +128,7 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
             </div>
             <div className="mt-2">
               {plan.picks.slice(0, 5).map((x) => (
-                <div key={x.release.key} className="flex gap-3 border-t border-dashed border-ink/25 py-1.5 font-mono text-[11.5px] first:border-t-0">
+                <div key={x.release.key} className="flex gap-3 border-t border-ink/25 py-1.5 font-mono text-[11.5px] first:border-t-0">
                   <span className="shrink-0">{grabber.results.get(x.release.key)?.ok ? "✓" : coverLabel(x.release, x.fills, p)}</span>
                   <span className="min-w-0 flex-1 truncate" title={x.release.title}>
                     {x.release.title}
@@ -216,7 +216,7 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
         </div>
 
         {rejectedCount > 0 && (
-          <div className="border-t border-dashed border-dash px-6 py-3.5 font-mono text-[11.5px] text-muted-foreground sm:px-7">
+          <div className="border-t border-border px-6 py-3.5 font-mono text-[11.5px] text-muted-foreground sm:px-7">
             {rejectedCount} release{rejectedCount > 1 ? "s" : ""} {showRejected ? "shown despite" : "hidden by"} your quality rules ·{" "}
             <button className="cursor-pointer underline decoration-dash underline-offset-4 hover:text-foreground" onClick={() => setShowRejected(!showRejected)}>
               {showRejected ? "hide them" : "show them"}
@@ -302,7 +302,7 @@ function ReleaseRow({
   ].filter(Boolean) as string[];
 
   return (
-    <div className={cn("border-t border-dashed border-dash py-3", r.rejected && "opacity-55")}>
+    <div className={cn("border-t border-border py-3", r.rejected && "opacity-55")}>
       <div className="grid grid-cols-[38px_minmax(0,1fr)_auto_auto] items-center gap-3 sm:gap-3.5">
         <span
           title={(r.notes ?? []).join("\n") || undefined}

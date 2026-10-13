@@ -176,7 +176,7 @@ function Row({ a, attention, onRemove }: { a: ActivityItem; attention?: boolean;
     <div
       className={cn(
         "grid grid-cols-[48px_minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 md:grid-cols-[54px_minmax(0,1fr)_minmax(220px,300px)_auto] md:gap-x-5",
-        attention ? "rounded-2xl bg-pink/40 p-4 dark:bg-pink/10" : "border-t border-dashed border-dash py-4",
+        attention ? "rounded-2xl bg-pink/40 p-4 dark:bg-pink/10" : "border-t border-border py-4",
       )}
     >
       <Thumb src={a.poster} title={a.title} className="w-12 md:w-[54px]" />

@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 export function Label({ children, mark, className }: { children: ReactNode; mark?: boolean; className?: string }) {
   return (
     <div className={cn("label", className)}>
-      {mark && <span aria-hidden>┌─ </span>}
+      {mark && <span aria-hidden className="mr-1.5 inline-block size-1.5 rounded-full bg-lime align-middle" />}
       {children}
     </div>
   );
@@ -18,7 +18,7 @@ export function PageHeader({ label, title, children, size = "xl" }: { label: Rea
     <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-6">
       <div className="min-w-0">
         <Label mark>{label}</Label>
-        <h1 className={cn("mt-4 font-display", size === "xl" ? "text-[clamp(3.5rem,9vw,7.25rem)]" : "text-[clamp(3rem,6vw,4.75rem)]")}>{title}</h1>
+        <h1 className={cn("mt-3 font-display", size === "xl" ? "text-[clamp(2.5rem,5vw,3.5rem)]" : "text-[clamp(2.25rem,4.5vw,3rem)]")}>{title}</h1>
       </div>
       {children}
     </header>
@@ -31,8 +31,8 @@ export function Stats({ children }: { children: ReactNode }) {
 
 export function Stat({ value, unit, label }: { value: ReactNode; unit?: string; label: string }) {
   return (
-    <div className="border-l border-dashed border-dash px-5 first:border-l-0 first:pl-0 sm:first:border-l sm:first:pl-5">
-      <dt className="font-display text-[2.5rem] leading-none tracking-[-0.04em]">
+    <div className="border-l border-border px-5 first:border-l-0 first:pl-0 sm:first:border-l sm:first:pl-5">
+      <dt className="font-display text-[1.75rem] leading-none tracking-[-0.04em] tabular">
         {value}
         {unit && <small className="ml-1 font-mono text-sm font-medium tracking-normal text-muted-foreground">{unit}</small>}
       </dt>
@@ -55,8 +55,7 @@ export function SectionHead({ index, title, children, className }: { index?: num
 
 export function Empty({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("rounded-xl border border-dashed border-dash px-6 py-10 text-center text-muted-foreground", className)}>
-      <div aria-hidden className="mb-2 font-mono text-xs tracking-widest">┌──────┐</div>
+    <div className={cn("rounded-xl border border-border px-6 py-14 text-center text-muted-foreground", className)}>
       {children}
     </div>
   );

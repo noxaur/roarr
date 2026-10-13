@@ -1,12 +1,17 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { api, setUnauthorizedHandler } from "./lib/api";
 import { Router, match, useRouter } from "./lib/router";
 import { StoreProvider } from "./lib/store";
 import { Toaster } from "./components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { ConfirmProvider } from "./components/Confirm";
+import { DownloadsDrawer } from "./components/Downloads";
 import { Nav } from "./components/Nav";
-import { SearchPalette } from "./components/SearchPalette";
+import { SearchPalette, type Command } from "./components/SearchPalette";
+import { ShortcutsDialog } from "./components/Shortcuts";
+import { ShellCtx, keyIsBusy } from "./lib/shell";
+import { toggleTheme } from "./lib/theme";
+import { undoLast } from "./lib/undo";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
 
@@ -50,20 +55,60 @@ export function App() {
 }
 
 function Shell({ authMode }: { authMode: string }) {
-  const { path, search } = useRouter();
+  const { path, search, navigate } = useRouter();
   const [searching, setSearching] = useState(false);
+  const [downloads, setDownloads] = useState(false);
+  const [shortcuts, setShortcuts] = useState(false);
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      const typing = e.target instanceof HTMLElement && (e.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName));
-      if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing)) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (e.key === "k" && mod) {
         e.preventDefault();
         setSearching((s) => !s);
+        return;
       }
+      // D also closes the drawer it opened.
+      if (e.key.toLowerCase() === "d" && !mod && document.querySelector("[data-downloads]") && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        setDownloads(false);
+        return;
+      }
+      if (keyIsBusy(e) || e.altKey) return;
+      if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undoLast();
+        return;
+      }
+      if (mod) return;
+      const k = e.key.toLowerCase();
+      if (e.key === "/") setSearching(true);
+      else if (e.key === "?") setShortcuts(true);
+      else if (k === "d") setDownloads((d) => !d);
+      else if (k === "t") toggleTheme();
+      else return;
+      e.preventDefault();
     };
     addEventListener("keydown", on);
     return () => removeEventListener("keydown", on);
   }, []);
+
+  const shell = useMemo(
+    () => ({ openSearch: () => setSearching(true), toggleDownloads: () => setDownloads((d) => !d), openShortcuts: () => setShortcuts(true) }),
+    [],
+  );
+
+  const commands: Command[] = [
+    { id: "library", label: "Go to library", run: () => navigate("/") },
+    { id: "activity", label: "Go to activity", run: () => navigate("/activity") },
+    { id: "requests", label: "Go to requests", run: () => navigate("/requests") },
+    { id: "settings", label: "Go to settings", run: () => navigate("/settings") },
+    { id: "downloads", label: downloads ? "Hide downloads" : "Show downloads", kbd: "D", run: () => setDownloads((d) => !d) },
+    { id: "missing", label: "Show what's missing", run: () => navigate("/?filter=missing") },
+    { id: "theme", label: "Switch light / dark", kbd: "T", run: toggleTheme },
+    { id: "undo", label: "Undo last change", kbd: "⌘Z", run: undoLast },
+    { id: "shortcuts", label: "Keyboard shortcuts", kbd: "?", run: () => setShortcuts(true) },
+  ];
 
   let page = <Home />;
   let m: Record<string, string> | null;
@@ -76,12 +121,14 @@ function Shell({ authMode }: { authMode: string }) {
   else if (path === "/settings") page = <SettingsPage />;
 
   return (
-    <>
-      <Nav onSearch={() => setSearching(true)} authMode={authMode} />
-      <main className="mx-auto max-w-[1360px] px-4 pt-8 pb-24 sm:px-8 lg:px-10 lg:pt-10">
+    <ShellCtx.Provider value={shell}>
+      <Nav authMode={authMode} />
+      <main className="mx-auto max-w-[1360px] px-4 pt-8 pb-28 sm:px-6 lg:pt-10">
         <Suspense fallback={null}>{page}</Suspense>
       </main>
-      <SearchPalette open={searching} onOpenChange={setSearching} />
-    </>
+      <SearchPalette open={searching} onOpenChange={setSearching} commands={commands} />
+      <DownloadsDrawer open={downloads} onOpenChange={setDownloads} />
+      <ShortcutsDialog open={shortcuts} onOpenChange={setShortcuts} />
+    </ShellCtx.Provider>
   );
 }
