@@ -43,7 +43,8 @@ type Movie struct {
 	AlternateTitles []struct {
 		Title string `json:"title"`
 	} `json:"alternateTitles"`
-	Ratings *struct {
+	MovieFile *MediaFile `json:"movieFile"`
+	Ratings   *struct {
 		Tmdb *struct {
 			Value float64 `json:"value"`
 		} `json:"tmdb"`
@@ -131,8 +132,34 @@ func (r *Radarr) Collection(ctx context.Context, tmdbID int) (*Collection, error
 }
 
 // Monitor sets a movie monitored.
-func (r *Radarr) Monitor(ctx context.Context, id int) error {
-	return r.send(ctx, http.MethodPut, "/movie/editor", map[string]any{"movieIds": []int{id}, "monitored": true}, nil)
+func (r *Radarr) Monitor(ctx context.Context, id int) error { return r.SetMonitored(ctx, id, true) }
+
+// SetMonitored sets a movie's monitored flag.
+func (r *Radarr) SetMonitored(ctx context.Context, id int, monitored bool) error {
+	return r.send(ctx, http.MethodPut, "/movie/editor", map[string]any{"movieIds": []int{id}, "monitored": monitored}, nil)
+}
+
+// DeleteMovieFile removes a movie file from disk.
+func (r *Radarr) DeleteMovieFile(ctx context.Context, fileID int) error {
+	return r.send(ctx, http.MethodDelete, "/moviefile/"+strconv.Itoa(fileID), nil, nil)
+}
+
+// DeleteMovie removes a movie from Radarr, optionally with its files.
+func (r *Radarr) DeleteMovie(ctx context.Context, id int, deleteFiles bool) error {
+	q := url.Values{"deleteFiles": {strconv.FormatBool(deleteFiles)}, "addImportExclusion": {"false"}}
+	return r.Do(ctx, http.MethodDelete, r.prefix+"/movie/"+strconv.Itoa(id), q, nil, nil)
+}
+
+// SearchMovie has Radarr run its own search.
+func (r *Radarr) SearchMovie(ctx context.Context, id int) error {
+	_, err := r.RunCommand(ctx, map[string]any{"name": "MoviesSearch", "movieIds": []int{id}})
+	return err
+}
+
+// RefreshMovie refreshes metadata and rescans the movie folder.
+func (r *Radarr) RefreshMovie(ctx context.Context, id int) error {
+	_, err := r.RunCommand(ctx, map[string]any{"name": "RefreshMovie", "movieIds": []int{id}})
+	return err
 }
 
 // SetQualityProfile moves a movie to a quality profile.

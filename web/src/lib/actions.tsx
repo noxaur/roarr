@@ -35,3 +35,19 @@ export async function autoGet(body: AutoBody, what: string): Promise<AutoResult 
 }
 
 export const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Runs a library change with one toast that follows it. Resolves true when
+ * it worked.
+ */
+export async function run(pending: string, f: () => Promise<{ message?: string } | unknown>, done?: string): Promise<boolean> {
+  const id = toast.loading(pending);
+  try {
+    const res = (await f()) as { message?: string } | undefined;
+    toast.success(done ?? res?.message ?? "Done", { id });
+    return true;
+  } catch (e) {
+    toast.error(errText(e), { id });
+    return false;
+  }
+}

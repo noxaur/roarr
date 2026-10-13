@@ -272,3 +272,84 @@ func (s *Sonarr) RescanSeries(ctx context.Context, seriesID int) error {
 func (s *Sonarr) SetQualityProfile(ctx context.Context, seriesID, profileID int) error {
 	return s.send(ctx, http.MethodPut, "/series/editor", map[string]any{"seriesIds": []int{seriesID}, "qualityProfileId": profileID}, nil)
 }
+
+// MediaFile is the part of an episode or movie file roarr shows: what is on
+// disk, how big, and in what quality.
+type MediaFile struct {
+	ID           int    `json:"id"`
+	RelativePath string `json:"relativePath"`
+	Path         string `json:"path"`
+	Size         int64  `json:"size"`
+	ReleaseGroup string `json:"releaseGroup"`
+	DateAdded    string `json:"dateAdded"`
+	Quality      struct {
+		Quality struct {
+			Name       string `json:"name"`
+			Resolution int    `json:"resolution"`
+		} `json:"quality"`
+	} `json:"quality"`
+	MediaInfo *struct {
+		VideoCodec        string  `json:"videoCodec"`
+		VideoDynamicRange string  `json:"videoDynamicRangeType"`
+		AudioCodec        string  `json:"audioCodec"`
+		AudioChannels     float64 `json:"audioChannels"`
+		AudioLanguages    string  `json:"audioLanguages"`
+		Subtitles         string  `json:"subtitles"`
+		RunTime           string  `json:"runTime"`
+	} `json:"mediaInfo"`
+}
+
+// EpisodeFiles lists the files of a series.
+func (s *Sonarr) EpisodeFiles(ctx context.Context, seriesID int) ([]MediaFile, error) {
+	var out []MediaFile
+	err := s.get(ctx, "/episodefile", url.Values{"seriesId": {strconv.Itoa(seriesID)}}, &out)
+	return out, err
+}
+
+// DeleteEpisodeFiles removes files from disk (into Sonarr's recycle bin when
+// one is configured).
+func (s *Sonarr) DeleteEpisodeFiles(ctx context.Context, ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.send(ctx, http.MethodDelete, "/episodefile/bulk", map[string]any{"episodeFileIds": ids}, nil)
+}
+
+// DeleteSeries removes a series from Sonarr, optionally with its files.
+func (s *Sonarr) DeleteSeries(ctx context.Context, id int, deleteFiles bool) error {
+	q := url.Values{"deleteFiles": {strconv.FormatBool(deleteFiles)}, "addImportListExclusion": {"false"}}
+	return s.Do(ctx, http.MethodDelete, s.prefix+"/series/"+strconv.Itoa(id), q, nil, nil)
+}
+
+// SetMonitored sets the series-level monitored flag.
+func (s *Sonarr) SetMonitored(ctx context.Context, seriesID int, monitored bool) error {
+	return s.send(ctx, http.MethodPut, "/series/editor", map[string]any{"seriesIds": []int{seriesID}, "monitored": monitored}, nil)
+}
+
+// SetSeasonMonitored flips one season's flag without touching its episodes.
+func (s *Sonarr) SetSeasonMonitored(ctx context.Context, seriesID, season int, monitored bool) error {
+	var raw map[string]any
+	if err := s.get(ctx, "/series/"+strconv.Itoa(seriesID), nil, &raw); err != nil {
+		return err
+	}
+	list, _ := raw["seasons"].([]any)
+	for _, it := range list {
+		sn, _ := it.(map[string]any)
+		if n, _ := sn["seasonNumber"].(float64); int(n) == season {
+			sn["monitored"] = monitored
+		}
+	}
+	return s.Do(ctx, http.MethodPut, s.prefix+"/series/"+strconv.Itoa(seriesID), url.Values{"moveFiles": {"false"}}, raw, nil)
+}
+
+// SearchEpisodes has Sonarr run its own search for episodes.
+func (s *Sonarr) SearchEpisodes(ctx context.Context, ids []int) error {
+	_, err := s.RunCommand(ctx, map[string]any{"name": "EpisodeSearch", "episodeIds": ids})
+	return err
+}
+
+// RefreshSeries refreshes metadata and rescans the series folder.
+func (s *Sonarr) RefreshSeries(ctx context.Context, seriesID int) error {
+	_, err := s.RunCommand(ctx, map[string]any{"name": "RefreshSeries", "seriesId": seriesID})
+	return err
+}

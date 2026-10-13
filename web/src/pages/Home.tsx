@@ -13,8 +13,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Empty, Label, Notice, PageHeader, SectionHead, Stat, Stats } from "@/components/kit";
 import { PosterCard } from "@/components/Poster";
 
-type Filter = "all" | "tv" | "movie" | "missing";
-type Sort = "title" | "year" | "missing";
+type Filter = "all" | "tv" | "movie" | "missing" | "unmonitored";
+type Sort = "title" | "year" | "missing" | "size";
 
 const missingOf = (it: LibraryItem) => Math.max(0, it.total - it.have);
 
@@ -49,13 +49,17 @@ export function Home() {
       episodes: shows.reduce((n, i) => n + missingOf(i), 0),
       missingMovies: movies.filter((i) => missingOf(i) > 0).length,
       disk: library.reduce((n, i) => n + (i.sizeOnDisk ?? 0), 0),
+      unmonitored: library.filter((i) => !i.monitored).length,
     };
   }, [library]);
 
   const items = useMemo(() => {
-    const xs = library.filter((it) => (filter === "all" ? true : filter === "missing" ? missingOf(it) > 0 : it.kind === filter));
+    const xs = library.filter((it) =>
+      filter === "all" ? true : filter === "missing" ? missingOf(it) > 0 : filter === "unmonitored" ? !it.monitored : it.kind === filter,
+    );
     if (sort === "year") return [...xs].sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
     if (sort === "missing") return [...xs].sort((a, b) => missingOf(b) - missingOf(a));
+    if (sort === "size") return [...xs].sort((a, b) => (b.sizeOnDisk ?? 0) - (a.sizeOnDisk ?? 0));
     return xs;
   }, [library, filter, sort]);
 
@@ -140,6 +144,7 @@ export function Home() {
                   ["tv", "Shows", counts.shows],
                   ["movie", "Movies", counts.movies],
                   ["missing", "Missing", counts.gaps],
+                  ...(counts.unmonitored > 0 ? ([["unmonitored", "Not monitored", counts.unmonitored]] as const) : []),
                 ] as const
               ).map(([v, name, n]) => (
                 <TabsTrigger key={v} value={v} className="flex-none">
@@ -157,6 +162,7 @@ export function Home() {
                 <SelectItem value="title">Title A–Z</SelectItem>
                 <SelectItem value="year">Newest first</SelectItem>
                 <SelectItem value="missing">Most missing</SelectItem>
+                <SelectItem value="size">Largest on disk</SelectItem>
               </SelectContent>
             </Select>
           </div>

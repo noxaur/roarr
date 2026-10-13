@@ -119,6 +119,20 @@ single episode you asked for.
 Episode 1 is watchable long before the pack is done. Sonarr's own import at
 the end recognises the episodes that are already imported.
 
+**Manage what you already have.** Every episode shows the file on disk
+(quality, codec, size, release group) and a bookmark for monitoring. The
+`⋯` menu on an episode or season can:
+- **Replace** it: delete the current file and get roarr's best pick, or a
+  release you choose.
+- **Delete** the file, optionally unmonitoring it so Sonarr leaves it alone.
+- Hand the search to Sonarr instead.
+
+Tick episodes (shift-click ticks a run, <kbd>Esc</kbd> clears) and a bar
+offers the same for all of them at once. **Manage** on a show or movie
+toggles monitoring, moves it to another quality profile, rescans the disk,
+or removes it from Sonarr/Radarr with or without its files. Movies get the
+same replace and delete controls. Everything destructive asks first.
+
 **Grabbing stays with the \*arrs.** Releases are pushed to Sonarr/Radarr
 (`/release/push`), so their download clients, categories, history, blocklist
 and import pipeline all apply. If the *arr declines a release you explicitly

@@ -64,6 +64,12 @@ func (s *Server) Handler() http.Handler {
 	guarded("GET /api/tv/tvdb/{tvdb}", s.seriesByTvdb)
 	guarded("GET /api/movie/{id}", s.movie)
 	guarded("GET /api/movie/tmdb/{tmdb}", s.movieByTmdb)
+	guarded("POST /api/tv/{id}/episodes", s.seriesEpisodes)
+	guarded("PATCH /api/{kind}/{id}", s.patchTitle)
+	guarded("DELETE /api/{kind}/{id}", s.removeTitle)
+	guarded("POST /api/{kind}/{id}/command/{name}", s.titleCommand)
+	guarded("DELETE /api/movie/{id}/file", s.deleteMovieFile)
+	guarded("GET /api/profiles/{kind}", s.profiles)
 	guarded("GET /api/search", s.search)
 	guarded("POST /api/plan", s.plan)
 	guarded("POST /api/grab", s.grab)
@@ -340,6 +346,115 @@ func (s *Server) movieByTmdb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, d)
+}
+
+// ---------------------------------------------------------------------------
+// Managing library titles
+
+func titleKind(r *http.Request) (string, int, error) {
+	kind := r.PathValue("kind")
+	if kind != "tv" && kind != "movie" {
+		return "", 0, fmt.Errorf("unknown kind %q", kind)
+	}
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	if id <= 0 {
+		return "", 0, errors.New("bad id")
+	}
+	return kind, id, nil
+}
+
+func (s *Server) seriesEpisodes(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	var body app.EpisodeAction
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	switch body.Action {
+	case "delete", "monitor", "unmonitor", "search":
+	default:
+		writeErr(w, 400, fmt.Errorf("unknown action %q", body.Action))
+		return
+	}
+	res, err := s.app.SeriesEpisodes(r.Context(), id, body)
+	if err != nil {
+		writeErr(w, statusFor(err), err)
+		return
+	}
+	writeJSON(w, 200, res)
+}
+
+func (s *Server) patchTitle(w http.ResponseWriter, r *http.Request) {
+	kind, id, err := titleKind(r)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	var p app.TitlePatch
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if kind == "movie" {
+		err = s.app.PatchMovie(r.Context(), id, p)
+	} else {
+		err = s.app.PatchSeries(r.Context(), id, p)
+	}
+	if err != nil {
+		writeErr(w, statusFor(err), err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) removeTitle(w http.ResponseWriter, r *http.Request) {
+	kind, id, err := titleKind(r)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if err := s.app.RemoveTitle(r.Context(), kind, id, r.URL.Query().Get("deleteFiles") == "1"); err != nil {
+		writeErr(w, statusFor(err), err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) titleCommand(w http.ResponseWriter, r *http.Request) {
+	kind, id, err := titleKind(r)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	if n := r.PathValue("name"); n != "refresh" && n != "search" {
+		writeErr(w, 400, fmt.Errorf("unknown command %q", n))
+		return
+	}
+	res, err := s.app.TitleCommand(r.Context(), kind, id, r.PathValue("name"))
+	if err != nil {
+		writeErr(w, statusFor(err), err)
+		return
+	}
+	writeJSON(w, 200, res)
+}
+
+func (s *Server) deleteMovieFile(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	res, err := s.app.DeleteMovieFile(r.Context(), id)
+	if err != nil {
+		writeErr(w, statusFor(err), err)
+		return
+	}
+	writeJSON(w, 200, res)
+}
+
+func (s *Server) profiles(w http.ResponseWriter, r *http.Request) {
+	ps, err := s.app.Profiles(r.Context(), r.PathValue("kind"))
+	if err != nil {
+		writeErr(w, statusFor(err), err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"profiles": ps})
 }
 
 func ints(s string) []int {

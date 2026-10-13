@@ -35,7 +35,32 @@ export interface EpisodeDetail {
   monitored: boolean;
   queued?: boolean;
   runtime?: number;
+  file?: FileInfo;
 }
+
+/** A file on disk, as Sonarr/Radarr describe it. */
+export interface FileInfo {
+  id: number;
+  path: string;
+  size: number;
+  quality?: string;
+  resolution?: number;
+  group?: string;
+  codec?: string;
+  hdr?: string;
+  audio?: string;
+  languages?: string;
+  subtitles?: string;
+  added?: string;
+}
+
+export interface ActionResult {
+  ok: boolean;
+  message: string;
+  count?: number;
+}
+
+export type EpisodeAction = "delete" | "monitor" | "unmonitor" | "search";
 
 export interface SeasonDetail {
   number: number;
@@ -51,6 +76,8 @@ export interface SeriesDetail extends LibraryItem {
   runtime?: number;
   seasons: SeasonDetail[];
   synthetic?: boolean;
+  path?: string;
+  qualityProfileId?: number;
 }
 
 export interface CollectionMovie {
@@ -74,6 +101,9 @@ export interface MovieDetail extends LibraryItem {
   genres?: string[];
   runtime?: number;
   collection?: { tmdbId: number; title: string; movies: CollectionMovie[] };
+  file?: FileInfo;
+  path?: string;
+  qualityProfileId?: number;
 }
 
 export interface DiscoverItem {
@@ -373,6 +403,15 @@ export const api = {
     call<{ ok: boolean }>("DELETE", `/api/activity/${encodeURIComponent(id)}${blocklist ? "?blocklist=1" : ""}`),
   requests: (filter: string) => call<{ items: RequestItem[] }>("GET", `/api/requests?filter=${filter}`),
   requestAction: (id: number, action: "approve" | "decline") => call<{ ok: boolean }>("POST", `/api/requests/${id}/${action}`, {}),
+  episodes: (seriesId: number, action: EpisodeAction, episodeIds: number[]) =>
+    call<ActionResult>("POST", `/api/tv/${seriesId}/episodes`, { action, episodeIds }),
+  patchTitle: (kind: Kind, id: number, patch: { monitored?: boolean; qualityProfileId?: number; season?: number }) =>
+    call<{ ok: boolean }>("PATCH", `/api/${kind}/${id}`, patch),
+  removeTitle: (kind: Kind, id: number, deleteFiles: boolean) =>
+    call<{ ok: boolean }>("DELETE", `/api/${kind}/${id}${deleteFiles ? "?deleteFiles=1" : ""}`),
+  titleCommand: (kind: Kind, id: number, name: "refresh" | "search") => call<ActionResult>("POST", `/api/${kind}/${id}/command/${name}`, {}),
+  deleteMovieFile: (id: number) => call<ActionResult>("DELETE", `/api/movie/${id}/file`),
+  profiles: (kind: Kind) => call<{ profiles: { id: number; name: string }[] }>("GET", `/api/profiles/${kind}`),
   settings: () => call<{ settings: Settings; locked: Record<string, boolean> }>("GET", "/api/settings"),
   saveSettings: (s: Settings) => call<{ settings: Settings; locked: Record<string, boolean> }>("PUT", "/api/settings", s),
 };

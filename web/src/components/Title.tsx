@@ -44,6 +44,7 @@ export function TitleHead({
   meta,
   overview,
   badges,
+  actions,
 }: {
   poster?: string;
   title: string;
@@ -51,6 +52,7 @@ export function TitleHead({
   meta: (string | number | null | undefined | false)[];
   overview?: string;
   badges: ReactNode;
+  actions?: ReactNode;
 }) {
   return (
     <div>
@@ -63,6 +65,7 @@ export function TitleHead({
       <h1 className="mt-3.5 font-display text-[clamp(3rem,7.5vw,6.75rem)] break-words">{title}</h1>
       {overview && <p className="mt-5 max-w-[60ch] text-[16.5px] leading-relaxed text-foreground/75">{overview}</p>}
       <div className="mt-4 flex flex-wrap gap-1.5">{badges}</div>
+      {actions && <div className="mt-5 flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }

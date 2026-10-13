@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check } from "lucide-react";
+import { Check, ListChecks, RefreshCw, Trash2 } from "lucide-react";
 import { api, type MovieDetail, type Release } from "@/lib/api";
-import { autoGet } from "@/lib/actions";
+import { autoGet, run } from "@/lib/actions";
 import { bytes } from "@/lib/format";
 import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
 import { useRouter } from "@/lib/router";
@@ -10,7 +10,11 @@ import { useSearch } from "@/lib/useSearch";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Label, Notice } from "@/components/kit";
+import { useConfirm } from "@/components/Confirm";
+import { FileFacts, ManageMenu } from "@/components/Manage";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
 import { Crumbs, GetCard, PosterColumn, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
 
@@ -90,7 +94,63 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
     ),
   );
 
+  const confirm = useConfirm();
+  const changed = () => {
+    reload();
+    reloadLibrary();
+  };
+  const fileSize = d.file?.size ?? d.sizeOnDisk ?? 0;
+
+  const deleteFile = async () => {
+    const a = await confirm({
+      title: `Delete ${d.title} from disk?`,
+      body: <p>Frees {bytes(fileSize)}. Radarr moves it to its recycle bin when one is set up; otherwise it is gone for good.</p>,
+      options: [{ id: "unmonitor", label: "Stop monitoring it", hint: "so Radarr does not download it again by itself", checked: true }],
+      confirm: "Delete file",
+      danger: true,
+    });
+    if (!a) return;
+    const ok = await run(`Deleting ${d.title}…`, async () => {
+      const res = await api.deleteMovieFile(d.id);
+      if (a.checked.unmonitor) await api.patchTitle("movie", d.id, { monitored: false });
+      return res;
+    });
+    if (ok) changed();
+  };
+
+  // Replace = delete the file, then get the movie again.
+  const replace = async (pick = false) => {
+    const a = await confirm({
+      title: `Replace ${d.title}?`,
+      body: <p>roarr deletes the current file ({bytes(fileSize)}) and downloads the movie again.</p>,
+      options: [{ id: "pick", label: "Let me choose the release", hint: "otherwise roarr grabs its best pick", checked: pick }],
+      confirm: "Replace",
+      danger: true,
+    });
+    if (!a) return false;
+    if (!(await run(`Deleting ${d.title}…`, () => api.deleteMovieFile(d.id)))) return false;
+    setScope("this");
+    if (a.checked.pick) {
+      setSheet(true);
+      changed();
+      return false;
+    }
+    return true;
+  };
+
+  const replaceNow = async () => {
+    if (!(await replace())) return;
+    const res = await autoGet({ kind: "movie", movies: [d.tmdbId!] }, d.title);
+    if (res) {
+      setGotFor(String(d.tmdbId));
+      after(d.id, d.tmdbId);
+    }
+  };
+
   const get = async () => {
+    if (d.inLibrary && d.hasFile && sel.has(d.tmdbId!)) {
+      if (!(await replace())) return;
+    }
     setBusy(true);
     try {
       if (search.done && plan.picks.length) {
@@ -127,7 +187,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
       : []),
   ];
   const cta =
-    n === 0 ? "Tick movies to get" : n === 1 ? (selArr[0] === d.tmdbId && d.hasFile ? "Get it again" : `Get ${titles.get(selArr[0]) === d.title ? "it" : titles.get(selArr[0])}`) : `Get ${n} movies`;
+    n === 0 ? "Tick movies to get" : n === 1 ? (selArr[0] === d.tmdbId && d.hasFile ? "Replace it" : `Get ${titles.get(selArr[0]) === d.title ? "it" : titles.get(selArr[0])}`) : `Get ${n} movies`;
   const sheetTitle = n === 1 ? (titles.get(selArr[0]) ?? d.title) : `${n} movies from ${d.collection?.title ?? "the collection"}`;
 
   return (
@@ -142,6 +202,24 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
             year={d.year}
             meta={["Movie", d.year, d.network, d.runtime && `${d.runtime} min`, d.genres?.slice(0, 3).join(", ")]}
             overview={d.overview}
+            actions={
+              d.inLibrary && (
+                <>
+                  <ManageMenu kind="movie" id={d.id} title={d.title} monitored={d.monitored} profileId={d.qualityProfileId} path={d.path} onChanged={changed}>
+                    <DropdownMenuItem disabled={!d.hasFile} onSelect={() => replaceNow()}>
+                      <RefreshCw /> Replace…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={!d.hasFile} onSelect={() => replace(true)}>
+                      <ListChecks /> Choose a replacement…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem variant="destructive" disabled={!d.hasFile} onSelect={deleteFile}>
+                      <Trash2 /> Delete file…
+                    </DropdownMenuItem>
+                  </ManageMenu>
+                  {!d.monitored && <span className="font-mono text-[11px] text-muted-foreground">not monitored</span>}
+                </>
+              )
+            }
             badges={
               d.hasFile ? (
                 <Badge variant="ok">
@@ -177,39 +255,57 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
           />
         }
         body={
-          inCollection && (
-            <section className="border-t border-dashed border-dash pt-5">
-              <div className="mb-3 flex items-baseline gap-3">
-                <Label>{d.collection?.title}</Label>
-                <span className="font-mono text-xs text-muted-foreground">
-                  {parts.filter((p) => p.hasFile).length}/{parts.length} on disk
-                </span>
-              </div>
-              {parts.map((p) => {
-                const on = sel.has(p.tmdbId);
-                return (
-                  <label
-                    key={p.tmdbId}
-                    className={cn(
-                      "-mx-2.5 flex min-h-11 cursor-pointer items-center gap-3.5 rounded-lg px-2.5 transition-colors hover:bg-muted/60",
-                      on && "bg-lime/45 hover:bg-lime/55 dark:bg-lime/12 dark:hover:bg-lime/18",
-                    )}
-                  >
-                    <Checkbox checked={on} onCheckedChange={() => toggle(p.tmdbId)} aria-label={p.title} />
-                    <span className="w-10 shrink-0 font-mono text-xs text-muted-foreground">{p.year ?? ""}</span>
-                    <span className={cn("min-w-0 flex-1 truncate", p.tmdbId === d.tmdbId && "font-semibold")}>{p.title}</span>
-                    {p.hasFile ? (
-                      <span className="font-mono text-[11px] tracking-wide text-ok uppercase">✓ on disk</span>
-                    ) : p.inLibrary ? (
-                      <Badge variant="pink">Missing</Badge>
-                    ) : (
-                      <span className="font-mono text-[11px] text-muted-foreground uppercase">not added</span>
-                    )}
-                  </label>
-                );
-              })}
-            </section>
-          )
+          <>
+            {d.file && (
+              <section className="mb-8 border-t border-dashed border-dash pt-5">
+                <div className="mb-3 flex items-center gap-3">
+                  <Label>On disk</Label>
+                  <span className="ml-auto flex gap-1">
+                    <Button variant="outline" size="xs" onClick={() => replaceNow()}>
+                      <RefreshCw /> Replace
+                    </Button>
+                    <Button variant="outline" size="xs" className="text-destructive hover:text-destructive" onClick={deleteFile}>
+                      <Trash2 /> Delete
+                    </Button>
+                  </span>
+                </div>
+                <FileFacts file={d.file} />
+              </section>
+            )}
+            {inCollection && (
+              <section className="border-t border-dashed border-dash pt-5">
+                <div className="mb-3 flex items-baseline gap-3">
+                  <Label>{d.collection?.title}</Label>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {parts.filter((p) => p.hasFile).length}/{parts.length} on disk
+                  </span>
+                </div>
+                {parts.map((p) => {
+                  const on = sel.has(p.tmdbId);
+                  return (
+                    <label
+                      key={p.tmdbId}
+                      className={cn(
+                        "-mx-2.5 flex min-h-11 cursor-pointer items-center gap-3.5 rounded-lg px-2.5 transition-colors hover:bg-muted/60",
+                        on && "bg-lime/45 hover:bg-lime/55 dark:bg-lime/12 dark:hover:bg-lime/18",
+                      )}
+                    >
+                      <Checkbox checked={on} onCheckedChange={() => toggle(p.tmdbId)} aria-label={p.title} />
+                      <span className="w-10 shrink-0 font-mono text-xs text-muted-foreground">{p.year ?? ""}</span>
+                      <span className={cn("min-w-0 flex-1 truncate", p.tmdbId === d.tmdbId && "font-semibold")}>{p.title}</span>
+                      {p.hasFile ? (
+                        <span className="font-mono text-[11px] tracking-wide text-ok uppercase">✓ on disk</span>
+                      ) : p.inLibrary ? (
+                        <Badge variant="pink">Missing</Badge>
+                      ) : (
+                        <span className="font-mono text-[11px] text-muted-foreground uppercase">not added</span>
+                      )}
+                    </label>
+                  );
+                })}
+              </section>
+            )}
+          </>
         }
       />
       <ReleaseSheet

@@ -20,17 +20,54 @@ var ErrNotConfigured = errors.New("not configured")
 
 // EpisodeDetail is an episode row on a show page.
 type EpisodeDetail struct {
-	ID        int    `json:"id"`
-	Season    int    `json:"season"`
-	Number    int    `json:"number"`
-	Absolute  int    `json:"absolute,omitempty"`
-	Title     string `json:"title"`
-	AirDate   string `json:"airDate,omitempty"`
-	Aired     bool   `json:"aired"`
-	HasFile   bool   `json:"hasFile"`
-	Monitored bool   `json:"monitored"`
-	Queued    bool   `json:"queued,omitempty"`
-	Runtime   int    `json:"runtime,omitempty"`
+	ID        int       `json:"id"`
+	Season    int       `json:"season"`
+	Number    int       `json:"number"`
+	Absolute  int       `json:"absolute,omitempty"`
+	Title     string    `json:"title"`
+	AirDate   string    `json:"airDate,omitempty"`
+	Aired     bool      `json:"aired"`
+	HasFile   bool      `json:"hasFile"`
+	Monitored bool      `json:"monitored"`
+	Queued    bool      `json:"queued,omitempty"`
+	Runtime   int       `json:"runtime,omitempty"`
+	File      *FileInfo `json:"file,omitempty"`
+}
+
+// FileInfo describes a file on disk.
+type FileInfo struct {
+	ID         int    `json:"id"`
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+	Quality    string `json:"quality,omitempty"`
+	Resolution int    `json:"resolution,omitempty"`
+	Group      string `json:"group,omitempty"`
+	Codec      string `json:"codec,omitempty"`
+	HDR        string `json:"hdr,omitempty"`
+	Audio      string `json:"audio,omitempty"`
+	Languages  string `json:"languages,omitempty"`
+	Subtitles  string `json:"subtitles,omitempty"`
+	Added      string `json:"added,omitempty"`
+}
+
+func fileInfo(f *arr.MediaFile) *FileInfo {
+	if f == nil || f.ID == 0 {
+		return nil
+	}
+	fi := &FileInfo{ID: f.ID, Path: f.RelativePath, Size: f.Size, Quality: f.Quality.Quality.Name, Resolution: f.Quality.Quality.Resolution, Group: f.ReleaseGroup, Added: f.DateAdded}
+	if fi.Path == "" {
+		fi.Path = f.Path
+	}
+	if m := f.MediaInfo; m != nil {
+		fi.Codec, fi.Audio, fi.Languages, fi.Subtitles = m.VideoCodec, m.AudioCodec, m.AudioLanguages, m.Subtitles
+		if m.VideoDynamicRange != "" && m.VideoDynamicRange != "SDR" {
+			fi.HDR = m.VideoDynamicRange
+		}
+		if m.AudioChannels > 0 {
+			fi.Audio = strings.TrimSpace(fmt.Sprintf("%s %.1f", fi.Audio, m.AudioChannels))
+		}
+	}
+	return fi
 }
 
 // SeasonDetail groups episodes.
@@ -49,6 +86,8 @@ type SeriesDetail struct {
 	Genres    []string       `json:"genres,omitempty"`
 	Runtime   int            `json:"runtime,omitempty"`
 	Seasons   []SeasonDetail `json:"seasons"`
+	Path      string         `json:"path,omitempty"`
+	ProfileID int            `json:"qualityProfileId,omitempty"`
 	// Synthetic is true when episodes come from TMDB counts rather than
 	// Sonarr (title not in the library yet). Episode IDs are then negative.
 	Synthetic bool `json:"synthetic,omitempty"`
@@ -65,6 +104,9 @@ type MovieDetail struct {
 	Genres     []string        `json:"genres,omitempty"`
 	Runtime    int             `json:"runtime,omitempty"`
 	Collection *CollectionInfo `json:"collection,omitempty"`
+	File       *FileInfo       `json:"file,omitempty"`
+	Path       string          `json:"path,omitempty"`
+	ProfileID  int             `json:"qualityProfileId,omitempty"`
 }
 
 // CollectionInfo lists the movies of a collection.
@@ -115,11 +157,13 @@ func (a *App) Series(ctx context.Context, id int, fresh bool) (*SeriesDetail, er
 		s     arr.Series
 		eps   []arr.Episode
 		queue []arr.QueueRecord
+		files []arr.MediaFile
 		errS  error
 		errE  error
 		wg    sync.WaitGroup
 	)
-	wg.Add(3)
+	wg.Add(4)
+	go func() { defer wg.Done(); files, _ = c.Sonarr.EpisodeFiles(ctx, id) }()
 	go func() { defer wg.Done(); s, errS = c.Sonarr.Series(ctx, id) }()
 	go func() { defer wg.Done(); eps, errE = c.Sonarr.Episodes(ctx, id) }()
 	go func() { defer wg.Done(); queue, _ = c.Sonarr.Queue(ctx, "") }()
@@ -136,7 +180,11 @@ func (a *App) Series(ctx context.Context, id int, fresh bool) (*SeriesDetail, er
 			queued[q.EpisodeID] = true
 		}
 	}
-	d := &SeriesDetail{LibraryItem: seriesItem(s), InLibrary: true, Overview: s.Overview, Fanart: arr.Fanart(s.Images), Genres: s.Genres, Runtime: s.Runtime}
+	byFile := map[int]*arr.MediaFile{}
+	for i := range files {
+		byFile[files[i].ID] = &files[i]
+	}
+	d := &SeriesDetail{LibraryItem: seriesItem(s), InLibrary: true, Overview: s.Overview, Fanart: arr.Fanart(s.Images), Genres: s.Genres, Runtime: s.Runtime, Path: s.Path, ProfileID: s.QualityProfile}
 	seasonMon := map[int]bool{}
 	for _, sn := range s.Seasons {
 		seasonMon[sn.SeasonNumber] = sn.Monitored
@@ -145,6 +193,9 @@ func (a *App) Series(ctx context.Context, id int, fresh bool) (*SeriesDetail, er
 	for _, e := range eps {
 		ed := EpisodeDetail{ID: e.ID, Season: e.SeasonNumber, Number: e.EpisodeNumber, Absolute: e.AbsoluteEpisodeNumber, Title: e.Title,
 			Aired: e.Aired(), HasFile: e.HasFile, Monitored: e.Monitored, Queued: queued[e.ID], Runtime: e.Runtime}
+		if e.HasFile {
+			ed.File = fileInfo(byFile[e.EpisodeFileID])
+		}
 		if !e.AirDateUTC.IsZero() {
 			ed.AirDate = e.AirDateUTC.Format("2006-01-02")
 		}
@@ -274,6 +325,14 @@ func (a *App) Movie(ctx context.Context, id int) (*MovieDetail, error) {
 	}
 	if m.Collection != nil && m.Collection.TmdbID != 0 {
 		d.Collection = a.collection(ctx, m.Collection.TmdbID, m.Collection.Title)
+		// The library snapshot lags right after a change; this movie is fresh.
+		if d.Collection != nil {
+			for i := range d.Collection.Movies {
+				if d.Collection.Movies[i].TmdbID == m.TmdbID {
+					d.Collection.Movies[i].HasFile = m.HasFile
+				}
+			}
+		}
 	}
 	return d, nil
 }
@@ -284,7 +343,11 @@ func movieDetail(m arr.Movie, inLib bool) *MovieDetail {
 		it.Key = fmt.Sprintf("tmdb:%d", m.TmdbID)
 		it.ID = 0
 	}
-	return &MovieDetail{LibraryItem: it, InLibrary: inLib, HasFile: m.HasFile, Overview: m.Overview, Fanart: arr.Fanart(m.Images), Genres: m.Genres, Runtime: m.Runtime}
+	d := &MovieDetail{LibraryItem: it, InLibrary: inLib, HasFile: m.HasFile, Overview: m.Overview, Fanart: arr.Fanart(m.Images), Genres: m.Genres, Runtime: m.Runtime}
+	if inLib {
+		d.File, d.Path, d.ProfileID = fileInfo(m.MovieFile), m.Path, m.QualityProfileID
+	}
+	return d
 }
 
 // MovieByTmdb returns the library movie or a lookup preview.

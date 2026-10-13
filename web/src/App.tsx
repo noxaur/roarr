@@ -4,6 +4,7 @@ import { Router, match, useRouter } from "./lib/router";
 import { StoreProvider } from "./lib/store";
 import { Toaster } from "./components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { ConfirmProvider } from "./components/Confirm";
 import { Nav } from "./components/Nav";
 import { SearchPalette } from "./components/SearchPalette";
 import { Home } from "./pages/Home";
@@ -35,7 +36,9 @@ export function App() {
       {me.authenticated ? (
         <Router>
           <StoreProvider user={me.user}>
-            <Shell authMode={me.authMode} />
+            <ConfirmProvider>
+              <Shell authMode={me.authMode} />
+            </ConfirmProvider>
           </StoreProvider>
         </Router>
       ) : (
