@@ -21,11 +21,8 @@ import (
 // Transport is shared by all clients so connections to the same host are
 // pooled across features.
 var Transport = &http.Transport{
-	Proxy: http.ProxyFromEnvironment,
-	DialContext: (&net.Dialer{
-		Timeout:   5 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}).DialContext,
+	Proxy:                 http.ProxyFromEnvironment,
+	DialContext:           dialContext,
 	ForceAttemptHTTP2:     true,
 	MaxIdleConns:          256,
 	MaxIdleConnsPerHost:   64,
@@ -138,11 +135,27 @@ func (c *Client) wrap(err error) error {
 	case errors.Is(err, context.Canceled):
 		return err
 	}
-	msg := err.Error()
+	return &Error{Service: c.Service, Message: Unreachable(err)}
+}
+
+// Unreachable turns a transport error into a short message with a hint for
+// the usual Docker networking mistakes.
+func Unreachable(err error) string {
+	full := err.Error()
+	msg := full
 	if i := strings.LastIndex(msg, ": "); i >= 0 {
 		msg = msg[i+2:]
 	}
-	return &Error{Service: c.Service, Message: "unreachable (" + msg + ")"}
+	out := "unreachable (" + msg + ")"
+	switch {
+	case strings.Contains(full, "no such host"):
+		out += ": the host name does not resolve here. Put roarr on the same Docker network as this service, or use the host's LAN IP"
+	case strings.Contains(full, "connection refused"):
+		out += ": nothing listens on that address as seen from roarr. Inside Docker, use the container name and its internal port"
+	case strings.Contains(full, "unsupported protocol scheme"):
+		out += ": the URL needs http:// or https://"
+	}
+	return out
 }
 
 // upstreamMessage pulls a human message out of *arr / Seerr error bodies.

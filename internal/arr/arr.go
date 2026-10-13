@@ -410,3 +410,200 @@ func (c *Client) RecentlyGrabbed(ctx context.Context, title string, within time.
 	}
 	return false, nil
 }
+
+// RemotePathMapping translates a download client's path to the *arr's.
+type RemotePathMapping struct {
+	Host       string `json:"host"`
+	RemotePath string `json:"remotePath"`
+	LocalPath  string `json:"localPath"`
+}
+
+// RemotePathMappings lists the configured mappings.
+func (c *Client) RemotePathMappings(ctx context.Context) ([]RemotePathMapping, error) {
+	var out []RemotePathMapping
+	err := c.get(ctx, "/remotepathmapping", nil, &out)
+	return out, err
+}
+
+// MapRemotePath rewrites a download client path (as qBittorrent reports it)
+// to the path the *arr sees, using the longest matching mapping. Mappings
+// for host are preferred; others apply when none of host's match.
+func MapRemotePath(ms []RemotePathMapping, host, p string) string {
+	best, bestLen, bestHost := -1, -1, false
+	for i, m := range ms {
+		rp := strings.TrimRight(strings.ReplaceAll(m.RemotePath, `\`, "/"), "/")
+		pp := strings.ReplaceAll(p, `\`, "/")
+		if pp != rp && !strings.HasPrefix(pp, rp+"/") {
+			continue
+		}
+		hostOK := strings.EqualFold(m.Host, host)
+		if (hostOK && !bestHost) || (hostOK == bestHost && len(rp) > bestLen) {
+			best, bestLen, bestHost = i, len(rp), hostOK
+		}
+	}
+	if best < 0 {
+		return p
+	}
+	m := ms[best]
+	rest := strings.TrimPrefix(strings.ReplaceAll(p, `\`, "/"), strings.TrimRight(strings.ReplaceAll(m.RemotePath, `\`, "/"), "/"))
+	return strings.TrimRight(m.LocalPath, `/\`) + rest
+}
+
+// BypassProfileName is the permissive quality profile roarr creates to get
+// a release past the *arr's quality and custom format rules.
+const BypassProfileName = "roarr: any quality"
+
+// EnsureBypassProfile returns the id of a quality profile that allows every
+// quality, scores every custom format 0 and allows upgrades, creating it
+// from the *arr's profile schema the first time.
+func (c *Client) EnsureBypassProfile(ctx context.Context) (int, error) {
+	profiles, err := c.QualityProfiles(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range profiles {
+		if p.Name == BypassProfileName {
+			return p.ID, nil
+		}
+	}
+	var schema map[string]any
+	if err := c.get(ctx, "/qualityprofile/schema", nil, &schema); err != nil {
+		return 0, err
+	}
+	body := BypassProfile(schema)
+	var out struct {
+		ID int `json:"id"`
+	}
+	if err := c.send(ctx, http.MethodPost, "/qualityprofile", body, &out); err != nil {
+		return 0, fmt.Errorf("creating the %q quality profile: %w", BypassProfileName, err)
+	}
+	return out.ID, nil
+}
+
+// BypassProfile turns a /qualityprofile/schema answer into the permissive
+// profile.
+func BypassProfile(schema map[string]any) map[string]any {
+	p := map[string]any{}
+	for k, v := range schema {
+		p[k] = v
+	}
+	delete(p, "id")
+	p["name"] = BypassProfileName
+	p["upgradeAllowed"] = true
+	p["minFormatScore"] = 0
+	p["cutoffFormatScore"] = 0
+	if _, ok := p["minUpgradeFormatScore"]; ok {
+		p["minUpgradeFormatScore"] = 1
+	}
+	if _, ok := p["language"]; ok {
+		p["language"] = map[string]any{"id": -1, "name": "Any"} // Radarr
+	}
+	items, _ := p["items"].([]any)
+	var allow func([]any)
+	allow = func(list []any) {
+		for _, it := range list {
+			if m, ok := it.(map[string]any); ok {
+				m["allowed"] = true
+				if sub, ok := m["items"].([]any); ok {
+					allow(sub)
+				}
+			}
+		}
+	}
+	allow(items)
+	// Cutoff at the top quality, so nothing counts as "already good enough".
+	for i := len(items) - 1; i >= 0; i-- {
+		m, _ := items[i].(map[string]any)
+		if m == nil {
+			continue
+		}
+		if q, ok := m["quality"].(map[string]any); ok && q != nil {
+			p["cutoff"] = q["id"]
+			break
+		}
+		if id, ok := m["id"]; ok {
+			p["cutoff"] = id
+			break
+		}
+	}
+	if fis, ok := p["formatItems"].([]any); ok {
+		for _, fi := range fis {
+			if m, ok := fi.(map[string]any); ok {
+				m["score"] = 0
+			}
+		}
+	}
+	return p
+}
+
+// CachedRelease is one result of an interactive search, held in the *arr's
+// release cache for 30 minutes.
+type CachedRelease struct {
+	GUID       string   `json:"guid"`
+	IndexerID  int      `json:"indexerId"`
+	Indexer    string   `json:"indexer"`
+	Title      string   `json:"title"`
+	Size       int64    `json:"size"`
+	InfoHash   string   `json:"infoHash"`
+	Protocol   string   `json:"protocol"`
+	Rejected   bool     `json:"rejected"`
+	Rejections []string `json:"rejections"`
+}
+
+// InteractiveSearch runs the *arr's own indexer search (GET /release) with
+// q, e.g. episodeId, seriesId+seasonNumber or movieId. It is as slow as the
+// slowest indexer, so it gets its own long timeout.
+func (c *Client) InteractiveSearch(ctx context.Context, q url.Values) ([]CachedRelease, error) {
+	slow := *c.Client
+	hc := *c.HTTP
+	hc.Timeout = 3 * time.Minute
+	slow.HTTP = &hc
+	var out []CachedRelease
+	err := slow.Do(ctx, http.MethodGet, c.prefix+"/release", q, nil, &out)
+	return out, err
+}
+
+// GrabCached downloads a release from the interactive search cache. This is
+// the *arr UI's "grab anyway": it skips every decision engine rejection.
+// extra is merged into the body (seriesId, episodeIds, movieId hints).
+func (c *Client) GrabCached(ctx context.Context, r CachedRelease, extra map[string]any) error {
+	body := map[string]any{"guid": r.GUID, "indexerId": r.IndexerID}
+	for k, v := range extra {
+		body[k] = v
+	}
+	return c.send(ctx, http.MethodPost, "/release", body, nil)
+}
+
+// MatchCached finds the release with the given guid, info hash or title.
+func MatchCached(rs []CachedRelease, guid, infoHash, title string, size int64) (CachedRelease, bool) {
+	norm := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if r == '.' || r == '_' || r == '-' || r == ' ' {
+				return -1
+			}
+			return r
+		}, strings.ToLower(s))
+	}
+	tests := []func(CachedRelease) bool{
+		func(r CachedRelease) bool { return guid != "" && r.GUID == guid },
+		func(r CachedRelease) bool { return infoHash != "" && strings.EqualFold(r.InfoHash, infoHash) },
+		func(r CachedRelease) bool {
+			if norm(r.Title) != norm(title) {
+				return false
+			}
+			if size <= 0 || r.Size <= 0 {
+				return true
+			}
+			d := r.Size - size
+			return d < 0 && -d < size/50 || d >= 0 && d < size/50
+		},
+	}
+	for _, t := range tests {
+		for _, r := range rs {
+			if t(r) {
+				return r, true
+			}
+		}
+	}
+	return CachedRelease{}, false
+}

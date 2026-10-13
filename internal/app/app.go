@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,7 @@ type App struct {
 
 	Library  *Library
 	Watch    *WatchFirst
+	bypassMu sync.Mutex // serializes temporary quality profile swaps
 	detailMu sync.Mutex
 	details  map[string]cachedDetail
 }
@@ -102,33 +104,69 @@ func (a *App) C() *Clients {
 // discover fills gaps from what other services already know: Sonarr/Radarr
 // URLs from Prowlarr's app links, and the qBittorrent host from Sonarr's
 // download client settings (the password must still come from config).
+// In a compose stack roarr often starts before the others are listening, so
+// failed lookups are retried for a few minutes.
 func (a *App) discover(orig *Clients, s config.Settings) {
+	cur := orig
+	for attempt, wait := 0, 3*time.Second; ; attempt++ {
+		next, retry := discoverOnce(cur, s)
+		if next != cur {
+			a.mu.Lock()
+			swapped := a.clients == cur
+			if swapped {
+				a.clients = next
+			}
+			a.mu.Unlock()
+			if !swapped {
+				return // settings changed meanwhile; a newer discover runs
+			}
+			cur = next
+			if a.Library != nil {
+				a.Library.Refresh(context.Background())
+			}
+		}
+		if !retry || attempt >= 8 {
+			return
+		}
+		time.Sleep(wait)
+		if a.C() != cur {
+			return
+		}
+		wait = min(wait*2, time.Minute)
+	}
+}
+
+// discoverOnce returns c, or a copy with discovered clients filled in, and
+// whether a lookup failed in a way worth retrying.
+func discoverOnce(orig *Clients, s config.Settings) (*Clients, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cp := *orig
 	c := &cp
-	changed := false
+	changed, retry := false, false
 	if c.Prowlarr != nil && (c.Sonarr == nil || c.Radarr == nil) {
 		apps, err := c.Prowlarr.Applications(ctx)
-		if err == nil {
-			for _, p := range apps {
-				base, key := p.FieldString("baseUrl"), p.FieldString("apiKey")
-				if base == "" || key == "" || key == "********" {
-					continue
+		if err != nil {
+			retry = true
+			slog.Debug("discovery: prowlarr applications", "err", err)
+		}
+		for _, p := range apps {
+			base, key := p.FieldString("baseUrl"), p.FieldString("apiKey")
+			if base == "" || key == "" || strings.Trim(key, "*") == "" {
+				continue // Prowlarr masks API keys in newer versions
+			}
+			switch p.Implementation {
+			case "Sonarr":
+				if c.Sonarr == nil {
+					c.Sonarr = arr.NewSonarr(config.NormalizeURL(base), key)
+					changed = true
+					slog.Info("discovered Sonarr via Prowlarr", "url", base)
 				}
-				switch p.Implementation {
-				case "Sonarr":
-					if c.Sonarr == nil {
-						c.Sonarr = arr.NewSonarr(base, key)
-						changed = true
-						slog.Info("discovered Sonarr via Prowlarr", "url", base)
-					}
-				case "Radarr":
-					if c.Radarr == nil {
-						c.Radarr = arr.NewRadarr(base, key)
-						changed = true
-						slog.Info("discovered Radarr via Prowlarr", "url", base)
-					}
+			case "Radarr":
+				if c.Radarr == nil {
+					c.Radarr = arr.NewRadarr(config.NormalizeURL(base), key)
+					changed = true
+					slog.Info("discovered Radarr via Prowlarr", "url", base)
 				}
 			}
 		}
@@ -144,6 +182,8 @@ func (a *App) discover(orig *Clients, s config.Settings) {
 		for _, src := range srcs {
 			dcs, err := src.DownloadClients(ctx)
 			if err != nil {
+				retry = true
+				slog.Debug("discovery: download clients", "service", src.Service, "err", err)
 				continue
 			}
 			for _, d := range dcs {
@@ -154,7 +194,8 @@ func (a *App) discover(orig *Clients, s config.Settings) {
 				if d.FieldBool("useSsl") {
 					scheme = "https"
 				}
-				base := scheme + "://" + d.FieldString("host") + ":" + d.FieldString("port") + d.FieldString("urlBase")
+				base := scheme + "://" + d.FieldString("host") + ":" + d.FieldString("port") + "/" + strings.Trim(d.FieldString("urlBase"), "/")
+				base = strings.TrimRight(base, "/")
 				user := s.QBit.Username
 				if user == "" {
 					user = d.FieldString("username")
@@ -170,17 +211,9 @@ func (a *App) discover(orig *Clients, s config.Settings) {
 		}
 	}
 	if !changed {
-		return
+		return orig, retry
 	}
-	a.mu.Lock()
-	swapped := a.clients == orig
-	if swapped {
-		a.clients = c
-	}
-	a.mu.Unlock()
-	if swapped && a.Library != nil {
-		a.Library.Refresh(context.Background())
-	}
+	return c, retry
 }
 
 func (a *App) sweepLoop(ctx context.Context) {

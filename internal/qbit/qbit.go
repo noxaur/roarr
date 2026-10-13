@@ -55,6 +55,12 @@ func New(base, user, pass string) *Client {
 func (c *Client) Configured() bool { return c != nil && c.Base != "" }
 
 func (c *Client) login(ctx context.Context) error {
+	if c.Password == "" {
+		// No password: rely on qBittorrent's "bypass authentication" for
+		// localhost / whitelisted subnets.
+		c.loggedIn = true
+		return nil
+	}
 	form := url.Values{"username": {c.Username}, "password": {c.Password}}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+"/api/v2/auth/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -62,7 +68,7 @@ func (c *Client) login(ctx context.Context) error {
 	req.Header.Set("Origin", c.Base)
 	res, err := c.http.Do(req)
 	if err != nil {
-		return &httpx.Error{Service: "qbittorrent", Message: "unreachable (" + err.Error() + ")"}
+		return &httpx.Error{Service: "qbittorrent", Message: httpx.Unreachable(err)}
 	}
 	defer res.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 512))
@@ -109,9 +115,9 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, b
 		req.Header.Set("Origin", c.Base)
 		res, err := c.http.Do(req)
 		if err != nil {
-			return &httpx.Error{Service: "qbittorrent", Message: "unreachable (" + err.Error() + ")"}
+			return &httpx.Error{Service: "qbittorrent", Message: httpx.Unreachable(err)}
 		}
-		if res.StatusCode == http.StatusForbidden && attempt == 0 {
+		if res.StatusCode == http.StatusForbidden && attempt == 0 && c.Password != "" {
 			res.Body.Close()
 			c.mu.Lock()
 			c.loggedIn = false
@@ -119,13 +125,21 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, b
 			continue
 		}
 		defer res.Body.Close()
+		if res.StatusCode == http.StatusForbidden && c.Password == "" {
+			return &httpx.Error{Service: "qbittorrent", Status: res.StatusCode, Message: "qBittorrent wants a login: set QBIT_PASSWORD, or whitelist roarr's network under Web UI → Bypass authentication"}
+		}
 		if res.StatusCode >= 300 {
 			b, _ := io.ReadAll(io.LimitReader(res.Body, 512))
 			return &httpx.Error{Service: "qbittorrent", Status: res.StatusCode, Message: strings.TrimSpace(string(b))}
 		}
-		if out == nil {
+		switch o := out.(type) {
+		case nil:
 			_, _ = io.Copy(io.Discard, res.Body)
 			return nil
+		case *string:
+			b, err := io.ReadAll(io.LimitReader(res.Body, 4096))
+			*o = strings.TrimSpace(string(b))
+			return err
 		}
 		return json.NewDecoder(res.Body).Decode(out)
 	}
@@ -134,31 +148,9 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, b
 
 // Version returns the application version.
 func (c *Client) Version(ctx context.Context) (string, error) {
-	if !c.Configured() {
-		return "", &httpx.Error{Service: "qbittorrent", Message: "not configured"}
-	}
-	c.mu.Lock()
-	if !c.loggedIn {
-		if err := c.login(ctx); err != nil {
-			c.mu.Unlock()
-			return "", err
-		}
-	}
-	c.mu.Unlock()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+"/api/v2/app/version", nil)
-	res, err := c.http.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer res.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(res.Body, 64))
-	if res.StatusCode >= 300 {
-		c.mu.Lock()
-		c.loggedIn = false
-		c.mu.Unlock()
-		return "", &httpx.Error{Service: "qbittorrent", Status: res.StatusCode, Message: "version check failed"}
-	}
-	return strings.TrimSpace(string(b)), nil
+	var v string
+	err := c.do(ctx, http.MethodGet, "/api/v2/app/version", nil, nil, "", &v)
+	return v, err
 }
 
 // Torrent is a subset of /torrents/info.

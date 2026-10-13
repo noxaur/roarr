@@ -15,6 +15,11 @@ services:
       - "3847:3847"
     volumes:
       - roarr-config:/config
+    # Lets roarr reach apps published on the host's ports. URLs that say
+    # localhost / 127.0.0.1 (typed here, or stored in Prowlarr/Sonarr) are
+    # retried on the host automatically.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       PROWLARR_URL: http://prowlarr:9696
       PROWLARR_API_KEY: change-me
@@ -32,6 +37,9 @@ services:
       QBIT_URL: http://qbittorrent:8080
       QBIT_USERNAME: admin
       QBIT_PASSWORD: change-me
+      # Grab releases Sonarr/Radarr decline anyway, still through them
+      # (quality profile, custom formats, release profiles, blocklist, ...).
+      # BYPASS_ARR_QUALITY: "true"
       # jellyfin (default when JELLYFIN_URL is set) | password | none
       # AUTH_MODE: jellyfin
       # AUTH_PASSWORD: something-long

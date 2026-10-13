@@ -36,6 +36,10 @@ type Behaviour struct {
 	CacheMinutes int `json:"cacheMinutes"`
 	// SeerrAutoFetch grabs approved Seerr requests automatically.
 	SeerrAutoFetch bool `json:"seerrAutoFetch"`
+	// BypassArrQuality retries releases Sonarr/Radarr decline with the
+	// title briefly moved to a permissive quality profile, so roarr's own
+	// preferences decide instead of the *arr's profile and custom formats.
+	BypassArrQuality bool `json:"bypassArrQuality"`
 }
 
 // Settings is the full configuration.
@@ -97,6 +101,7 @@ var envSpec = []struct {
 	{"INDEXER_TIMEOUT", func(s *Settings, v string) { s.Behaviour.IndexerTimeout = atoi(v, 30) }},
 	{"CACHE_MINUTES", func(s *Settings, v string) { s.Behaviour.CacheMinutes = atoi(v, 20) }},
 	{"SEERR_AUTO_FETCH", func(s *Settings, v string) { s.Behaviour.SeerrAutoFetch = truthy(v) }},
+	{"BYPASS_ARR_QUALITY", func(s *Settings, v string) { s.Behaviour.BypassArrQuality = truthy(v) }},
 }
 
 func truthy(v string) bool {
@@ -154,7 +159,7 @@ func (s *Store) recompute() {
 		}
 	}
 	for _, svc := range []*Service{&cur.Sonarr, &cur.Radarr, &cur.Prowlarr, &cur.Seerr, &cur.Jellyfin, &cur.QBit} {
-		svc.URL = strings.TrimRight(strings.TrimSpace(svc.URL), "/")
+		svc.URL = NormalizeURL(svc.URL)
 	}
 	if cur.AuthMode == "" {
 		switch {
@@ -176,6 +181,20 @@ func (s *Store) recompute() {
 		cur.Prefs.Resolutions = release.DefaultPrefs().Resolutions
 	}
 	s.cur, s.locked = cur, locked
+}
+
+// NormalizeURL cleans a service URL as typed by a person: surrounding
+// space, a trailing slash, and a missing scheme ("sonarr:8989" or
+// "192.168.1.5:7878" become http://...).
+func NormalizeURL(u string) string {
+	u = strings.TrimRight(strings.TrimSpace(u), "/")
+	if u == "" {
+		return ""
+	}
+	if !strings.Contains(u, "://") {
+		u = "http://" + u
+	}
+	return u
 }
 
 // Get returns the effective settings.

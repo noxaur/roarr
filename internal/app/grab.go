@@ -7,11 +7,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/noxaur/roarr/internal/arr"
+	"github.com/noxaur/roarr/internal/config"
 	"github.com/noxaur/roarr/internal/httpx"
 	"github.com/noxaur/roarr/internal/qbit"
 	"github.com/noxaur/roarr/internal/release"
@@ -30,6 +33,9 @@ type GrabRequest struct {
 	// Force skips the *arr decision engine and hands the release straight to
 	// qBittorrent (the *arr still imports it). For "I know what I want".
 	Force bool `json:"force"`
+	// Bypass retries a declined push with the title on a permissive quality
+	// profile, so the *arr's quality and custom format rules do not apply.
+	Bypass bool `json:"bypass"`
 	// WatchFirst overrides the setting for this grab.
 	WatchFirst *bool `json:"watchFirst,omitempty"`
 }
@@ -41,6 +47,7 @@ type GrabResult struct {
 	Message    string   `json:"message"`
 	Rejections []string `json:"rejections,omitempty"`
 	CanForce   bool     `json:"canForce,omitempty"`
+	CanBypass  bool     `json:"canBypass,omitempty"`
 	SeriesID   int      `json:"seriesId,omitempty"`
 	MovieID    int      `json:"movieId,omitempty"`
 	Hash       string   `json:"hash,omitempty"`
@@ -220,24 +227,59 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 		push := pushFor(g.Release)
 		push.SeriesID = d.ID
 		push.TvdbID = d.TvdbID
-		push.IndexerID = a.arrIndexerID(ctx, c.Sonarr.Client, g.Release.IndexerID)
+		a.pushTarget(ctx, c.Sonarr.Client, "Sonarr", g.Release, &push)
 		decisions, err := c.Sonarr.Push(ctx, push)
 		if err != nil {
 			return GrabResult{}, err
 		}
-		if ok, rej := approved(decisions); !ok {
-			res.Message = "Sonarr declined this release"
-			res.Rejections = rej
-			res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
-			return res, nil
+		bypassed := false
+		if ok, _ := approved(decisions); !ok && a.bypass(g) {
+			decisions, err = a.withAnyQuality(ctx, c.Sonarr.Client,
+				func(ctx context.Context) (int, error) {
+					s, err := c.Sonarr.Series(ctx, d.ID)
+					return s.QualityProfile, err
+				},
+				func(ctx context.Context, id int) error { return c.Sonarr.SetQualityProfile(ctx, d.ID, id) },
+				func(ctx context.Context) ([]arr.PushDecision, error) { return c.Sonarr.Push(ctx, push) })
+			if err != nil {
+				return GrabResult{}, err
+			}
+			bypassed = true
 		}
-		if !confirmGrab(ctx, c.Sonarr.Client, g.Release.Title) {
+		forced := false
+		if ok, rej := approved(decisions); !ok {
+			if !bypassed {
+				res.Message = "Sonarr declined this release"
+				res.Rejections = rej
+				res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
+				res.CanBypass = true
+				return res, nil
+			}
+			// Not a quality problem (release profile, blocklist, file
+			// already on disk, ...): grab it the way Sonarr's own "grab
+			// anyway" does.
+			q, extra := sonarrSearchFor(d, covers, wanted)
+			if q == nil {
+				return a.declined(res, "Sonarr declined this release", rej, g, c), nil
+			}
+			if err := a.grabAnyway(ctx, c.Sonarr.Client, q, extra, g.Release); err != nil {
+				return a.declined(res, "Sonarr declined this release and could not be made to take it ("+err.Error()+")", rej, g, c), nil
+			}
+			forced = true
+		}
+		if !forced && !confirmGrab(ctx, c.Sonarr.Client, g.Release.Title) {
 			res.Message = "Sonarr accepted the release but its download client did not take it (see Sonarr → System → Logs)"
 			res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
 			return res, nil
 		}
 		res.OK, res.Via, res.Hash = true, "sonarr", strings.ToLower(g.Release.InfoHash)
 		res.Message = "Sonarr is downloading it."
+		switch {
+		case forced:
+			res.Message = "Sonarr is downloading it (all Sonarr checks skipped)."
+		case bypassed:
+			res.Message = "Sonarr is downloading it (quality profile bypassed)."
+		}
 	}
 	if watch && isPack && c.QBit != nil {
 		a.Watch.Track(WatchJob{Hash: res.Hash, Title: g.Release.Title, Kind: "tv", SeriesID: d.ID, TvdbID: d.TvdbID, SeriesTitle: d.Title, Wanted: wanted, Covers: covers, AddedPaused: g.Force})
@@ -286,24 +328,144 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 	push := pushFor(g.Release)
 	push.MovieID = g.MovieID
 	push.TmdbID = g.TmdbID
-	push.IndexerID = a.arrIndexerID(ctx, c.Radarr.Client, g.Release.IndexerID)
+	a.pushTarget(ctx, c.Radarr.Client, "Radarr", g.Release, &push)
 	decisions, err := c.Radarr.Push(ctx, push)
 	if err != nil {
 		return GrabResult{}, err
 	}
-	if ok, rej := approved(decisions); !ok {
-		res.Message = "Radarr declined this release"
-		res.Rejections = rej
-		res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
-		return res, nil
+	bypassed := false
+	if ok, _ := approved(decisions); !ok && a.bypass(g) {
+		decisions, err = a.withAnyQuality(ctx, c.Radarr.Client,
+			func(ctx context.Context) (int, error) {
+				m, err := c.Radarr.Movie(ctx, g.MovieID)
+				return m.QualityProfileID, err
+			},
+			func(ctx context.Context, id int) error { return c.Radarr.SetQualityProfile(ctx, g.MovieID, id) },
+			func(ctx context.Context) ([]arr.PushDecision, error) { return c.Radarr.Push(ctx, push) })
+		if err != nil {
+			return GrabResult{}, err
+		}
+		bypassed = true
 	}
-	if !confirmGrab(ctx, c.Radarr.Client, g.Release.Title) {
+	forced := false
+	if ok, rej := approved(decisions); !ok {
+		if !bypassed {
+			res.Message = "Radarr declined this release"
+			res.Rejections = rej
+			res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
+			res.CanBypass = true
+			return res, nil
+		}
+		q := url.Values{"movieId": {strconv.Itoa(g.MovieID)}}
+		if err := a.grabAnyway(ctx, c.Radarr.Client, q, map[string]any{"movieId": g.MovieID}, g.Release); err != nil {
+			return a.declined(res, "Radarr declined this release and could not be made to take it ("+err.Error()+")", rej, g, c), nil
+		}
+		forced = true
+	}
+	if !forced && !confirmGrab(ctx, c.Radarr.Client, g.Release.Title) {
 		res.Message = "Radarr accepted the release but its download client did not take it (see Radarr → System → Logs)"
 		res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
 		return res, nil
 	}
 	res.OK, res.Via, res.Hash, res.Message = true, "radarr", strings.ToLower(g.Release.InfoHash), "Radarr is downloading it."
+	switch {
+	case forced:
+		res.Message = "Radarr is downloading it (all Radarr checks skipped)."
+	case bypassed:
+		res.Message = "Radarr is downloading it (quality profile bypassed)."
+	}
 	return res, nil
+}
+
+func (a *App) declined(res GrabResult, msg string, rej []string, g GrabRequest, c *Clients) GrabResult {
+	res.Message = msg
+	res.Rejections = rej
+	res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
+	return res
+}
+
+// sonarrSearchFor picks the narrowest Sonarr interactive search that will
+// return the release: the episode for a single episode, the (first) season
+// for packs.
+func sonarrSearchFor(d *SeriesDetail, covers, wanted []int) (url.Values, map[string]any) {
+	ids := covers
+	if len(ids) == 0 {
+		ids = wanted
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	extra := map[string]any{"seriesId": d.ID, "episodeIds": ids}
+	if len(ids) == 1 {
+		return url.Values{"episodeId": {strconv.Itoa(ids[0])}}, extra
+	}
+	season := -1
+	for _, s := range d.Seasons {
+		for _, e := range s.Episodes {
+			for _, id := range ids {
+				if id == e.ID && (season < 0 || e.Season < season) {
+					season = e.Season
+				}
+			}
+		}
+	}
+	if season < 0 {
+		return nil, nil
+	}
+	return url.Values{"seriesId": {strconv.Itoa(d.ID)}, "seasonNumber": {strconv.Itoa(season)}}, extra
+}
+
+// grabAnyway is the last bypass step. A pushed release always goes through
+// the decision engine, but a release from the *arr's own interactive search
+// can be grabbed from its cache regardless of rejections — what the "grab
+// anyway" button in Sonarr/Radarr does. So roarr runs that search, finds the
+// same release among the results and grabs it from the cache.
+func (a *App) grabAnyway(ctx context.Context, c *arr.Client, q url.Values, extra map[string]any, r Release) error {
+	results, err := c.InteractiveSearch(ctx, q)
+	if err != nil {
+		return err
+	}
+	hit, ok := arr.MatchCached(results, r.GUID, r.InfoHash, r.Title, r.Size)
+	if !ok {
+		return fmt.Errorf("%s's own indexers did not return this release", c.Service)
+	}
+	slog.Info("grabbing release past the decision engine", "service", c.Service, "title", hit.Title, "rejections", hit.Rejections)
+	return c.GrabCached(ctx, hit, extra)
+}
+
+func (a *App) bypass(g GrabRequest) bool {
+	return g.Bypass || a.Settings.Get().Behaviour.BypassArrQuality
+}
+
+// withAnyQuality runs push with the title moved to the permissive bypass
+// profile and moves it back afterwards. The *arr hands an approved push to
+// its download client inside the push request, and imports do not check
+// the profile's allowed qualities, so the original profile is back in place
+// before anything else looks at it.
+func (a *App) withAnyQuality(ctx context.Context, c *arr.Client, current func(context.Context) (int, error), set func(context.Context, int) error, push func(context.Context) ([]arr.PushDecision, error)) ([]arr.PushDecision, error) {
+	a.bypassMu.Lock()
+	defer a.bypassMu.Unlock()
+	orig, err := current(ctx)
+	if err != nil {
+		return nil, err
+	}
+	anyID, err := c.EnsureBypassProfile(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if orig != anyID {
+		if err := set(ctx, anyID); err != nil {
+			return nil, fmt.Errorf("switching to the %q profile: %w", arr.BypassProfileName, err)
+		}
+		defer func() {
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			defer cancel()
+			if err := set(rctx, orig); err != nil {
+				slog.Error("could not restore quality profile", "service", c.Service, "profile", orig, "err", err)
+			}
+		}()
+	}
+	return push(ctx)
 }
 
 // confirmGrab waits briefly for the *arr to record a "grabbed" history
@@ -361,23 +523,69 @@ func approved(ds []arr.PushDecision) (bool, []string) {
 
 var prowlarrIDRe = regexp.MustCompile(`/(\d+)/?(?:api)?/?$`)
 
-// arrIndexerID maps a Prowlarr indexer id to the matching indexer inside
+// pushTarget fills the indexer id and download link of a push for one *arr.
+//
+// The indexer id maps the Prowlarr indexer to the matching indexer inside
 // Sonarr/Radarr (synced indexers point at {prowlarr}/{id}/), so seed ratio
 // and priority settings apply to pushed releases.
-func (a *App) arrIndexerID(ctx context.Context, c *arr.Client, prowlarrID int) int {
-	if prowlarrID == 0 {
-		return 0
-	}
-	ixs, err := c.Indexers(ctx)
-	if err != nil {
-		return 0
-	}
-	for _, ix := range ixs {
-		if m := prowlarrIDRe.FindStringSubmatch(ix.FieldString("baseUrl")); m != nil && m[1] == fmt.Sprint(prowlarrID) {
-			return ix.ID
+//
+// The download link is Prowlarr's proxy link, built from the address roarr
+// used to reach Prowlarr. The *arr may know Prowlarr under another name
+// (roarr on a different Docker network, or via localhost), so the link's
+// origin is swapped for the one the *arr itself uses for Prowlarr.
+func (a *App) pushTarget(ctx context.Context, c *arr.Client, appName string, r Release, p *arr.PushRelease) {
+	var arrProwlarr string
+	if ixs, err := c.Indexers(ctx); err == nil {
+		for _, ix := range ixs {
+			base := ix.FieldString("baseUrl")
+			m := prowlarrIDRe.FindStringSubmatch(base)
+			if m == nil {
+				continue
+			}
+			if r.IndexerID != 0 && m[1] == strconv.Itoa(r.IndexerID) {
+				p.IndexerID = ix.ID
+				arrProwlarr = base
+				break
+			}
+			if arrProwlarr == "" {
+				arrProwlarr = base
+			}
 		}
 	}
-	return 0
+	pc := a.C().Prowlarr
+	if pc == nil {
+		return
+	}
+	if arrProwlarr == "" {
+		if apps, err := pc.Applications(ctx); err == nil {
+			for _, ap := range apps {
+				if ap.Implementation == appName {
+					arrProwlarr = ap.FieldString("prowlarrUrl")
+					break
+				}
+			}
+		}
+	}
+	p.DownloadURL = swapOrigin(p.DownloadURL, pc.Base, arrProwlarr)
+}
+
+// swapOrigin replaces link's scheme and host with to's when link points at
+// the Prowlarr roarr talks to (from).
+func swapOrigin(link, from, to string) string {
+	if link == "" || to == "" {
+		return link
+	}
+	lu, err1 := url.Parse(link)
+	fu, err2 := url.Parse(from)
+	tu, err3 := url.Parse(config.NormalizeURL(to))
+	if err1 != nil || err2 != nil || err3 != nil || tu.Host == "" {
+		return link
+	}
+	if !strings.EqualFold(lu.Host, fu.Host) || strings.EqualFold(lu.Host, tu.Host) {
+		return link
+	}
+	lu.Scheme, lu.Host = tu.Scheme, tu.Host
+	return lu.String()
 }
 
 // directAdd fetches the release and adds it to qBittorrent in the *arr's

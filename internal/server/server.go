@@ -458,7 +458,9 @@ func (s *Server) grab(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	// Skipping checks may run an interactive search inside Sonarr/Radarr,
+	// which is as slow as their slowest indexer.
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
 	defer cancel()
 	res, err := s.app.Grab(ctx, g)
 	if err != nil {

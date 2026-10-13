@@ -209,18 +209,26 @@ export function SettingsPage() {
         <TabsContent value="behaviour" className="space-y-1">
           <SectionHead index={3} title="Behaviour" className="mb-3" />
           <Field label="Play in order" hint="Download season packs episode by episode and import each one as soon as it's done. Needs qBittorrent.">
-            <Toggle checked={b.watchFirst} onChange={(v) => update((x) => (x.behaviour.watchFirst = v))}>
+            <Toggle checked={b.watchFirst} disabled={locked.WATCH_FIRST} onChange={(v) => update((x) => (x.behaviour.watchFirst = v))}>
               On by default
             </Toggle>
           </Field>
           <Field label="Search early" hint="Start searching a show as soon as its page opens, so the best pick is ready when you are.">
-            <Toggle checked={b.prefetch} onChange={(v) => update((x) => (x.behaviour.prefetch = v))}>
+            <Toggle checked={b.prefetch} disabled={locked.PREFETCH} onChange={(v) => update((x) => (x.behaviour.prefetch = v))}>
               Prefetch
             </Toggle>
           </Field>
           <Field label="Seerr requests" hint="Fetch approved requests automatically. Turn on Seerr's “prevent search” for its Sonarr/Radarr servers to avoid double grabs.">
             <Toggle checked={b.seerrAutoFetch} disabled={locked.SEERR_AUTO_FETCH} onChange={(v) => update((x) => (x.behaviour.seerrAutoFetch = v))}>
               Get approved requests
+            </Toggle>
+          </Field>
+          <Field
+            label="Skip *arr checks"
+            hint="When Sonarr or Radarr declines a release, grab it through them anyway: first with the title briefly on a “roarr: any quality” profile, and if something else is in the way (release profile, blocklist, file already on disk) through their own “grab anyway”. Your preferences here decide instead."
+          >
+            <Toggle checked={b.bypassArrQuality} disabled={locked.BYPASS_ARR_QUALITY} onChange={(v) => update((x) => (x.behaviour.bypassArrQuality = v))}>
+              Always
             </Toggle>
           </Field>
           <Field label="Indexer timeout" hint="Seconds before a slow indexer is given up on.">

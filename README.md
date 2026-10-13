@@ -20,6 +20,7 @@ services:
     restart: unless-stopped
     ports: ["3847:3847"]
     volumes: [roarr-config:/config]
+    extra_hosts: ["host.docker.internal:host-gateway"]
     environment:
       PROWLARR_URL: http://prowlarr:9696
       PROWLARR_API_KEY: ...
@@ -43,7 +44,13 @@ docker compose pull && docker compose up -d   # update
 ```
 
 Open `http://<host>:3847`. Put roarr on the same Docker network as the rest
-of the stack so container names resolve. Everything except connection
+of the stack so container names resolve. Apps that are only published on the
+host's ports work too: a `localhost` / `127.0.0.1` URL (yours, or one roarr
+discovers in Prowlarr or Sonarr) is retried on the Docker host
+(`host.docker.internal`, then the default gateway) when nothing answers inside
+the container. Release links handed to Sonarr/Radarr are rewritten to the
+Prowlarr address *they* use, so the apps do not need to resolve the same names
+as roarr. Everything except connection
 settings can also be changed in **Settings**, and is saved in `/config`.
 
 ### Configuration
@@ -60,6 +67,7 @@ settings can also be changed in **Settings**, and is saved in `/config`.
 | `JELLYFIN_ADMIN_ONLY` | `true` | Only Jellyfin admins may sign in. |
 | `WATCH_FIRST` | `true` | Download packs in episode order and import as each finishes. |
 | `PREFETCH` | `true` | Start searching a show as soon as its page opens. |
+| `BYPASS_ARR_QUALITY` | `false` | Grab releases Sonarr/Radarr decline anyway, still through them. Quality profile and custom format rejections are retried with the title briefly on a `roarr: any quality` profile; anything else (release profiles, blocklist, a file already on disk) goes through the *arr's own "grab anyway" after an interactive search. Also available per release as **Skip \*arr checks**. |
 | `SEERR_AUTO_FETCH` | `false` | Grab newly approved Seerr requests automatically. Turn on Seerr's "prevent search" for its Sonarr/Radarr servers so they don't search too. |
 | `INDEXER_TIMEOUT` | `30` | Seconds before giving up on a slow indexer. |
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -526,12 +527,20 @@ func (w *WatchFirst) importReady(ctx context.Context, c *Clients, j *WatchJob, t
 	w.setMsg(j, "")
 	// Sonarr knows downloads it grabbed (or has seen in its category) by
 	// id; for anything else scan the torrent's folder directly. That works
-	// when Sonarr and qBittorrent see the same paths (the usual /data layout).
+	// when Sonarr and qBittorrent see the same paths (the usual /data layout)
+	// or Sonarr has a remote path mapping for qBittorrent's.
 	items, err := c.Sonarr.ManualImportCandidates(ctx, strings.ToUpper(hash), "")
 	if (err != nil || len(items) == 0) && t.ContentPath != "" {
 		folder := t.ContentPath
 		if len(j.Files) > 0 && !strings.Contains(j.Files[0].Name, "/") {
 			folder = t.SavePath // single-folder-less torrent
+		}
+		if ms, mErr := c.Sonarr.RemotePathMappings(ctx); mErr == nil && len(ms) > 0 {
+			host := ""
+			if u, pErr := url.Parse(c.QBit.Base); pErr == nil {
+				host = u.Hostname()
+			}
+			folder = arr.MapRemotePath(ms, host, folder)
 		}
 		items, err = c.Sonarr.ManualImportCandidates(ctx, "", folder)
 	}
