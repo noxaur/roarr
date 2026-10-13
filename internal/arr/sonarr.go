@@ -267,3 +267,8 @@ func (s *Sonarr) RescanSeries(ctx context.Context, seriesID int) error {
 	_, err := s.RunCommand(ctx, map[string]any{"name": "RescanSeries", "seriesId": seriesID})
 	return err
 }
+
+// SetQualityProfile moves series to a quality profile.
+func (s *Sonarr) SetQualityProfile(ctx context.Context, seriesID, profileID int) error {
+	return s.send(ctx, http.MethodPut, "/series/editor", map[string]any{"seriesIds": []int{seriesID}, "qualityProfileId": profileID}, nil)
+}

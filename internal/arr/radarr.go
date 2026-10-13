@@ -134,3 +134,8 @@ func (r *Radarr) Collection(ctx context.Context, tmdbID int) (*Collection, error
 func (r *Radarr) Monitor(ctx context.Context, id int) error {
 	return r.send(ctx, http.MethodPut, "/movie/editor", map[string]any{"movieIds": []int{id}, "monitored": true}, nil)
 }
+
+// SetQualityProfile moves a movie to a quality profile.
+func (r *Radarr) SetQualityProfile(ctx context.Context, movieID, profileID int) error {
+	return r.send(ctx, http.MethodPut, "/movie/editor", map[string]any{"movieIds": []int{movieID}, "qualityProfileId": profileID}, nil)
+}
