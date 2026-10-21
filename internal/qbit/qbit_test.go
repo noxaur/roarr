@@ -48,3 +48,26 @@ func TestAddTorrentRetryKeepsBody(t *testing.T) {
 		t.Fatalf("adds=%d body=%q", adds, lastBody)
 	}
 }
+
+// A refused login must not be repeated on every call, or roarr gets its own
+// IP banned by qBittorrent.
+func TestLoginBackoff(t *testing.T) {
+	var logins int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&logins, 1)
+		if r.Header.Get("Origin") != "" {
+			t.Error("login sent an Origin header")
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "u", "wrong")
+	for i := 0; i < 5; i++ {
+		if _, err := c.Version(context.Background()); err == nil {
+			t.Fatal("want login error")
+		}
+	}
+	if logins != 1 {
+		t.Fatalf("logins = %d, want 1", logins)
+	}
+}

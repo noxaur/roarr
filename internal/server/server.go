@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -100,6 +101,17 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 		}
 		start := time.Now()
+		// A panic would drop the connection and show up in front of roarr as a
+		// bare 502. Log it and answer with JSON instead.
+		defer func() {
+			if v := recover(); v != nil {
+				if v == http.ErrAbortHandler {
+					panic(v)
+				}
+				slog.Error("panic in handler", "method", r.Method, "path", r.URL.Path, "panic", v, "stack", string(debug.Stack()))
+				writeErr(w, http.StatusInternalServerError, fmt.Errorf("internal error: %v", v))
+			}
+		}()
 		next.ServeHTTP(w, r)
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/search" {
 			slog.Debug("http", "method", r.Method, "path", r.URL.Path, "ms", time.Since(start).Milliseconds())
@@ -173,7 +185,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusUnauthorized, errors.New("wrong username or password"))
 				return
 			}
-			writeErr(w, http.StatusBadGateway, fmt.Errorf("could not reach Jellyfin: %w", err))
+			writeErr(w, http.StatusFailedDependency, fmt.Errorf("could not reach Jellyfin: %w", err))
 			return
 		}
 		if st.JellyfinAdminOnly && !u.IsAdmin {
@@ -575,7 +587,11 @@ func (s *Server) grab(w http.ResponseWriter, r *http.Request) {
 	}
 	// Skipping checks may run an interactive search inside Sonarr/Radarr,
 	// which is as slow as their slowest indexer.
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
+	//
+	// The grab must not die with the browser connection: a proxy in front of
+	// roarr may give up (502/504) while roarr is mid-way, and a half-finished
+	// grab leaves a torrent in qBittorrent that nothing tracks.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 4*time.Minute)
 	defer cancel()
 	res, err := s.app.Grab(ctx, g)
 	if err != nil {
@@ -591,7 +607,7 @@ func (s *Server) auto(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Minute)
 	defer cancel()
 	res, err := s.app.Auto(ctx, req)
 	if err != nil {
@@ -744,18 +760,21 @@ func writeErr(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]any{"error": err.Error()})
 }
 
+// statusFor maps an error to an HTTP status. A failing upstream service is
+// reported as 424, never 502/503/504: reverse proxies and Cloudflare replace
+// the body of those with their own error page, which hides roarr's message.
 func statusFor(err error) int {
 	var he *httpx.Error
 	switch {
 	case errors.Is(err, app.ErrNotConfigured):
-		return http.StatusServiceUnavailable
+		return http.StatusFailedDependency
 	case errors.As(err, &he):
 		if he.Status == 404 {
 			return 404
 		}
-		return http.StatusBadGateway
+		return http.StatusFailedDependency
 	case errors.Is(err, context.DeadlineExceeded):
-		return http.StatusGatewayTimeout
+		return http.StatusFailedDependency
 	}
 	return http.StatusInternalServerError
 }
