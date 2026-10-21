@@ -75,6 +75,14 @@ func (c *Client) login(ctx context.Context) error {
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 512))
 	if res.StatusCode >= 300 || strings.TrimSpace(string(b)) == "Fails." {
 		msg := "login failed (check QBIT_USERNAME / QBIT_PASSWORD)"
+		if t := strings.TrimSpace(string(b)); t != "" && t != "Fails." {
+			msg += ": qBittorrent said " + strconv.Quote(t)
+		}
+		if res.StatusCode == http.StatusUnauthorized {
+			// Newer qBittorrent versions answer 401 for a wrong login (older
+			// ones answered 200 "Fails.") and for a failed CSRF origin check.
+			msg += ". 401 means a wrong username or password, or an Origin/Referer that does not match the Host header"
+		}
 		if res.StatusCode == http.StatusForbidden {
 			// qBittorrent answers 403 for a banned IP (too many failed logins)
 			// and when its host header / CSRF checks refuse the request.
