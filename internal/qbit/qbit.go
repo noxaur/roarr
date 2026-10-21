@@ -39,7 +39,13 @@ type Client struct {
 	mu       sync.Mutex
 	http     *http.Client
 	loggedIn bool
+	// A refused login is not retried for a while: qBittorrent bans an IP after
+	// a few failed logins, and roarr polls often enough to cause that itself.
+	failErr error
+	failAt  time.Time
 }
+
+const loginBackoff = 60 * time.Second
 
 // New returns a client. Login happens lazily.
 func New(base, user, pass string) *Client {
@@ -56,6 +62,19 @@ func New(base, user, pass string) *Client {
 func (c *Client) Configured() bool { return c != nil && c.Base != "" }
 
 func (c *Client) login(ctx context.Context) error {
+	if c.failErr != nil && time.Since(c.failAt) < loginBackoff {
+		return c.failErr
+	}
+	err := c.tryLogin(ctx)
+	if he, ok := err.(*httpx.Error); ok && he.Status != 0 {
+		c.failErr, c.failAt = err, time.Now()
+	} else if err == nil {
+		c.failErr = nil
+	}
+	return err
+}
+
+func (c *Client) tryLogin(ctx context.Context) error {
 	if c.Password == "" {
 		// No password: rely on qBittorrent's "bypass authentication" for
 		// localhost / whitelisted subnets.
@@ -65,8 +84,8 @@ func (c *Client) login(ctx context.Context) error {
 	form := url.Values{"username": {c.Username}, "password": {c.Password}}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+"/api/v2/auth/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// Referer only: the login that is known to work sends no Origin header.
 	req.Header.Set("Referer", c.Base)
-	req.Header.Set("Origin", c.Base)
 	res, err := c.http.Do(req)
 	if err != nil {
 		return &httpx.Error{Service: "qbittorrent", Message: httpx.Unreachable(err)}
