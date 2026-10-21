@@ -362,7 +362,10 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
       const j = await res.json();
       if (j.error) msg = j.error;
     } catch {
-      /* not json */
+      /* not json: a proxy error page */
+      if (res.status === 502 || res.status === 503 || res.status === 504 || res.status >= 520) {
+        msg = `The proxy in front of roarr got no answer (HTTP ${res.status}). The request may still be running: check Activity before trying again.`;
+      }
     }
     throw new ApiError(res.status, msg);
   }
