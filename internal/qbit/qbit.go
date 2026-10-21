@@ -159,7 +159,6 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, b
 			req.Header.Set("Content-Type", ct)
 		}
 		req.Header.Set("Referer", c.Base)
-		req.Header.Set("Origin", c.Base)
 		res, err := c.http.Do(req)
 		if err != nil {
 			return &httpx.Error{Service: "qbittorrent", Message: httpx.Unreachable(err)}
