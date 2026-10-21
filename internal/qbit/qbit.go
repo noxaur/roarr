@@ -326,5 +326,11 @@ func (c *Client) Start(ctx context.Context, hash string) error {
 	return nil
 }
 
+// Delete removes a torrent, and its downloaded files when deleteFiles is set.
+// An unknown hash is not an error: qBittorrent ignores it.
+func (c *Client) Delete(ctx context.Context, hash string, deleteFiles bool) error {
+	return c.do(ctx, http.MethodPost, "/api/v2/torrents/delete", url.Values{"hashes": {strings.ToLower(hash)}, "deleteFiles": {strconv.FormatBool(deleteFiles)}}, nil, "", nil)
+}
+
 // ErrNotFound is returned when a torrent is not (yet) known.
 var ErrNotFound = fmt.Errorf("torrent not found")
