@@ -67,7 +67,6 @@ settings can also be changed in **Settings**, and is saved in `/config`.
 | `JELLYFIN_ADMIN_ONLY` | `true` | Only Jellyfin admins may sign in. |
 | `WATCH_FIRST` | `true` | Download packs in episode order and import as each finishes. |
 | `PREFETCH` | `true` | Start searching a show as soon as its page opens. |
-| `BYPASS_ARR_QUALITY` | `false` | Grab releases Sonarr/Radarr decline anyway, still through them. Quality profile and custom format rejections are retried with the title briefly on a `roarr: any quality` profile; anything else (release profiles, blocklist, a file already on disk) goes through the *arr's own "grab anyway" after an interactive search. Also available per release as **Skip \*arr checks**. |
 | `SEERR_AUTO_FETCH` | `false` | Grab newly approved Seerr requests automatically. Turn on Seerr's "prevent search" for its Sonarr/Radarr servers so they don't search too. |
 | `INDEXER_TIMEOUT` | `30` | Seconds before giving up on a slow indexer. |
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |

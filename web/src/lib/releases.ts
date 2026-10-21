@@ -9,7 +9,6 @@ export type Kind = "tv" | "movie";
 
 export interface GrabOpts {
   force?: boolean;
-  bypass?: boolean;
   watchFirst?: boolean;
 }
 
@@ -87,7 +86,7 @@ export function useGrabber(onGrab: (r: Release, opts: GrabOpts) => Promise<GrabR
         const out = await onGrab(r, opts);
         setResults((m) => new Map(m).set(r.key, out));
         if (out.ok && !quiet) toast.success(out.message);
-        else if (!out.canForce && !out.canBypass) toast.error(out.message, { description: out.rejections?.join(" · ") });
+        else if (!out.canForce) toast.error(out.message, { description: out.rejections?.join(" · ") });
         return out;
       } catch (e) {
         const out: GrabResult = { ok: false, message: errText(e) };

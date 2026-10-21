@@ -223,14 +223,6 @@ export function SettingsPage() {
               Get approved requests
             </Toggle>
           </Field>
-          <Field
-            label="Skip *arr checks"
-            hint="When Sonarr or Radarr declines a release, grab it through them anyway: first with the title briefly on a “roarr: any quality” profile, and if something else is in the way (release profile, blocklist, file already on disk) through their own “grab anyway”. Your preferences here decide instead."
-          >
-            <Toggle checked={b.bypassArrQuality} disabled={locked.BYPASS_ARR_QUALITY} onChange={(v) => update((x) => (x.behaviour.bypassArrQuality = v))}>
-              Always
-            </Toggle>
-          </Field>
           <Field label="Indexer timeout" hint="Seconds before a slow indexer is given up on.">
             <Num value={b.indexerTimeout} min={5} unit="seconds" disabled={locked.INDEXER_TIMEOUT} onChange={(v) => update((x) => (x.behaviour.indexerTimeout = v))} />
           </Field>

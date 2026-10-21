@@ -85,7 +85,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
   const grabber = useGrabber(
     useCallback(
       async (r: Release, opts: GrabOpts) => {
-        const res = await api.grab({ kind: "movie", movieId: libraryIdFor(r.movieTmdb!), tmdbId: r.movieTmdb, release: r, force: opts.force, bypass: opts.bypass });
+        const res = await api.grab({ kind: "movie", movieId: libraryIdFor(r.movieTmdb!), tmdbId: r.movieTmdb, release: r, force: opts.force });
         if (res.ok) after(res.movieId, r.movieTmdb);
         return res;
       },
