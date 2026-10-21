@@ -103,15 +103,6 @@ func TestGrabMovieBypassesQualityProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.OK || !res.CanBypass {
-		t.Fatalf("plain grab: ok=%v canBypass=%v, want declined and bypassable", res.OK, res.CanBypass)
-	}
-
-	g.Bypass = true
-	res, err = a.grabMovie(context.Background(), g)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if !res.OK || !strings.Contains(res.Message, "bypassed") {
 		t.Fatalf("bypass grab = %+v", res)
 	}
@@ -133,23 +124,6 @@ func TestGrabMovieBypassesQualityProfile(t *testing.T) {
 	}
 }
 
-func TestGrabMovieBypassSetting(t *testing.T) {
-	f := &fakeRadarr{profile: 1}
-	srv := httptest.NewServer(f)
-	defer srv.Close()
-	a := testApp(t, &Clients{Radarr: arr.NewRadarr(srv.URL, "k")})
-	if _, err := a.Settings.Update(func(s *config.Settings) { s.Behaviour.BypassArrQuality = true }); err != nil {
-		t.Fatal(err)
-	}
-	res, err := a.grabMovie(context.Background(), GrabRequest{Kind: "movie", MovieID: 5, Release: Release{Title: "Movie.2024.2160p.x265"}})
-	if err != nil || !res.OK {
-		t.Fatalf("res=%+v err=%v", res, err)
-	}
-	if f.profile != 1 {
-		t.Fatalf("profile = %d, want 1", f.profile)
-	}
-}
-
 // Rejections a profile cannot fix are skipped the way Radarr's own "grab
 // anyway" does: interactive search, then grab from the release cache.
 func TestGrabMovieSkipsAllChecks(t *testing.T) {
@@ -157,7 +131,7 @@ func TestGrabMovieSkipsAllChecks(t *testing.T) {
 	srv := httptest.NewServer(f)
 	defer srv.Close()
 	a := testApp(t, &Clients{Radarr: arr.NewRadarr(srv.URL, "k")})
-	res, err := a.grabMovie(context.Background(), GrabRequest{Kind: "movie", MovieID: 5, Bypass: true, Release: Release{Title: "Movie.2024.2160p.x265", Size: 1001}})
+	res, err := a.grabMovie(context.Background(), GrabRequest{Kind: "movie", MovieID: 5, Release: Release{Title: "Movie.2024.2160p.x265", Size: 1001}})
 	if err != nil || !res.OK || !strings.Contains(res.Message, "all Radarr checks skipped") {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
@@ -203,5 +177,19 @@ func TestSonarrSearchFor(t *testing.T) {
 	}
 	if q, _ := sonarrSearchFor(d, nil, nil); q != nil {
 		t.Fatalf("nothing to search: %v", q)
+	}
+}
+
+func TestMagnetHash(t *testing.T) {
+	hexHash := "0123456789abcdef0123456789abcdef01234567"
+	if got := magnetHash("magnet:?xt=urn:btih:" + strings.ToUpper(hexHash) + "&dn=x"); got != hexHash {
+		t.Fatalf("hex magnet = %q", got)
+	}
+	// base32 of the 20 bytes 0x00..0x13
+	if got := magnetHash("magnet:?xt=urn:btih:AAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQT"); got != "000102030405060708090a0b0c0d0e0f10111213" {
+		t.Fatalf("base32 magnet = %q", got)
+	}
+	if got := magnetHash("magnet:?dn=x"); got != "" {
+		t.Fatalf("no hash = %q", got)
 	}
 }

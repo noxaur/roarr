@@ -153,7 +153,6 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
           episodeIds: fills.length ? fills : selArr,
           release: r,
           force: opts.force,
-          bypass: opts.bypass,
           watchFirst: opts.watchFirst,
         });
         if (res.ok) afterGrab(res.seriesId);

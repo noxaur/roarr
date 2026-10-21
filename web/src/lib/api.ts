@@ -206,7 +206,6 @@ export interface GrabResult {
   message: string;
   rejections?: string[];
   canForce?: boolean;
-  canBypass?: boolean;
   seriesId?: number;
   movieId?: number;
   hash?: string;
@@ -323,7 +322,6 @@ export interface Settings {
     indexerTimeout: number;
     cacheMinutes: number;
     seerrAutoFetch: boolean;
-    bypassArrQuality: boolean;
   };
 }
 
@@ -393,7 +391,6 @@ export const api = {
     episodeIds?: number[];
     release: Release;
     force?: boolean;
-    bypass?: boolean;
     watchFirst?: boolean;
   }) => call<GrabResult>("POST", "/api/grab", body),
   auto: (body: { kind: Kind; seriesId?: number; tvdbId?: number; tmdbId?: number; episodeIds?: number[]; seasons?: number[]; movies?: number[] }) =>

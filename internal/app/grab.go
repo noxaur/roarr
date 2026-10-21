@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/base32"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -33,9 +35,6 @@ type GrabRequest struct {
 	// Force skips the *arr decision engine and hands the release straight to
 	// qBittorrent (the *arr still imports it). For "I know what I want".
 	Force bool `json:"force"`
-	// Bypass retries a declined push with the title on a permissive quality
-	// profile, so the *arr's quality and custom format rules do not apply.
-	Bypass bool `json:"bypass"`
 	// WatchFirst overrides the setting for this grab.
 	WatchFirst *bool `json:"watchFirst,omitempty"`
 }
@@ -47,14 +46,15 @@ type GrabResult struct {
 	Message    string   `json:"message"`
 	Rejections []string `json:"rejections,omitempty"`
 	CanForce   bool     `json:"canForce,omitempty"`
-	CanBypass  bool     `json:"canBypass,omitempty"`
 	SeriesID   int      `json:"seriesId,omitempty"`
 	MovieID    int      `json:"movieId,omitempty"`
 	Hash       string   `json:"hash,omitempty"`
 	WatchFirst bool     `json:"watchFirst,omitempty"`
 }
 
-// Grab downloads a release through Sonarr/Radarr.
+// Grab downloads a release through Sonarr/Radarr. A release the *arr declines
+// is always pushed past its decision engine; roarr never gives up on a grab
+// the user asked for.
 func (a *App) Grab(ctx context.Context, g GrabRequest) (GrabResult, error) {
 	var res GrabResult
 	var err error
@@ -233,7 +233,7 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 			return GrabResult{}, err
 		}
 		bypassed := false
-		if ok, _ := approved(decisions); !ok && a.bypass(g) {
+		if ok, _ := approved(decisions); !ok {
 			decisions, err = a.withAnyQuality(ctx, c.Sonarr.Client,
 				func(ctx context.Context) (int, error) {
 					s, err := c.Sonarr.Series(ctx, d.ID)
@@ -248,13 +248,6 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 		}
 		forced := false
 		if ok, rej := approved(decisions); !ok {
-			if !bypassed {
-				res.Message = "Sonarr declined this release"
-				res.Rejections = rej
-				res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
-				res.CanBypass = true
-				return res, nil
-			}
 			// Not a quality problem (release profile, blocklist, file
 			// already on disk, ...): grab it the way Sonarr's own "grab
 			// anyway" does.
@@ -334,7 +327,7 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 		return GrabResult{}, err
 	}
 	bypassed := false
-	if ok, _ := approved(decisions); !ok && a.bypass(g) {
+	if ok, _ := approved(decisions); !ok {
 		decisions, err = a.withAnyQuality(ctx, c.Radarr.Client,
 			func(ctx context.Context) (int, error) {
 				m, err := c.Radarr.Movie(ctx, g.MovieID)
@@ -349,13 +342,6 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 	}
 	forced := false
 	if ok, rej := approved(decisions); !ok {
-		if !bypassed {
-			res.Message = "Radarr declined this release"
-			res.Rejections = rej
-			res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
-			res.CanBypass = true
-			return res, nil
-		}
 		q := url.Values{"movieId": {strconv.Itoa(g.MovieID)}}
 		if err := a.grabAnyway(ctx, c.Radarr.Client, q, map[string]any{"movieId": g.MovieID}, g.Release); err != nil {
 			return a.declined(res, "Radarr declined this release and could not be made to take it ("+err.Error()+")", rej, g, c), nil
@@ -431,10 +417,6 @@ func (a *App) grabAnyway(ctx context.Context, c *arr.Client, q url.Values, extra
 	}
 	slog.Info("grabbing release past the decision engine", "service", c.Service, "title", hit.Title, "rejections", hit.Rejections)
 	return c.GrabCached(ctx, hit, extra)
-}
-
-func (a *App) bypass(g GrabRequest) bool {
-	return g.Bypass || a.Settings.Get().Behaviour.BypassArrQuality
 }
 
 // withAnyQuality runs push with the title moved to the permissive bypass
@@ -605,11 +587,17 @@ func (a *App) directAdd(ctx context.Context, src *arr.Client, catField string, r
 			}
 		}
 	}
+	if category == "" {
+		slog.Warn("no enabled qBittorrent download client in the *arr: the torrent is added without its category and will not be imported automatically", "service", src.Service)
+	}
 	add := qbit.Add{Category: category, Paused: paused}
 	hash := strings.ToLower(r.InfoHash)
 	link := r.DownloadURL
 	if link == "" {
 		link = r.MagnetURL
+	}
+	if link == "" {
+		return "", errors.New("this release has no download link")
 	}
 	if strings.HasPrefix(link, "magnet:") {
 		add.URL = link
@@ -627,23 +615,70 @@ func (a *App) directAdd(ctx context.Context, src *arr.Client, catField string, r
 				hash = h
 			}
 		} else {
-			add.Torrent = body
-			if h, err := torrent.InfoHash(body); err == nil {
-				hash = h
+			h, err := torrent.InfoHash(body)
+			if err != nil {
+				// An indexer error page or a login redirect, not a torrent.
+				return "", fmt.Errorf("the download link did not return a torrent file (%v)", err)
 			}
+			add.Torrent, hash = body, h
 		}
 	}
 	if err := c.QBit.AddTorrent(ctx, add); err != nil {
-		return "", err
+		if !errors.Is(err, qbit.ErrRejected) || hash == "" {
+			return "", err
+		}
+		// Already in qBittorrent (an earlier grab): reuse it.
+		ts, terr := c.QBit.Torrents(ctx, hash)
+		if terr != nil || len(ts) == 0 {
+			return "", err
+		}
+		if category != "" && ts[0].Category != category {
+			_ = c.QBit.SetCategory(ctx, hash, category)
+		}
+		if !paused {
+			_ = c.QBit.Start(ctx, hash)
+		}
+		return hash, nil
+	}
+	// Adding is asynchronous for magnets and links; make sure it landed.
+	if hash != "" {
+		deadline := time.Now().Add(6 * time.Second)
+		for {
+			if ts, err := c.QBit.Torrents(ctx, hash); err != nil || len(ts) > 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				return "", errors.New("qBittorrent accepted the torrent but it never showed up in its list")
+			}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(300 * time.Millisecond):
+			}
+		}
 	}
 	return hash, nil
 }
 
-var btihRe = regexp.MustCompile(`(?i)xt=urn:btih:([0-9a-f]{40})`)
+var btihRe = regexp.MustCompile(`(?i)xt=urn:btih:([0-9a-z]{32,40})`)
 
+// magnetHash returns the lowercase hex info-hash of a magnet link, whether it
+// carries the 40 character hex form or the 32 character base32 form.
 func magnetHash(m string) string {
-	if s := btihRe.FindStringSubmatch(m); s != nil {
-		return strings.ToLower(s[1])
+	s := btihRe.FindStringSubmatch(m)
+	if s == nil {
+		return ""
+	}
+	h := s[1]
+	switch len(h) {
+	case 40:
+		if _, err := hex.DecodeString(h); err == nil {
+			return strings.ToLower(h)
+		}
+	case 32:
+		if b, err := base32.StdEncoding.DecodeString(strings.ToUpper(h)); err == nil {
+			return hex.EncodeToString(b)
+		}
 	}
 	return ""
 }

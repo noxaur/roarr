@@ -36,10 +36,6 @@ type Behaviour struct {
 	CacheMinutes int `json:"cacheMinutes"`
 	// SeerrAutoFetch grabs approved Seerr requests automatically.
 	SeerrAutoFetch bool `json:"seerrAutoFetch"`
-	// BypassArrQuality retries releases Sonarr/Radarr decline with the
-	// title briefly moved to a permissive quality profile, so roarr's own
-	// preferences decide instead of the *arr's profile and custom formats.
-	BypassArrQuality bool `json:"bypassArrQuality"`
 }
 
 // Settings is the full configuration.
@@ -101,7 +97,6 @@ var envSpec = []struct {
 	{"INDEXER_TIMEOUT", func(s *Settings, v string) { s.Behaviour.IndexerTimeout = atoi(v, 30) }},
 	{"CACHE_MINUTES", func(s *Settings, v string) { s.Behaviour.CacheMinutes = atoi(v, 20) }},
 	{"SEERR_AUTO_FETCH", func(s *Settings, v string) { s.Behaviour.SeerrAutoFetch = truthy(v) }},
-	{"BYPASS_ARR_QUALITY", func(s *Settings, v string) { s.Behaviour.BypassArrQuality = truthy(v) }},
 }
 
 func truthy(v string) bool {

@@ -360,11 +360,6 @@ function ReleaseRow({
               </a>
             </Button>
           )}
-          {result && !result.ok && result.canBypass && (
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => onGrab({ bypass: true })} title="Grab it through Sonarr/Radarr anyway: quality profile, custom formats, release profiles, blocklist and files already on disk are skipped. Can take as long as Sonarr's own search.">
-              Skip *arr checks
-            </Button>
-          )}
           {result && !result.ok && result.canForce && (
             <Button variant="destructive" size="sm" disabled={busy} onClick={() => onGrab({ force: true })}>
               Download anyway

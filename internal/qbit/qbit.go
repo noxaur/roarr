@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -83,6 +84,15 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, b
 	if !c.Configured() {
 		return &httpx.Error{Service: "qbittorrent", Message: "not configured"}
 	}
+	// A retry after a session expiry needs the body again, so keep the bytes.
+	var payload []byte
+	if body != nil {
+		b, err := io.ReadAll(body)
+		if err != nil {
+			return err
+		}
+		payload = b
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		c.mu.Lock()
 		if !c.loggedIn {
@@ -96,8 +106,8 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, b
 		u := c.Base + path
 		var rd io.Reader
 		ct := contentType
-		if body != nil {
-			rd = body
+		if payload != nil {
+			rd = bytes.NewReader(payload)
 		} else if method == http.MethodPost {
 			rd = strings.NewReader(form.Encode())
 			ct = "application/x-www-form-urlencoded"
@@ -258,7 +268,18 @@ type Add struct {
 	FirstLast bool
 }
 
-// AddTorrent adds a torrent.
+// ErrRejected means qBittorrent answered "Fails." to an add: it did not take
+// the torrent (bad file, unreachable link, or one it already has).
+var ErrRejected = errors.New("qBittorrent refused the torrent (invalid, unreachable link, or already added)")
+
+// SetCategory moves torrents into a category (created on the fly by add, but
+// not by this call, so create it first when needed).
+func (c *Client) SetCategory(ctx context.Context, hash, category string) error {
+	return c.do(ctx, http.MethodPost, "/api/v2/torrents/setCategory", url.Values{"hashes": {strings.ToLower(hash)}, "category": {category}}, nil, "", nil)
+}
+
+// AddTorrent adds a torrent. qBittorrent answers 200 "Fails." for a torrent
+// it did not accept, which is reported as ErrRejected.
 func (c *Client) AddTorrent(ctx context.Context, a Add) error {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -286,7 +307,14 @@ func (c *Client) AddTorrent(ctx context.Context, a Add) error {
 		_ = w.WriteField("firstLastPiecePrio", "true")
 	}
 	_ = w.Close()
-	return c.do(ctx, http.MethodPost, "/api/v2/torrents/add", nil, &buf, w.FormDataContentType(), nil)
+	var reply string
+	if err := c.do(ctx, http.MethodPost, "/api/v2/torrents/add", nil, &buf, w.FormDataContentType(), &reply); err != nil {
+		return err
+	}
+	if strings.EqualFold(reply, "Fails.") {
+		return ErrRejected
+	}
+	return nil
 }
 
 // Start resumes torrents (qBittorrent 5 renamed resume -> start).
