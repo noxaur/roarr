@@ -2,12 +2,16 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/noxaur/roarr/internal/arr"
+	"github.com/noxaur/roarr/internal/httpx"
 	"github.com/noxaur/roarr/internal/qbit"
 	"github.com/noxaur/roarr/internal/release"
 )
@@ -177,7 +181,7 @@ func (a *App) Activity(ctx context.Context) ([]ActivityItem, map[string]string) 
 		}
 		if !seen {
 			jj := j
-			it := ActivityItem{ID: "watch:" + j.Hash, Source: "sonarr", Kind: "tv", Title: j.SeriesTitle, Subtitle: describeRelease(j.Title), Release: j.Title, Status: "downloading", Progress: j.Progress, Speed: j.Speed, Href: fmt.Sprintf("/tv/%d", j.SeriesID), DownloadID: j.Hash, Watch: &jj}
+			it := ActivityItem{ID: "watch:" + JobKey(j), Source: "sonarr", Kind: "tv", Title: j.SeriesTitle, Subtitle: describeRelease(j.Title), Release: j.Title, Status: "downloading", Progress: j.Progress, Speed: j.Speed, Href: fmt.Sprintf("/tv/%d", j.SeriesID), DownloadID: j.Hash, Watch: &jj}
 			for _, f := range j.Files {
 				it.Size += f.Size
 				it.SizeLeft += int64(float64(f.Size) * (1 - f.Progress))
@@ -274,7 +278,9 @@ func describeRelease(title string) string {
 	return ""
 }
 
-// RemoveActivity removes a download from the *arr queue and the client.
+// RemoveActivity removes a download from the *arr queue and the client. It
+// always ends with the download gone from roarr's own list, even when the
+// *arr no longer knows it or the torrent is already deleted.
 func (a *App) RemoveActivity(ctx context.Context, id string, blocklist bool) error {
 	c := a.C()
 	items, _ := a.Activity(ctx)
@@ -282,31 +288,46 @@ func (a *App) RemoveActivity(ctx context.Context, id string, blocklist bool) err
 		if it.ID != id {
 			continue
 		}
-		var cl *arr.Client
-		switch it.Source {
-		case "sonarr":
-			if c.Sonarr != nil {
-				cl = c.Sonarr.Client
+		if len(it.QueueIDs) > 0 {
+			var cl *arr.Client
+			switch it.Source {
+			case "sonarr":
+				if c.Sonarr != nil {
+					cl = c.Sonarr.Client
+				}
+			case "radarr":
+				if c.Radarr != nil {
+					cl = c.Radarr.Client
+				}
 			}
-		case "radarr":
-			if c.Radarr != nil {
-				cl = c.Radarr.Client
+			if cl == nil {
+				return fmt.Errorf("%s %w", it.Source, ErrNotConfigured)
+			}
+			// One delete per queue record; the first removes the torrent.
+			for i, qid := range it.QueueIDs {
+				err := cl.RemoveQueue(ctx, qid, i == 0, blocklist && i == 0)
+				var he *httpx.Error
+				if err != nil && i == 0 && !(errors.As(err, &he) && he.Status == http.StatusNotFound) {
+					return err
+				}
 			}
 		}
-		if cl == nil {
-			return fmt.Errorf("%s %w", it.Source, ErrNotConfigured)
-		}
-		// One delete per queue record; the first removes the torrent.
-		for i, qid := range it.QueueIDs {
-			if err := cl.RemoveQueue(ctx, qid, i == 0, blocklist && i == 0); err != nil && i == 0 {
-				return err
+		// Rows with no queue entry (watch-first jobs the *arr never queued)
+		// and torrents the *arr left behind: delete from the client directly.
+		if it.DownloadID != "" && c.QBit != nil {
+			if err := c.QBit.Delete(ctx, it.DownloadID, true); err != nil {
+				slog.Warn("could not delete torrent from qbittorrent", "hash", it.DownloadID, "err", err)
 			}
+		}
+		if it.Watch != nil {
+			a.Watch.Remove(JobKey(*it.Watch))
 		}
 		if it.DownloadID != "" {
 			a.Watch.Remove(it.DownloadID)
 		}
 		return nil
 	}
+	// Not in the feed any more (finished or failed job): forget it anyway.
 	if strings.HasPrefix(id, "watch:") {
 		a.Watch.Remove(strings.TrimPrefix(id, "watch:"))
 		return nil

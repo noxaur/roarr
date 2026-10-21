@@ -97,6 +97,9 @@ func newWatchFirst(a *App, dir string) *WatchFirst {
 	return w
 }
 
+// JobKey identifies a job in Remove.
+func JobKey(j WatchJob) string { return jobKey(&j) }
+
 func jobKey(j *WatchJob) string {
 	if j.Hash != "" {
 		return j.Hash
@@ -136,10 +139,12 @@ func (w *WatchFirst) Jobs() []WatchJob {
 	return out
 }
 
-// Remove forgets a job.
-func (w *WatchFirst) Remove(hash string) {
+// Remove forgets a job by its key (the hash, or "title:..." before the hash
+// is known).
+func (w *WatchFirst) Remove(key string) {
 	w.mu.Lock()
-	delete(w.jobs, strings.ToLower(hash))
+	delete(w.jobs, key)
+	delete(w.jobs, strings.ToLower(key))
 	w.mu.Unlock()
 	w.save()
 }

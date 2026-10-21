@@ -63,6 +63,14 @@ func (a *App) Grab(ctx context.Context, g GrabRequest) (GrabResult, error) {
 	} else {
 		res, err = a.grabEpisodes(ctx, g)
 	}
+	switch {
+	case err != nil:
+		slog.Warn("grab failed", "kind", g.Kind, "title", g.Release.Title, "force", g.Force, "err", err)
+	case !res.OK:
+		slog.Warn("grab declined", "kind", g.Kind, "title", g.Release.Title, "message", res.Message, "rejections", res.Rejections)
+	default:
+		slog.Info("grab ok", "kind", g.Kind, "title", g.Release.Title, "via", res.Via, "hash", res.Hash, "message", res.Message)
+	}
 	if err == nil && res.OK {
 		a.Library.Refresh(ctx)
 		a.forget(g)
@@ -623,6 +631,7 @@ func (a *App) directAdd(ctx context.Context, src *arr.Client, catField string, r
 			add.Torrent, hash = body, h
 		}
 	}
+	slog.Info("adding torrent to qbittorrent", "qbit", c.QBit.Base, "category", category, "hash", hash, "paused", paused, "file", len(add.Torrent) > 0)
 	if err := c.QBit.AddTorrent(ctx, add); err != nil {
 		if !errors.Is(err, qbit.ErrRejected) || hash == "" {
 			return "", err
