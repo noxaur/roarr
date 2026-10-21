@@ -185,7 +185,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusUnauthorized, errors.New("wrong username or password"))
 				return
 			}
-			writeErr(w, http.StatusBadGateway, fmt.Errorf("could not reach Jellyfin: %w", err))
+			writeErr(w, http.StatusFailedDependency, fmt.Errorf("could not reach Jellyfin: %w", err))
 			return
 		}
 		if st.JellyfinAdminOnly && !u.IsAdmin {
@@ -760,18 +760,21 @@ func writeErr(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]any{"error": err.Error()})
 }
 
+// statusFor maps an error to an HTTP status. A failing upstream service is
+// reported as 424, never 502/503/504: reverse proxies and Cloudflare replace
+// the body of those with their own error page, which hides roarr's message.
 func statusFor(err error) int {
 	var he *httpx.Error
 	switch {
 	case errors.Is(err, app.ErrNotConfigured):
-		return http.StatusServiceUnavailable
+		return http.StatusFailedDependency
 	case errors.As(err, &he):
 		if he.Status == 404 {
 			return 404
 		}
-		return http.StatusBadGateway
+		return http.StatusFailedDependency
 	case errors.Is(err, context.DeadlineExceeded):
-		return http.StatusGatewayTimeout
+		return http.StatusFailedDependency
 	}
 	return http.StatusInternalServerError
 }

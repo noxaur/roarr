@@ -74,7 +74,17 @@ func (c *Client) login(ctx context.Context) error {
 	defer res.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 512))
 	if res.StatusCode >= 300 || strings.TrimSpace(string(b)) == "Fails." {
-		return &httpx.Error{Service: "qbittorrent", Status: res.StatusCode, Message: "login failed (check QBIT_USERNAME / QBIT_PASSWORD)"}
+		msg := "login failed (check QBIT_USERNAME / QBIT_PASSWORD)"
+		if res.StatusCode == http.StatusForbidden {
+			// qBittorrent answers 403 for a banned IP (too many failed logins)
+			// and when its host header / CSRF checks refuse the request.
+			msg = "qBittorrent refused the login with HTTP 403"
+			if t := strings.TrimSpace(string(b)); t != "" && t != "Fails." {
+				msg += ": " + t
+			}
+			msg += ". Usually roarr's IP is banned after failed logins (restart qBittorrent to clear it, and check QBIT_PASSWORD), or Web UI → host header validation / CSRF protection blocks it"
+		}
+		return &httpx.Error{Service: "qbittorrent", Status: res.StatusCode, Message: msg}
 	}
 	c.loggedIn = true
 	return nil
