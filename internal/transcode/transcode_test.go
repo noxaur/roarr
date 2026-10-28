@@ -2,12 +2,14 @@ package transcode
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -427,5 +429,54 @@ func TestConcurrentSavesStayValid(t *testing.T) {
 	m.save()
 	if st := New(&fakeRunner{}, dir).Status(); st.Counts.Queued != 40 {
 		t.Errorf("reloaded %d queued jobs, want 40", st.Counts.Queued)
+	}
+}
+
+func TestSwapWithoutHardLinksRenamesIn(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	m.linkFn = func(a, b string) error { return &os.LinkError{Op: "link", Old: a, New: b, Err: syscall.ENOTSUP} }
+	m.process(context.Background(), j, m.opts, EncSVT)
+	if j.State != Done || size(t, path) != 300 {
+		t.Fatalf("state %s (%s)", j.State, j.Message)
+	}
+	for _, p := range []string{tempPath(path), backupPath(path)} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s left behind", p)
+		}
+	}
+}
+
+func TestSwapFailureWithoutHardLinksRestoresOriginal(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	m.linkFn = func(a, b string) error { return syscall.ENOTSUP }
+	m.renameFn = func(a, b string) error { // moving the result in fails; everything else works
+		if a == tempPath(path) {
+			return errors.New("disk error")
+		}
+		return os.Rename(a, b)
+	}
+	m.process(context.Background(), j, m.opts, EncSVT)
+	if j.State != Failed || size(t, path) != 1000 {
+		t.Fatalf("state %s (%s)", j.State, j.Message)
+	}
+	if _, err := os.Stat(backupPath(path)); !os.IsNotExist(err) {
+		t.Error("backup left behind after restore")
+	}
+}
+
+func TestSwapRefusesWhenBackupExists(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	if err := os.WriteFile(backupPath(path), make([]byte, 555), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.process(context.Background(), j, m.opts, EncSVT)
+	if j.State != Failed || !strings.Contains(j.Message, backupPath(path)) {
+		t.Fatalf("state %s (%s)", j.State, j.Message)
+	}
+	if size(t, backupPath(path)) != 555 || size(t, path) != 1000 {
+		t.Error("backup or original touched")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -91,8 +92,9 @@ type Manager struct {
 	seq      int
 	kick     chan struct{}
 
-	saveMu                  sync.Mutex // serializes save()
-	beforeSwap, afterBackup func()     // test hooks
+	saveMu                  sync.Mutex              // serializes save()
+	beforeSwap, afterBackup func()                  // test hooks
+	renameFn, linkFn        func(a, b string) error // test hooks (nil = os.Rename / os.Link)
 }
 
 // New builds a manager; state is kept in dir/transcode.json.
@@ -400,18 +402,29 @@ func sameFile(a, b os.FileInfo) bool {
 // replace path at any time, so the original is first moved aside and checked
 // to be the very file that was encoded (same inode, size and mtime as orig).
 // A newer file is put back untouched. The new file is linked in without
-// overwriting, so a file that appears in the gap is never clobbered. The
-// backup is deleted only after the new file is in place.
+// overwriting (renamed in when the filesystem has no hard links), so a file
+// that appears in the gap is never clobbered. The path is never left empty
+// on failure, and the backup is deleted only after the new file is in place.
+// An existing backup from an earlier job is never deleted or overwritten.
 func (m *Manager) swap(path, tmp string, orig os.FileInfo) error {
 	if now, err := os.Stat(path); err != nil || !sameFile(orig, now) {
 		return errors.New("the original changed during conversion, result discarded")
 	}
+	bak := backupPath(path)
+	if _, err := os.Lstat(bak); err == nil {
+		return fmt.Errorf("an earlier backup is kept at %s; remove it to allow this file to be converted", bak)
+	}
 	if m.beforeSwap != nil {
 		m.beforeSwap()
 	}
-	bak := backupPath(path)
-	_ = os.Remove(bak)
-	if err := os.Rename(path, bak); err != nil {
+	rename, link := m.renameFn, m.linkFn
+	if rename == nil {
+		rename = os.Rename
+	}
+	if link == nil {
+		link = os.Link
+	}
+	if err := rename(path, bak); err != nil {
 		return fmt.Errorf("cannot replace the original: %w", err)
 	}
 	if m.afterBackup != nil {
@@ -419,22 +432,36 @@ func (m *Manager) swap(path, tmp string, orig os.FileInfo) error {
 	}
 	moved, err := os.Stat(bak)
 	if err != nil || !sameFile(orig, moved) {
-		return restore(bak, path, "the original changed during conversion, result discarded")
+		return restore(rename, bak, path, "the original changed during conversion, result discarded")
 	}
-	if err := os.Link(tmp, path); err != nil {
-		return restore(bak, path, "cannot replace the original: "+err.Error())
+	err = link(tmp, path)
+	switch {
+	case err == nil:
+		_ = os.Remove(tmp)
+	case errors.Is(err, fs.ErrExist):
+		return restore(rename, bak, path, "a new file appeared during conversion, result discarded")
+	default:
+		// No hard links here (SMB, exFAT, some FUSE): rename, but only into an empty path.
+		if _, serr := os.Lstat(path); serr == nil {
+			return restore(rename, bak, path, "a new file appeared during conversion, result discarded")
+		}
+		if rerr := rename(tmp, path); rerr != nil {
+			return restore(rename, bak, path, "cannot replace the original: "+rerr.Error())
+		}
 	}
-	_ = os.Remove(tmp)
 	_ = os.Remove(bak)
 	return nil
 }
 
-// restore puts the backup back without overwriting anything at path.
-func restore(bak, path, reason string) error {
-	if err := os.Link(bak, path); err != nil {
-		return fmt.Errorf("%s; a newer file is already in place, the previous one was kept as %s", reason, bak)
+// restore moves the backup back to path, which must be empty. If another
+// writer has put a file there, the backup is kept and named in the error.
+func restore(rename func(a, b string) error, bak, path, reason string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("%s; a newer file is in place, the previous one is kept as %s", reason, bak)
 	}
-	_ = os.Remove(bak)
+	if err := rename(bak, path); err != nil {
+		return fmt.Errorf("%s; restoring failed (%v), the original is kept as %s", reason, err, bak)
+	}
 	return errors.New(reason)
 }
 
