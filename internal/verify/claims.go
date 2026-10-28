@@ -2,6 +2,7 @@ package verify
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 
@@ -207,8 +208,9 @@ var codecNames = map[string][]string{
 	"xvid": {"mpeg4", "msmpeg4v3", "msmpeg4v2"},
 }
 
-// CompareClaims checks the claims against probed streams.
-func CompareClaims(cl Claims, p *Probe) []Check {
+// CompareClaims checks the claims against probed streams and the sidecar
+// subtitle files that belong to the video.
+func CompareClaims(cl Claims, p *Probe, sc Sidecars) []Check {
 	var out []Check
 	v, hasVideo := p.Video()
 	if hasVideo && cl.Resolution > 0 && v.Width > 0 {
@@ -245,7 +247,7 @@ func CompareClaims(cl Claims, p *Probe) []Check {
 		}
 	}
 	out = append(out, compareAudio(cl, p))
-	if c, ok := compareSubs(cl, p); ok {
+	if c, ok := compareSubs(cl, p, sc); ok {
 		out = append(out, c)
 	}
 	return out
@@ -317,101 +319,135 @@ func compareAudio(cl Claims, p *Probe) Check {
 	return c
 }
 
-// compareSubs checks subtitle claims. Its emptiness test uses each stream's
-// frame count (tags or a counted read, see Verifier.countSubs); -1 means the
-// count is unknown.
-func compareSubs(cl Claims, p *Probe) (Check, bool) {
+// subSource is one subtitle track, embedded or a sidecar file.
+type subSource struct {
+	lang    string
+	forced  bool
+	empty   bool
+	sidecar string // file name, for sidecars
+}
+
+// compareSubs checks subtitle claims against embedded streams and sidecar
+// files. A stream's emptiness comes from its frame count (tags or a counted
+// read, see Verifier.countSubs; -1 is unknown), a sidecar's from its size.
+// A claim only fails when the absence is certain: every track is tagged and
+// no subtitle file in the download is left unexplained.
+func compareSubs(cl Claims, p *Probe, sc Sidecars) (Check, bool) {
 	if !cl.AnySubs && len(cl.Subs) == 0 {
 		return Check{}, false
 	}
 	c := Check{Name: "subtitles", Level: Pass}
-	subs := p.Kind("subtitle")
-	if len(subs) == 0 {
-		if cl.HardSubbed {
-			return Check{Name: "subtitles", Level: Pass, Reason: "hardsubbed: subtitles are burned into the picture"}, true
+	var srcs []subSource
+	for _, s := range p.Kind("subtitle") {
+		srcs = append(srcs, subSource{lang: s.Lang(), forced: s.Is("forced"), empty: s.Frames() == 0})
+	}
+	for _, f := range sc.Matched {
+		srcs = append(srcs, subSource{lang: f.Lang, forced: f.Forced, empty: f.Size == 0, sidecar: path.Base(f.Name)})
+	}
+	if len(srcs) == 0 {
+		switch {
+		case cl.HardSubbed:
+			c.Reason = "hardsubbed: subtitles are burned into the picture"
+		case sc.Other > 0:
+			c.Level, c.Reason = Warn, fmt.Sprintf("claims subtitles; the file has no subtitle track and %d subtitle file(s) in the download could not be matched to it", sc.Other)
+		default:
+			c.Level, c.Reason = Fail, "claims subtitles but the file has no subtitle track and the download has no subtitle files"
 		}
-		c.Level, c.Reason = Fail, "claims subtitles but the file has no subtitle track"
 		return c, true
 	}
-	usable := func(s Stream) bool { return s.Frames() != 0 }
-	var parts []string
-	langs := map[string]bool{}
-	for _, s := range subs {
-		if l := s.Lang(); l != "" && usable(s) {
-			langs[l] = true
+	untagged := 0
+	for _, s := range srcs {
+		if s.lang == "" {
+			untagged++
 		}
 	}
+	unsure := untagged > 0 || sc.Other > 0
+	var parts []string
 	for _, want := range cl.Subs {
-		var match []Stream
-		for _, s := range subs {
-			if s.Lang() == want {
-				match = append(match, s)
-			}
-		}
 		name := LangName(want)
 		var full, empty, forced int
-		for _, s := range match {
+		sidecar := ""
+		for _, s := range srcs {
+			if s.lang != want {
+				continue
+			}
 			switch {
-			case s.Frames() == 0:
+			case s.empty:
 				empty++
-			case s.Is("forced"):
+			case s.forced:
 				forced++
 			default:
 				full++
+				if sidecar == "" {
+					sidecar = s.sidecar
+				}
 			}
 		}
 		switch {
-		case len(match) == 0:
-			untagged := 0
-			for _, s := range subs {
-				if s.Lang() == "" {
-					untagged++
-				}
+		case full > 0:
+			msg := name + " subtitles present"
+			if sidecar != "" {
+				msg += " (sidecar " + sidecar + ")"
 			}
-			if untagged > 0 {
-				c.Level = Worse(c.Level, Warn)
-				parts = append(parts, fmt.Sprintf("no subtitle track tagged %s (%d untagged)", name, untagged))
-			} else {
-				c.Level = Worse(c.Level, Fail)
-				parts = append(parts, fmt.Sprintf("claims %s subtitles but none exist (found %s)", name, subLangList(subs)))
+			if empty > 0 {
+				msg += fmt.Sprintf(" (%d empty track ignored)", empty)
 			}
-		case full == 0 && forced > 0:
+			parts = append(parts, msg)
+		case forced > 0:
 			c.Level = Worse(c.Level, Warn)
 			parts = append(parts, fmt.Sprintf("only forced %s subtitles (foreign parts only)", name))
-		case full == 0:
+		case unsure:
+			c.Level = Worse(c.Level, Warn)
+			parts = append(parts, fmt.Sprintf("cannot confirm %s subtitles: %s", name, unsureWhy(untagged, sc.Other)))
+		case empty > 0:
 			c.Level = Worse(c.Level, Fail)
 			parts = append(parts, fmt.Sprintf("the %s subtitle track is empty", name))
 		default:
-			parts = append(parts, fmt.Sprintf("%s subtitles present", name))
-			if empty > 0 {
-				parts[len(parts)-1] += fmt.Sprintf(" (%d empty track ignored)", empty)
+			c.Level = Worse(c.Level, Fail)
+			parts = append(parts, fmt.Sprintf("claims %s subtitles but none exist (found %s)", name, subLangList(srcs)))
+		}
+	}
+	nonEmpty, langs := 0, map[string]bool{}
+	for _, s := range srcs {
+		if !s.empty {
+			nonEmpty++
+			if s.lang != "" {
+				langs[s.lang] = true
 			}
 		}
 	}
-	nonEmpty := 0
-	for _, s := range subs {
-		if usable(s) {
-			nonEmpty++
-		}
-	}
 	switch {
+	case nonEmpty == 0 && sc.Other > 0:
+		c.Level = Worse(c.Level, Warn)
+		parts = append(parts, "every matched subtitle track is empty; "+unsureWhy(0, sc.Other))
 	case nonEmpty == 0:
 		c.Level = Worse(c.Level, Fail)
 		parts = append(parts, "every subtitle track is empty")
-	case cl.MultiSubs && len(langs) < 2 && len(subs) < 2:
+	case cl.MultiSubs && len(langs) < 2 && nonEmpty < 2:
 		c.Level = Worse(c.Level, Warn)
-		parts = append(parts, "claims multiple subtitle languages, found "+subLangList(subs))
+		parts = append(parts, "claims multiple subtitle languages, found "+subLangList(srcs))
 	case len(cl.Subs) == 0:
-		parts = append(parts, fmt.Sprintf("%d subtitle track(s): %s", len(subs), subLangList(subs)))
+		parts = append(parts, fmt.Sprintf("%d subtitle track(s): %s", len(srcs), subLangList(srcs)))
 	}
 	c.Reason = strings.Join(parts, "; ")
 	return c, true
 }
 
-func subLangList(subs []Stream) string {
+func unsureWhy(untagged, other int) string {
+	var why []string
+	if untagged > 0 {
+		why = append(why, fmt.Sprintf("%d track(s) without a language tag", untagged))
+	}
+	if other > 0 {
+		why = append(why, fmt.Sprintf("%d subtitle file(s) not matched to this video", other))
+	}
+	return strings.Join(why, ", ")
+}
+
+func subLangList(srcs []subSource) string {
 	var out []string
-	for _, s := range subs {
-		n := LangName(s.Lang())
+	for _, s := range srcs {
+		n := LangName(s.lang)
 		if !containsStr(out, n) {
 			out = append(out, n)
 		}

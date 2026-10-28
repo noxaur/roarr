@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/noxaur/roarr/internal/arr"
 	"github.com/noxaur/roarr/internal/config"
+	"github.com/noxaur/roarr/internal/httpx"
 	"github.com/noxaur/roarr/internal/qbit"
 	"github.com/noxaur/roarr/internal/verify"
 )
@@ -63,6 +65,7 @@ type VerifyRegrab struct {
 	At      time.Time   `json:"at"`
 	Auto    bool        `json:"auto"` // started by AutoRegrab, not a person
 	Message string      `json:"message"`
+	Note    string      `json:"note,omitempty"` // which library files were deleted or kept
 	Error   string      `json:"error,omitempty"`
 	Result  *AutoResult `json:"result,omitempty"`
 }
@@ -76,6 +79,9 @@ type Verification struct {
 
 	mu   sync.Mutex
 	recs map[string]*VerifyRecord
+	// saveMu makes snapshot, write and rename one step, so an older
+	// snapshot never replaces a newer file.
+	saveMu sync.Mutex
 }
 
 func newVerification(a *App, dir string) *Verification {
@@ -198,6 +204,8 @@ func (v *Verification) mustRecord(hash string) VerifyRecord {
 }
 
 func (v *Verification) save() {
+	v.saveMu.Lock()
+	defer v.saveMu.Unlock()
 	v.mu.Lock()
 	recs := make([]*VerifyRecord, 0, len(v.recs))
 	for _, r := range v.recs {
@@ -517,10 +525,11 @@ func (v *Verification) Recheck(ctx context.Context, hash string) (VerifyRecord, 
 	return v.mustRecord(hash), nil
 }
 
-// Regrab throws a download away and grabs the next best release: the
-// download is removed from the *arr queue with blocklisting (or deleted from
-// qBittorrent), files it already imported are deleted, and roarr's planner
-// picks again. The failed release stays hidden from roarr's picks.
+// Regrab throws a download away and grabs the next best release. In order,
+// and stopping at the first failure: the download is removed from the *arr
+// queue with blocklisting and from qBittorrent (both confirmed), library
+// files the *arr's history shows it imported are deleted, and roarr's
+// planner picks again. The failed release stays hidden from roarr's picks.
 func (v *Verification) Regrab(ctx context.Context, hash string, auto bool) (VerifyRecord, error) {
 	hash = strings.ToLower(hash)
 	r, ok := v.Record(hash)
@@ -531,23 +540,39 @@ func (v *Verification) Regrab(ctx context.Context, hash string, auto bool) (Veri
 	// Hide the release from roarr's picks even if it only warned: a person
 	// asked for something else.
 	v.update(hash, func(rec *VerifyRecord) { rec.Rejected, rec.Dismissed = true, false })
-	if err := v.discard(ctx, c, r); err != nil {
-		return v.finishRegrab(hash, auto, nil, err)
+	if err := v.removeDownload(ctx, c, r); err != nil {
+		return v.finishRegrab(hash, auto, "", nil, err)
+	}
+	deleted, kept, err := v.deleteImported(ctx, c, r)
+	if err != nil {
+		err = fmt.Errorf("the download is removed, but its imported files could not be checked or deleted: %w", err)
+		return v.finishRegrab(hash, auto, "", nil, err)
+	}
+	note := ""
+	if deleted > 0 {
+		note = fmt.Sprintf("Deleted %d imported file(s). ", deleted)
+	}
+	if kept > 0 {
+		note += fmt.Sprintf("Kept %d library file(s): no import history links them to this download. ", kept)
+	}
+	note = strings.TrimSpace(note)
+	finish := func(res *AutoResult, err error) (VerifyRecord, error) {
+		return v.finishRegrab(hash, auto, note, res, err)
 	}
 	var req AutoRequest
 	switch r.Kind {
 	case "tv":
 		if r.SeriesID == 0 || len(r.EpisodeIDs) == 0 {
-			return v.finishRegrab(hash, auto, nil, errors.New("Sonarr did not say which episodes this download was for"))
+			return finish(nil, errors.New("Sonarr did not say which episodes this download was for"))
 		}
 		req = AutoRequest{Kind: "tv", SeriesID: r.SeriesID, EpisodeIDs: r.EpisodeIDs}
 	case "movie":
 		if c.Radarr == nil {
-			return v.finishRegrab(hash, auto, nil, fmt.Errorf("radarr %w", ErrNotConfigured))
+			return finish(nil, fmt.Errorf("radarr %w", ErrNotConfigured))
 		}
 		m, err := c.Radarr.Movie(ctx, r.MovieID)
 		if err != nil {
-			return v.finishRegrab(hash, auto, nil, err)
+			return finish(nil, err)
 		}
 		req = AutoRequest{Kind: "movie", MovieTmdb: []int{m.TmdbID}}
 	}
@@ -568,17 +593,17 @@ func (v *Verification) Regrab(ctx context.Context, hash string, auto bool) (Veri
 				}
 			}
 			if len(missing) == 0 {
-				return v.finishRegrab(hash, auto, &AutoResult{Message: "Nothing is missing."}, nil)
+				return finish(&AutoResult{Message: "Nothing is missing."}, nil)
 			}
 			req.EpisodeIDs = missing
 		}
 	}
 	res, err := v.app.Auto(ctx, req)
-	return v.finishRegrab(hash, auto, &res, err)
+	return finish(&res, err)
 }
 
-func (v *Verification) finishRegrab(hash string, auto bool, res *AutoResult, err error) (VerifyRecord, error) {
-	g := &VerifyRegrab{At: time.Now(), Auto: auto, Result: res}
+func (v *Verification) finishRegrab(hash string, auto bool, note string, res *AutoResult, err error) (VerifyRecord, error) {
+	g := &VerifyRegrab{At: time.Now(), Auto: auto, Note: note, Result: res}
 	if res != nil {
 		g.Message = res.Message
 	}
@@ -589,13 +614,19 @@ func (v *Verification) finishRegrab(hash string, auto bool, res *AutoResult, err
 	v.save()
 	rec := v.mustRecord(hash)
 	if g.Error == "" {
-		slog.Info("media verification: re-grabbed", "release", rec.Release, "auto", auto, "message", g.Message)
+		slog.Info("media verification: re-grabbed", "release", rec.Release, "auto", auto, "message", g.Message, "note", note)
 	}
 	return rec, err
 }
 
-// discard removes the download and anything it imported.
-func (v *Verification) discard(ctx context.Context, c *Clients, r VerifyRecord) error {
+// removalChecks are the waits before each look that confirms a removal;
+// the *arr and qBittorrent delete asynchronously.
+var removalChecks = []time.Duration{0, 500 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second}
+
+// removeDownload takes the download out of the *arr queue (blocklisting it)
+// and out of qBittorrent, and confirms both. Nothing in the library may be
+// touched before it returns nil.
+func (v *Verification) removeDownload(ctx context.Context, c *Clients, r VerifyRecord) error {
 	var cl *arr.Client
 	switch {
 	case r.Source == "sonarr" && c.Sonarr != nil:
@@ -606,79 +637,181 @@ func (v *Verification) discard(ctx context.Context, c *Clients, r VerifyRecord) 
 	if cl == nil {
 		return fmt.Errorf("%s %w", r.Source, ErrNotConfigured)
 	}
-	if q, err := cl.Queue(ctx, ""); err == nil {
-		first := true
+	app := cl.Service
+	inQueue := func() ([]int, error) {
+		q, err := cl.Queue(ctx, "")
+		if err != nil {
+			return nil, fmt.Errorf("could not read the %s queue, so nothing was removed or deleted; retry when %s answers: %w", app, app, err)
+		}
+		var ids []int
 		for _, it := range q {
-			if !strings.EqualFold(it.DownloadID, r.Hash) {
-				continue
+			if strings.EqualFold(it.DownloadID, r.Hash) {
+				ids = append(ids, it.ID)
 			}
-			// The first removal deletes the download and blocklists it.
-			if err := cl.RemoveQueue(ctx, it.ID, first, first); err != nil && first {
-				slog.Warn("media verification: could not remove from queue", "release", r.Release, "err", err)
-			}
-			first = false
+		}
+		return ids, nil
+	}
+	ids, err := inQueue()
+	if err != nil {
+		return err
+	}
+	for i, id := range ids {
+		// The first removal deletes the download and blocklists it.
+		err := cl.RemoveQueue(ctx, id, i == 0, i == 0)
+		var he *httpx.Error
+		if err != nil && !(errors.As(err, &he) && he.Status == http.StatusNotFound) {
+			return fmt.Errorf("%s would not remove the download from its queue, so no library files were deleted; remove it in %s and retry: %w", app, app, err)
+		}
+	}
+	if len(ids) > 0 {
+		if err := confirmGone(ctx, func() (bool, error) { ids, err := inQueue(); return len(ids) > 0, err }); err != nil {
+			return fmt.Errorf("the download is still in the %s queue, so no library files were deleted; remove it in %s and retry: %w", app, app, err)
 		}
 	}
 	if c.QBit != nil && len(r.Hash) == 40 {
-		_ = c.QBit.Delete(ctx, r.Hash, true)
+		if err := c.QBit.Delete(ctx, r.Hash, true); err != nil {
+			return fmt.Errorf("qBittorrent would not delete the torrent, so no library files were deleted; delete it in qBittorrent and retry: %w", err)
+		}
+		err := confirmGone(ctx, func() (bool, error) {
+			ts, err := c.QBit.Torrents(ctx, r.Hash)
+			if err != nil {
+				return false, fmt.Errorf("could not ask qBittorrent: %w", err)
+			}
+			return len(ts) > 0, nil
+		})
+		if err != nil {
+			return fmt.Errorf("the torrent is still in qBittorrent, so no library files were deleted; delete it there and retry: %w", err)
+		}
 	}
 	v.app.Watch.Remove(r.Hash)
-
-	// Files this download already imported are the bad ones; anything the
-	// library had before it was added stays.
-	since := r.Added.Add(-time.Minute)
-	switch r.Kind {
-	case "tv":
-		if c.Sonarr == nil || r.SeriesID == 0 {
-			return nil
-		}
-		eps, err := c.Sonarr.Episodes(ctx, r.SeriesID)
-		if err != nil {
-			return err
-		}
-		fileIDs := map[int]bool{}
-		for _, e := range eps {
-			if e.EpisodeFileID != 0 && containsInt(r.EpisodeIDs, e.ID) {
-				fileIDs[e.EpisodeFileID] = true
-			}
-		}
-		if len(fileIDs) == 0 {
-			return nil
-		}
-		files, err := c.Sonarr.EpisodeFiles(ctx, r.SeriesID)
-		if err != nil {
-			return err
-		}
-		var del []int
-		for _, f := range files {
-			if fileIDs[f.ID] && addedSince(f.DateAdded, since) {
-				del = append(del, f.ID)
-			}
-		}
-		if err := c.Sonarr.DeleteEpisodeFiles(ctx, del); err != nil {
-			return err
-		}
-		v.app.forget(GrabRequest{SeriesID: r.SeriesID})
-	case "movie":
-		if c.Radarr == nil || r.MovieID == 0 {
-			return nil
-		}
-		m, err := c.Radarr.Movie(ctx, r.MovieID)
-		if err != nil {
-			return err
-		}
-		if m.MovieFile != nil && m.MovieFile.ID != 0 && addedSince(m.MovieFile.DateAdded, since) {
-			if err := c.Radarr.DeleteMovieFile(ctx, m.MovieFile.ID); err != nil {
-				return err
-			}
-		}
-	}
 	return nil
 }
 
-func addedSince(date string, since time.Time) bool {
-	t, err := time.Parse(time.RFC3339, date)
-	return err == nil && !t.Before(since)
+// confirmGone polls present until it reports false.
+func confirmGone(ctx context.Context, present func() (bool, error)) error {
+	var last error
+	for _, wait := range removalChecks {
+		if wait > 0 {
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		still, err := present()
+		if err == nil && !still {
+			return nil
+		}
+		last = err
+	}
+	if last != nil {
+		return last
+	}
+	return errors.New("still present after removal")
+}
+
+// deleteImported deletes library files that this download put there.
+// Evidence is the *arr's import history: a file is deleted only when the
+// latest import for its episode or movie came from this download id and
+// the file is still the one that import placed. Anything else stays, and is
+// counted in kept.
+func (v *Verification) deleteImported(ctx context.Context, c *Clients, r VerifyRecord) (deleted, kept int, err error) {
+	switch r.Kind {
+	case "tv":
+		if c.Sonarr == nil || r.SeriesID == 0 {
+			return 0, 0, nil
+		}
+		eps, err := c.Sonarr.Episodes(ctx, r.SeriesID)
+		if err != nil {
+			return 0, 0, err
+		}
+		fileOf := map[int]int{}
+		for _, e := range eps {
+			if e.EpisodeFileID != 0 && containsInt(r.EpisodeIDs, e.ID) {
+				fileOf[e.ID] = e.EpisodeFileID
+			}
+		}
+		if len(fileOf) == 0 {
+			return 0, 0, nil
+		}
+		files, err := c.Sonarr.EpisodeFiles(ctx, r.SeriesID)
+		if err != nil {
+			return 0, 0, err
+		}
+		pathOf := map[int]string{}
+		for _, f := range files {
+			pathOf[f.ID] = f.Path
+		}
+		del := map[int]bool{}
+		for epID, fileID := range fileOf {
+			hist, err := c.Sonarr.EpisodeHistory(ctx, r.SeriesID, epID)
+			if err != nil {
+				return 0, 0, err
+			}
+			if p, ok := importedBy(hist, r.Hash); ok && samePath(p, pathOf[fileID]) {
+				del[fileID] = true
+			} else {
+				kept++
+			}
+		}
+		ids := make([]int, 0, len(del))
+		for id := range del {
+			ids = append(ids, id)
+		}
+		sort.Ints(ids)
+		if err := c.Sonarr.DeleteEpisodeFiles(ctx, ids); err != nil {
+			return 0, kept, err
+		}
+		v.app.forget(GrabRequest{SeriesID: r.SeriesID})
+		return len(ids), kept, nil
+	case "movie":
+		if c.Radarr == nil || r.MovieID == 0 {
+			return 0, 0, nil
+		}
+		m, err := c.Radarr.Movie(ctx, r.MovieID)
+		if err != nil {
+			return 0, 0, err
+		}
+		if m.MovieFile == nil || m.MovieFile.ID == 0 {
+			return 0, 0, nil
+		}
+		hist, err := c.Radarr.MovieHistory(ctx, r.MovieID)
+		if err != nil {
+			return 0, 0, err
+		}
+		if p, ok := importedBy(hist, r.Hash); !ok || !samePath(p, m.MovieFile.Path) {
+			return 0, 1, nil
+		}
+		if err := c.Radarr.DeleteMovieFile(ctx, m.MovieFile.ID); err != nil {
+			return 0, 0, err
+		}
+		return 1, 0, nil
+	}
+	return 0, 0, nil
+}
+
+// importedBy returns the path of the file the latest import put in place,
+// when that import came from downloadID.
+func importedBy(hist []arr.HistoryRecord, downloadID string) (string, bool) {
+	var latest *arr.HistoryRecord
+	for i := range hist {
+		h := &hist[i]
+		switch h.EventType {
+		case "downloadFolderImported", "seriesFolderImported", "movieFolderImported":
+			if latest == nil || h.Date.After(latest.Date) {
+				latest = h
+			}
+		}
+	}
+	if latest == nil || latest.EventType != "downloadFolderImported" || !strings.EqualFold(latest.DownloadID, downloadID) {
+		return "", false
+	}
+	p := latest.Data["importedPath"]
+	return p, p != ""
+}
+
+func samePath(a, b string) bool {
+	return a != "" && normClientPath(a) == normClientPath(b)
 }
 
 // pathPair maps a download-client path prefix to roarr's.

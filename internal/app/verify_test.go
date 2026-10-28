@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/noxaur/roarr/internal/arr"
 	"github.com/noxaur/roarr/internal/verify"
@@ -74,12 +73,5 @@ func TestVerifyLearnAndBlock(t *testing.T) {
 	var nilV *Verification
 	if nilV.annotate(rel).Rejected || nilV.Enabled() || nilV.Records(0, 0) != nil {
 		t.Fatal("nil verification must be inert")
-	}
-}
-
-func TestAddedSince(t *testing.T) {
-	since := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	if !addedSince("2026-10-01T12:30:00.123Z", since) || addedSince("2026-09-30T08:00:00Z", since) || addedSince("", since) {
-		t.Fatal("addedSince")
 	}
 }

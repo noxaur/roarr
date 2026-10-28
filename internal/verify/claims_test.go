@@ -59,7 +59,7 @@ func checkByName(cs []Check, name string) (Check, bool) {
 func TestCompareClaimsMatches(t *testing.T) {
 	p := loadProbe(t, "multi.json")
 	cl := ParseClaims("Movie.2024.MULTi.VFF.1080p.BluRay.x265.10bit.HDR.ENG.SUBS-GRP")
-	cs := CompareClaims(cl, p)
+	cs := CompareClaims(cl, p, Sidecars{})
 	for _, name := range []string{"resolution", "codec", "hdr", "bitdepth", "audio", "subtitles"} {
 		c, ok := checkByName(cs, name)
 		if !ok {
@@ -78,7 +78,7 @@ func TestCompareClaimsMatches(t *testing.T) {
 func TestCompareClaimsMismatches(t *testing.T) {
 	p := loadProbe(t, "fake.json")
 	cl := ParseClaims("Big.Movie.2023.MULTi.2160p.WEB-DL.x265.ENG.SUBS-FAKE")
-	cs := CompareClaims(cl, p)
+	cs := CompareClaims(cl, p, Sidecars{})
 	want := map[string]Level{"resolution": Fail, "codec": Warn, "audio": Fail, "subtitles": Fail}
 	for name, lvl := range want {
 		c, ok := checkByName(cs, name)
@@ -118,20 +118,20 @@ func TestCompareAudioLanguage(t *testing.T) {
 func TestSubtitleChecks(t *testing.T) {
 	p := loadProbe(t, "multi.json")
 	// Only a forced French track: claim of full French subs is a warning.
-	c, _ := compareSubs(ParseClaims("Film.2020.1080p.BluRay.x264.SUBFRENCH-GRP"), p)
+	c, _ := compareSubs(ParseClaims("Film.2020.1080p.BluRay.x264.SUBFRENCH-GRP"), p, Sidecars{})
 	if c.Level != Warn || !strings.Contains(c.Reason, "forced") {
 		t.Fatalf("forced only: %s %s", c.Level, c.Reason)
 	}
-	c, _ = compareSubs(ParseClaims("Film.2020.1080p.BluRay.x264.Sub.SPANISH-GRP"), p)
+	c, _ = compareSubs(ParseClaims("Film.2020.1080p.BluRay.x264.Sub.SPANISH-GRP"), p, Sidecars{})
 	if c.Level != Fail {
 		t.Fatalf("missing spanish: %s %s", c.Level, c.Reason)
 	}
-	if _, ok := compareSubs(ParseClaims("Film.2020.1080p.BluRay.x264-GRP"), p); ok {
+	if _, ok := compareSubs(ParseClaims("Film.2020.1080p.BluRay.x264-GRP"), p, Sidecars{}); ok {
 		t.Fatal("no claim should produce no subtitle check")
 	}
 	// Hardsubs need no track.
 	p.Streams = p.Streams[:4]
-	c, _ = compareSubs(ParseClaims("Show.S01E01.1080p.WEB.x264.HC.SUBBED-GRP"), p)
+	c, _ = compareSubs(ParseClaims("Show.S01E01.1080p.WEB.x264.HC.SUBBED-GRP"), p, Sidecars{})
 	if c.Level != Pass {
 		t.Fatalf("hardsubbed: %s %s", c.Level, c.Reason)
 	}

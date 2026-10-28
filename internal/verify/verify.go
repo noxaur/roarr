@@ -132,7 +132,19 @@ func (v *Verifier) Verify(ctx context.Context, t Target) Verdict {
 	if cl.AnySubs && v.Tools.FFmpeg != "" {
 		v.countSubs(ctx, primary.Path, p, cl, dur)
 	}
-	for _, c := range CompareClaims(cl, p) {
+	sc := FindSidecars(t.Files, primary, len(videos))
+	for _, f := range sc.Matched {
+		desc := "und"
+		if f.Lang != "" {
+			desc = f.Lang
+		}
+		desc += " " + strings.TrimPrefix(strings.ToLower(path.Ext(f.Name)), ".") + " sidecar"
+		if f.Forced {
+			desc += " forced"
+		}
+		vd.Media.Subtitles = append(vd.Media.Subtitles, desc)
+	}
+	for _, c := range CompareClaims(cl, p, sc) {
 		vd.add(c)
 	}
 	vd.finish()
