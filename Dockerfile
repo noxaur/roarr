@@ -1,14 +1,11 @@
 # syntax=docker/dockerfile:1
 # One small image: the React UI is compiled and embedded into a static Go
-# binary, which runs on a distroless base (~20 MB total). A static ffmpeg
-# (SVT-AV1 + libaom, no shared libraries) is added for the optional AV1
-# converter; build with --build-arg FFMPEG=false to leave it out.
+# binary, which runs on a distroless base (~20 MB total). A static ffmpeg and
+# ffprobe (SVT-AV1 + libaom, no shared libraries, ~200 MB) are added for the
+# optional AV1 converter and media verification; build with
+# --build-arg FFMPEG=false to leave them out.
 
 ARG FFMPEG=true
-
-FROM mwader/static-ffmpeg:7.1.1 AS ffmpeg-true
-FROM scratch AS ffmpeg-false
-FROM ffmpeg-${FFMPEG} AS ffmpeg
 
 FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src/web
@@ -22,14 +19,24 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY --from=web /src/internal/webui/dist ./internal/webui/dist
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/roarr ./cmd/roarr \
- && mkdir -p /out/config
+ && mkdir -p /out/config /out/no-ffmpeg
+
+# Only the two binaries are taken: the upstream image also ships docs, fonts
+# and config files (about 29 MB uncompressed) that roarr does not need.
+FROM mwader/static-ffmpeg:7.1.1 AS ffmpeg-src
+FROM scratch AS ffmpeg-true
+COPY --from=ffmpeg-src /ffmpeg /ffprobe /
+# An empty directory from the build stage, so COPY never reads an empty stage.
+FROM scratch AS ffmpeg-false
+COPY --from=build /out/no-ffmpeg /
+FROM ffmpeg-${FFMPEG} AS ffmpeg
 
 FROM gcr.io/distroless/static-debian12:nonroot
 ARG VERSION=dev

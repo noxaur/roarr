@@ -436,6 +436,7 @@ func TestSwapWithoutHardLinksRenamesIn(t *testing.T) {
 	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
 	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
 	m.linkFn = func(a, b string) error { return &os.LinkError{Op: "link", Old: a, New: b, Err: syscall.ENOTSUP} }
+	m.noReplaceFn = lstatRename
 	m.process(context.Background(), j, m.opts, EncSVT)
 	if j.State != Done || size(t, path) != 300 {
 		t.Fatalf("state %s (%s)", j.State, j.Message)
@@ -451,11 +452,11 @@ func TestSwapFailureWithoutHardLinksRestoresOriginal(t *testing.T) {
 	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
 	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
 	m.linkFn = func(a, b string) error { return syscall.ENOTSUP }
-	m.renameFn = func(a, b string) error { // moving the result in fails; everything else works
+	m.noReplaceFn = func(a, b string) error { // moving the result in fails; everything else works
 		if a == tempPath(path) {
 			return errors.New("disk error")
 		}
-		return os.Rename(a, b)
+		return lstatRename(a, b)
 	}
 	m.process(context.Background(), j, m.opts, EncSVT)
 	if j.State != Failed || size(t, path) != 1000 {
@@ -463,6 +464,74 @@ func TestSwapFailureWithoutHardLinksRestoresOriginal(t *testing.T) {
 	}
 	if _, err := os.Stat(backupPath(path)); !os.IsNotExist(err) {
 		t.Error("backup left behind after restore")
+	}
+}
+
+// lstatRename stands in for renameNoReplace on any platform: it is not
+// atomic, but tests that use it do not race.
+func lstatRename(a, b string) error {
+	if _, err := os.Lstat(b); err == nil {
+		return &os.LinkError{Op: "rename", Old: a, New: b, Err: syscall.EEXIST}
+	}
+	return os.Rename(a, b)
+}
+
+func noHardLinkOnResult(path string) func(a, b string) error {
+	return func(a, b string) error {
+		if a == tempPath(path) {
+			return &os.LinkError{Op: "link", Old: a, New: b, Err: syscall.ENOTSUP}
+		}
+		return os.Link(a, b)
+	}
+}
+
+func TestSwapWithoutHardLinksKeepsFileAppearingAtInstall(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	m.linkFn = noHardLinkOnResult(path)
+	m.noReplaceFn = func(a, b string) error { // *arr imports after the check, before the move
+		if a == tempPath(path) {
+			_ = os.WriteFile(b, make([]byte, 777), 0o644)
+		}
+		return lstatRename(a, b)
+	}
+	m.process(context.Background(), j, m.opts, EncSVT)
+	if j.State != Failed || size(t, path) != 777 {
+		t.Fatalf("state %s (%s), size %d", j.State, j.Message, size(t, path))
+	}
+	if size(t, backupPath(path)) != 1000 {
+		t.Error("previous file not kept as backup")
+	}
+}
+
+func TestSwapWithoutNoReplaceRenameRestoresViaLink(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	m.linkFn = noHardLinkOnResult(path)
+	m.noReplaceFn = func(a, b string) error { return errNoReplaceUnsupported }
+	m.process(context.Background(), j, m.opts, EncSVT)
+	if j.State != Failed || size(t, path) != 1000 {
+		t.Fatalf("state %s (%s), size %d", j.State, j.Message, size(t, path))
+	}
+	if _, err := os.Stat(backupPath(path)); !os.IsNotExist(err) {
+		t.Error("backup left behind after restore")
+	}
+}
+
+func TestSwapWithoutAnyNoReplaceMoveKeepsBackup(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	m.linkFn = func(a, b string) error { return syscall.ENOTSUP }
+	m.noReplaceFn = func(a, b string) error { return errNoReplaceUnsupported }
+	m.process(context.Background(), j, m.opts, EncSVT)
+	if j.State != Failed || !strings.Contains(j.Message, backupPath(path)) {
+		t.Fatalf("state %s (%s)", j.State, j.Message)
+	}
+	if size(t, backupPath(path)) != 1000 {
+		t.Error("original not kept as backup")
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Error("path was refilled without a safe move")
 	}
 }
 

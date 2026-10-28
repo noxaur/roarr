@@ -95,6 +95,7 @@ type Manager struct {
 	saveMu                  sync.Mutex              // serializes save()
 	beforeSwap, afterBackup func()                  // test hooks
 	renameFn, linkFn        func(a, b string) error // test hooks (nil = os.Rename / os.Link)
+	noReplaceFn             func(a, b string) error // test hook (nil = renameNoReplace)
 }
 
 // New builds a manager; state is kept in dir/transcode.json.
@@ -402,9 +403,10 @@ func sameFile(a, b os.FileInfo) bool {
 // replace path at any time, so the original is first moved aside and checked
 // to be the very file that was encoded (same inode, size and mtime as orig).
 // A newer file is put back untouched. The new file is linked in without
-// overwriting (renamed in when the filesystem has no hard links), so a file
-// that appears in the gap is never clobbered. The path is never left empty
-// on failure, and the backup is deleted only after the new file is in place.
+// overwriting (moved in with an atomic no-replace rename when the filesystem
+// has no hard links), so a file that appears in the gap is never clobbered.
+// Where no atomic no-replace move exists the job fails and the backup is
+// kept. The backup is deleted only after the new file is in place.
 // An existing backup from an earlier job is never deleted or overwritten.
 func (m *Manager) swap(path, tmp string, orig os.FileInfo) error {
 	if now, err := os.Stat(path); err != nil || !sameFile(orig, now) {
@@ -424,6 +426,10 @@ func (m *Manager) swap(path, tmp string, orig os.FileInfo) error {
 	if link == nil {
 		link = os.Link
 	}
+	noReplace := m.noReplaceFn
+	if noReplace == nil {
+		noReplace = renameNoReplace
+	}
 	if err := rename(path, bak); err != nil {
 		return fmt.Errorf("cannot replace the original: %w", err)
 	}
@@ -432,37 +438,43 @@ func (m *Manager) swap(path, tmp string, orig os.FileInfo) error {
 	}
 	moved, err := os.Stat(bak)
 	if err != nil || !sameFile(orig, moved) {
-		return restore(rename, bak, path, "the original changed during conversion, result discarded")
+		return restore(noReplace, link, bak, path, "the original changed during conversion, result discarded")
 	}
 	err = link(tmp, path)
 	switch {
 	case err == nil:
 		_ = os.Remove(tmp)
 	case errors.Is(err, fs.ErrExist):
-		return restore(rename, bak, path, "a new file appeared during conversion, result discarded")
+		return restore(noReplace, link, bak, path, "a new file appeared during conversion, result discarded")
 	default:
-		// No hard links here (SMB, exFAT, some FUSE): rename, but only into an empty path.
-		if _, serr := os.Lstat(path); serr == nil {
-			return restore(rename, bak, path, "a new file appeared during conversion, result discarded")
-		}
-		if rerr := rename(tmp, path); rerr != nil {
-			return restore(rename, bak, path, "cannot replace the original: "+rerr.Error())
+		// No hard links here (SMB, exFAT, some FUSE): move the result in
+		// atomically, and only if nothing is at path.
+		switch rerr := noReplace(tmp, path); {
+		case rerr == nil:
+		case errors.Is(rerr, fs.ErrExist):
+			return restore(noReplace, link, bak, path, "a new file appeared during conversion, result discarded")
+		case errors.Is(rerr, errNoReplaceUnsupported):
+			return restore(noReplace, link, bak, path, "cannot put the result in place without risking a newer file: "+rerr.Error())
+		default:
+			return restore(noReplace, link, bak, path, "cannot replace the original: "+rerr.Error())
 		}
 	}
 	_ = os.Remove(bak)
 	return nil
 }
 
-// restore moves the backup back to path, which must be empty. If another
-// writer has put a file there, the backup is kept and named in the error.
-func restore(rename func(a, b string) error, bak, path, reason string) error {
-	if _, err := os.Lstat(path); err == nil {
+// restore moves the backup back to path without overwriting. If another
+// writer has put a file there, or no safe no-replace move exists, the backup
+// is kept and named in the error.
+func restore(noReplace, link func(a, b string) error, bak, path, reason string) error {
+	err := moveNoReplace(noReplace, link, bak, path)
+	switch {
+	case err == nil:
+		return errors.New(reason)
+	case errors.Is(err, fs.ErrExist):
 		return fmt.Errorf("%s; a newer file is in place, the previous one is kept as %s", reason, bak)
 	}
-	if err := rename(bak, path); err != nil {
-		return fmt.Errorf("%s; restoring failed (%v), the original is kept as %s", reason, err, bak)
-	}
-	return errors.New(reason)
+	return fmt.Errorf("%s; restoring failed (%v), the original is kept as %s", reason, err, bak)
 }
 
 func backupPath(path string) string {
