@@ -12,6 +12,7 @@ import (
 
 	"github.com/noxaur/roarr/internal/arr"
 	"github.com/noxaur/roarr/internal/config"
+	"github.com/noxaur/roarr/internal/importer"
 	"github.com/noxaur/roarr/internal/jellyfin"
 	"github.com/noxaur/roarr/internal/qbit"
 	"github.com/noxaur/roarr/internal/search"
@@ -42,14 +43,21 @@ type App struct {
 	Watch     *WatchFirst
 	Verify    *Verification
 	Transcode *transcode.Manager
-	bypassMu  sync.Mutex // serializes temporary quality profile swaps
-	detailMu  sync.Mutex
-	details   map[string]cachedDetail
+	// Native is roarr's own download + import backend (IMPORT_MODE=native).
+	Native *Native
+	// Hooks run around every native import. Register at startup:
+	// a.Hooks.BeforeImport(...) to verify or hold back a file,
+	// a.Hooks.AfterImport(...) to post-process it (e.g. transcode).
+	Hooks *importer.Hooks
+
+	bypassMu sync.Mutex // serializes temporary quality profile swaps
+	detailMu sync.Mutex
+	details  map[string]cachedDetail
 }
 
 // New builds the app and starts background loops.
 func New(ctx context.Context, store *config.Store, dataDir string) *App {
-	a := &App{Settings: store, DataDir: dataDir, details: map[string]cachedDetail{}}
+	a := &App{Settings: store, DataDir: dataDir, details: map[string]cachedDetail{}, Hooks: &importer.Hooks{}}
 	a.rebuild(store.Get())
 	store.Subscribe(func(s config.Settings) {
 		a.rebuild(s)
@@ -58,9 +66,11 @@ func New(ctx context.Context, store *config.Store, dataDir string) *App {
 	a.Library = newLibrary(a)
 	a.Watch = newWatchFirst(a, dataDir)
 	a.Verify = newVerification(a, dataDir)
+	a.Native = newNative(a, dataDir)
 	go a.Library.loop(ctx)
 	go a.Watch.loop(ctx)
 	go a.Verify.loop(ctx)
+	go a.Native.loop(ctx)
 	go a.sweepLoop(ctx)
 	go a.seerrLoop(ctx)
 	a.startTranscode(ctx)

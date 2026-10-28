@@ -212,6 +212,7 @@ type Torrent struct {
 	Category     string  `json:"category"`
 	SavePath     string  `json:"save_path"`
 	ContentPath  string  `json:"content_path"`
+	DownloadPath string  `json:"download_path"` // incomplete-files folder, when qBittorrent uses one
 	SeqDL        bool    `json:"seq_dl"`
 	FirstLast    bool    `json:"f_l_piece_prio"`
 	AddedOn      int64   `json:"added_on"`

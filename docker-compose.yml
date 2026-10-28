@@ -37,6 +37,15 @@ services:
       QBIT_URL: http://qbittorrent:8080
       QBIT_USERNAME: admin
       QBIT_PASSWORD: change-me
+      # Experimental: roarr downloads and imports by itself, without
+      # Sonarr/Radarr (see README → Native import). Mount the folder that
+      # holds downloads and library (e.g. - /srv/data:/data) so hardlinks work.
+      # IMPORT_MODE: native
+      # TV_ROOT: /data/media/tv
+      # MOVIES_ROOT: /data/media/movies
+      # IMPORT_TRANSFER: hardlink       # hardlink | copy | move
+      # QBIT_PATH_MAP: /downloads=/data/torrents   # qBittorrent path=roarr path
+      # QBIT_CATEGORY: roarr
       # Grab releases Sonarr/Radarr decline anyway, still through them
       # (quality profile, custom formats, release profiles, blocklist, ...).
       # BYPASS_ARR_QUALITY: "true"
