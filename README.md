@@ -69,6 +69,12 @@ settings can also be changed in **Settings**, and is saved in `/config`.
 | `WATCH_FIRST` | `true` | Download packs in episode order and import as each finishes. |
 | `PREFETCH` | `true` | Start searching a show as soon as its page opens. |
 | `SEERR_AUTO_FETCH` | `false` | Grab newly approved Seerr requests automatically. Turn on Seerr's "prevent search" for its Sonarr/Radarr servers so they don't search too. |
+| `IMPORT_MODE` | `arr` | `arr`: Sonarr/Radarr download and import. `native`: roarr sends torrents to qBittorrent and imports them itself. See [Native import](#native-import-experimental). |
+| `TV_ROOT`, `MOVIES_ROOT` | — | Native mode: library folders, as roarr sees them. |
+| `IMPORT_TRANSFER` | `hardlink` | Native mode: `hardlink` (copies when a link is impossible), `copy` or `move`. |
+| `QBIT_PATH_MAP` | — | Native mode: `qbit-path=roarr-path` pairs, comma separated, when the containers mount downloads at different paths. |
+| `QBIT_CATEGORY` | `roarr` | Native mode: qBittorrent category for roarr's torrents. |
+| `QBIT_SAVE_PATH` | qBittorrent default | Native mode: save path for roarr's torrents. |
 | `INDEXER_TIMEOUT` | `30` | Seconds before giving up on a slow indexer. |
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |
 | `PORT` | `3847` | |
@@ -178,7 +184,7 @@ toggles monitoring, moves it to another quality profile, rescans the disk,
 or removes it from Sonarr/Radarr with or without its files. Movies get the
 same replace and delete controls. Everything destructive asks first.
 
-**Grabbing stays with the \*arrs.** Releases are pushed to Sonarr/Radarr
+**Grabbing stays with the \*arrs** (default `IMPORT_MODE=arr`). Releases are pushed to Sonarr/Radarr
 (`/release/push`), so their download clients, categories, history, blocklist
 and import pipeline all apply. If the *arr declines a release you explicitly
 chose, roarr shows the reason and offers **Download anyway**. That sends it
@@ -203,6 +209,63 @@ A failed release is hidden from roarr's picks. `GET /api/verify` lists
 verdicts; `POST /api/verify/{hash}/regrab` deletes the download and anything
 it imported and grabs the next best. Needs ffmpeg in the container and the
 download folder mounted.
+
+## Native import (experimental)
+
+By default Sonarr and Radarr download and import everything roarr grabs.
+With `IMPORT_MODE=native` roarr does it itself:
+
+1. **Get** sends the torrent straight to qBittorrent (category `roarr`).
+2. roarr maps every file in the torrent to an episode (or picks the main
+   movie file). Samples, extras (featurettes, trailers, behind the scenes)
+   and episodes already in the library are not downloaded.
+3. Each finished file is hardlinked (copied if that is impossible) into a
+   Jellyfin-style library, while the torrent keeps seeding:
+
+   ```
+   TV_ROOT/Show Name (2019)/Season 01/Show Name - S01E02.mkv
+   TV_ROOT/Show Name (2019)/Season 01/Show Name - S01E03-E04.mkv
+   TV_ROOT/Show Name (2019)/Season 01/Show Name - S01E02.en.forced.srt
+   MOVIES_ROOT/Movie Name (2010)/Movie Name (2010).mkv
+   ```
+
+4. Jellyfin refreshes the title. Sonarr/Radarr rescan it too, if they
+   are still configured and know it.
+
+Packs still download watch-first, in episode order. A better release
+replaces the old file and its subtitles. An equal or worse release is
+skipped, unless you picked it for those episodes. roarr remembers what it
+imported in `/config/library.json`. Its torrents are in `/config/native.json`.
+`GET /api/imports` shows both.
+
+Metadata comes from Sonarr/Radarr when they are configured, otherwise from
+TMDB through Seerr. Native mode needs Prowlarr and qBittorrent. It also
+needs Seerr, Sonarr/Radarr, or both, for metadata.
+
+```yaml
+services:
+  roarr:
+    # ...
+    volumes:
+      - roarr-config:/config
+      - /srv/data:/data            # same host folder as qBittorrent's
+    environment:
+      IMPORT_MODE: native
+      TV_ROOT: /data/media/tv
+      MOVIES_ROOT: /data/media/movies
+      QBIT_URL: http://qbittorrent:8080
+      QBIT_PASSWORD: ...
+      # qBittorrent mounts /srv/data/torrents as /downloads:
+      QBIT_PATH_MAP: /downloads=/data/torrents
+```
+
+Hardlinks only work inside one filesystem *and* one Docker volume. Mount
+one parent folder that holds both downloads and library (for example
+`/data/torrents` and `/data/media`) in roarr. Otherwise roarr copies.
+`IMPORT_TRANSFER=move` saves the space but stops the torrent from seeding.
+
+Native mode does not do everything yet. See
+[docs/native-import.md](docs/native-import.md) for what it does not cover.
 
 ## Why it is fast (measured)
 
@@ -249,6 +312,7 @@ internal/search    per-indexer prioritised fan-out + cache
 internal/app       library, titles, search sessions, grab, watch-first, activity
 internal/server    HTTP API, SSE, auth, static UI
 internal/transcode AV1 conversion queue (ffmpeg, ffprobe, verify)
+internal/importer  native import: naming, file matching, hardlink/copy, library.json, hooks
 internal/{arr,seerr,jellyfin,qbit}  upstream clients
 lab/               docker lab, mock indexers, benchmarks, experiments
 ```

@@ -256,7 +256,14 @@ func (a *App) SeriesByTvdb(ctx context.Context, tvdbID, tmdbID int) (*SeriesDeta
 		}
 	}
 	if c.Sonarr == nil {
-		return nil, fmt.Errorf("sonarr %w", ErrNotConfigured)
+		if tv == nil {
+			return nil, fmt.Errorf("sonarr %w (or Seerr, for TMDB metadata)", ErrNotConfigured)
+		}
+		d := a.seriesFromSeerr(tv, tvdbID)
+		a.detailMu.Lock()
+		a.details[key] = cachedDetail{at: time.Now(), series: d}
+		a.detailMu.Unlock()
+		return d, nil
 	}
 	if tvdbID == 0 {
 		return nil, errors.New("this show has no TVDB id yet, so Sonarr cannot track it")
@@ -292,6 +299,10 @@ func (a *App) SeriesByTvdb(ctx context.Context, tvdbID, tmdbID int) (*SeriesDeta
 		d.Seasons = append(d.Seasons, sd)
 	}
 	sortSeasons(d.Seasons)
+	if tv != nil && d.TmdbID == 0 {
+		d.TmdbID = tv.ID
+	}
+	a.Native.markOnDisk(d)
 	a.detailMu.Lock()
 	a.details[key] = cachedDetail{at: time.Now(), series: d}
 	a.detailMu.Unlock()
@@ -357,7 +368,14 @@ func (a *App) MovieByTmdb(ctx context.Context, tmdbID int) (*MovieDetail, error)
 	}
 	c := a.C()
 	if c.Radarr == nil {
-		return nil, fmt.Errorf("radarr %w", ErrNotConfigured)
+		if c.Seerr == nil {
+			return nil, fmt.Errorf("radarr %w (or Seerr, for TMDB metadata)", ErrNotConfigured)
+		}
+		m, err := c.Seerr.Movie(ctx, tmdbID)
+		if err != nil {
+			return nil, err
+		}
+		return a.movieFromSeerr(ctx, m), nil
 	}
 	raw, err := c.Radarr.Lookup(ctx, fmt.Sprintf("tmdb:%d", tmdbID))
 	if err != nil {
@@ -404,6 +422,8 @@ func (a *App) collection(ctx context.Context, tmdbID int, title string) *Collect
 			if ci.Movies[i].ImdbID == "" {
 				ci.Movies[i].ImdbID = it.ImdbID
 			}
+		} else if a.Native.hasMovie(ci.Movies[i].TmdbID) {
+			ci.Movies[i].HasFile = true
 		}
 	}
 	sort.Slice(ci.Movies, func(i, j int) bool {

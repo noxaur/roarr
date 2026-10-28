@@ -52,20 +52,22 @@ type GrabResult struct {
 	WatchFirst bool     `json:"watchFirst,omitempty"`
 }
 
-// Grab downloads a release through Sonarr/Radarr. A release the *arr declines
-// is always pushed past its decision engine; roarr never gives up on a grab
-// the user asked for.
+// Grab downloads a release through the configured Backend. With the arr
+// backend a release the *arr declines is always pushed past its decision
+// engine; roarr never gives up on a grab the user asked for. With the
+// native backend it goes straight to qBittorrent and roarr imports it.
 func (a *App) Grab(ctx context.Context, g GrabRequest) (GrabResult, error) {
 	var res GrabResult
 	var err error
+	b := a.Backend()
 	if g.Kind == "movie" {
-		res, err = a.grabMovie(ctx, g)
+		res, err = b.GrabMovie(ctx, g)
 	} else {
-		res, err = a.grabEpisodes(ctx, g)
+		res, err = b.GrabEpisodes(ctx, g)
 	}
 	switch {
 	case err != nil:
-		slog.Warn("grab failed", "kind", g.Kind, "title", g.Release.Title, "force", g.Force, "err", err)
+		slog.Warn("grab failed", "kind", g.Kind, "title", g.Release.Title, "backend", b.Name(), "force", g.Force, "err", err)
 	case !res.OK:
 		slog.Warn("grab declined", "kind", g.Kind, "title", g.Release.Title, "message", res.Message, "rejections", res.Rejections)
 	default:
@@ -598,7 +600,19 @@ func (a *App) directAdd(ctx context.Context, src *arr.Client, catField string, r
 	if category == "" {
 		slog.Warn("no enabled qBittorrent download client in the *arr: the torrent is added without its category and will not be imported automatically", "service", src.Service)
 	}
-	add := qbit.Add{Category: category, Paused: paused}
+	return a.addToQBit(ctx, qbit.Add{Category: category, Paused: paused}, r)
+}
+
+// addToQBit fetches the release (or uses its magnet) and adds it to
+// qBittorrent with add's category, save path and paused state. It returns
+// the info-hash once qBittorrent lists the torrent. A torrent qBittorrent
+// already has is reused.
+func (a *App) addToQBit(ctx context.Context, add qbit.Add, r Release) (string, error) {
+	c := a.C()
+	if c.QBit == nil {
+		return "", fmt.Errorf("qbittorrent %w (set QBIT_URL / QBIT_PASSWORD)", ErrNotConfigured)
+	}
+	category, paused := add.Category, add.Paused
 	hash := strings.ToLower(r.InfoHash)
 	link := r.DownloadURL
 	if link == "" {

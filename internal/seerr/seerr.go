@@ -103,8 +103,17 @@ func (c *Client) Search(ctx context.Context, query string) ([]Result, error) {
 
 // TV is the subset of /tv/{id} roarr needs.
 type TV struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	OriginalName string `json:"originalName"`
+	FirstAirDate string `json:"firstAirDate"`
+	Overview     string `json:"overview"`
+	PosterPath   string `json:"posterPath"`
+	BackdropPath string `json:"backdropPath"`
+	Status       string `json:"status"`
+	Genres       []struct {
+		Name string `json:"name"`
+	} `json:"genres"`
 	ExternalIDs struct {
 		TvdbID int    `json:"tvdbId"`
 		ImdbID string `json:"imdbId"`
@@ -128,6 +137,34 @@ func (c *Client) TV(ctx context.Context, tmdbID int) (TV, error) {
 	return out, err
 }
 
+// Year is the first-air year.
+func (t TV) Year() int { return year(t.FirstAirDate) }
+
+func year(d string) int {
+	if len(d) >= 4 {
+		y, _ := strconv.Atoi(d[:4])
+		return y
+	}
+	return 0
+}
+
+// SeasonEpisode is one episode of a TMDB season.
+type SeasonEpisode struct {
+	EpisodeNumber int    `json:"episodeNumber"`
+	SeasonNumber  int    `json:"seasonNumber"`
+	Name          string `json:"name"`
+	AirDate       string `json:"airDate"`
+}
+
+// Season fetches the episode list of one season.
+func (c *Client) Season(ctx context.Context, tmdbID, season int) ([]SeasonEpisode, error) {
+	var out struct {
+		Episodes []SeasonEpisode `json:"episodes"`
+	}
+	err := c.Get(ctx, fmt.Sprintf("/api/v1/tv/%d/season/%d", tmdbID, season), nil, &out)
+	return out.Episodes, err
+}
+
 // IsAnime uses TMDB keywords to detect anime.
 func (t TV) IsAnime() bool {
 	for _, k := range t.Keywords {
@@ -140,8 +177,18 @@ func (t TV) IsAnime() bool {
 
 // Movie is the subset of /movie/{id} roarr needs.
 type Movie struct {
-	ID          int    `json:"id"`
-	Title       string `json:"title"`
+	ID            int    `json:"id"`
+	Title         string `json:"title"`
+	OriginalTitle string `json:"originalTitle"`
+	ReleaseDate   string `json:"releaseDate"`
+	Overview      string `json:"overview"`
+	PosterPath    string `json:"posterPath"`
+	BackdropPath  string `json:"backdropPath"`
+	Runtime       int    `json:"runtime"`
+	Status        string `json:"status"`
+	Genres        []struct {
+		Name string `json:"name"`
+	} `json:"genres"`
 	ImdbID      string `json:"imdbId"`
 	ExternalIDs struct {
 		ImdbID string `json:"imdbId"`
@@ -152,6 +199,9 @@ type Movie struct {
 	} `json:"collection"`
 	MediaInfo *MediaInfo `json:"mediaInfo"`
 }
+
+// Year is the release year.
+func (m Movie) Year() int { return year(m.ReleaseDate) }
 
 // Movie fetches movie details by TMDB id.
 func (c *Client) Movie(ctx context.Context, tmdbID int) (Movie, error) {

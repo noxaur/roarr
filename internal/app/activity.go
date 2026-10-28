@@ -18,7 +18,7 @@ import (
 
 // ActivityItem is one download in the unified activity feed.
 type ActivityItem struct {
-	ID         string    `json:"id"` // "sonarr:<downloadId>" | "radarr:<downloadId>"
+	ID         string    `json:"id"` // "sonarr:<downloadId>" | "radarr:<downloadId>" | "roarr:<hash>"
 	Source     string    `json:"source"`
 	QueueIDs   []int     `json:"queueIds"`
 	Kind       string    `json:"kind"`
@@ -194,6 +194,7 @@ func (a *App) Activity(ctx context.Context) ([]ActivityItem, map[string]string) 
 			out = append(out, it)
 		}
 	}
+	out = append(out, a.Native.activity()...)
 	sort.SliceStable(out, func(i, j int) bool { return rank(out[i].Status) < rank(out[j].Status) })
 	return out, errs
 }
@@ -325,11 +326,18 @@ func (a *App) RemoveActivity(ctx context.Context, id string, blocklist bool) err
 		if it.DownloadID != "" {
 			a.Watch.Remove(it.DownloadID)
 		}
+		if it.Source == "roarr" {
+			a.Native.Remove(it.DownloadID)
+		}
 		return nil
 	}
 	// Not in the feed any more (finished or failed job): forget it anyway.
 	if strings.HasPrefix(id, "watch:") {
 		a.Watch.Remove(strings.TrimPrefix(id, "watch:"))
+		return nil
+	}
+	if strings.HasPrefix(id, "roarr:") {
+		a.Native.Remove(strings.TrimPrefix(id, "roarr:"))
 		return nil
 	}
 	return fmt.Errorf("download %s not found", id)
