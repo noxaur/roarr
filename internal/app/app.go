@@ -39,6 +39,7 @@ type App struct {
 
 	Library  *Library
 	Watch    *WatchFirst
+	Verify   *Verification
 	bypassMu sync.Mutex // serializes temporary quality profile swaps
 	detailMu sync.Mutex
 	details  map[string]cachedDetail
@@ -54,8 +55,10 @@ func New(ctx context.Context, store *config.Store, dataDir string) *App {
 	})
 	a.Library = newLibrary(a)
 	a.Watch = newWatchFirst(a, dataDir)
+	a.Verify = newVerification(a, dataDir)
 	go a.Library.loop(ctx)
 	go a.Watch.loop(ctx)
+	go a.Verify.loop(ctx)
 	go a.sweepLoop(ctx)
 	go a.seerrLoop(ctx)
 	return a
