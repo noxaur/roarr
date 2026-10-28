@@ -76,6 +76,20 @@ type Settings struct {
 	Prefs     release.Prefs `json:"prefs"`
 	Behaviour Behaviour     `json:"behaviour"`
 	Transcode Transcode     `json:"transcode"`
+	Verify    Verify        `json:"verify"`
+}
+
+// Verify controls the checks roarr runs on finished downloads.
+type Verify struct {
+	// Enabled turns the checks on or off; unset means on when ffprobe is
+	// installed.
+	Enabled *bool `json:"enabled,omitempty"`
+	// AutoRegrab blocklists a release that fails and grabs the next best.
+	AutoRegrab bool `json:"autoRegrab"`
+	// PathMap rewrites download-client paths to paths roarr can read,
+	// "client=roarr" pairs separated by commas:
+	// "/downloads=/data/downloads,D:\\Torrents=/torrents".
+	PathMap string `json:"pathMap,omitempty"`
 }
 
 // Defaults returns the out-of-the-box settings.
@@ -128,6 +142,14 @@ var envSpec = []struct {
 	{"TRANSCODE_FILM_GRAIN", func(s *Settings, v string) { s.Transcode.FilmGrain = atoiNonNeg(v, 0) }},
 	{"TRANSCODE_MIN_SAVINGS", func(s *Settings, v string) { s.Transcode.MinSavings = atoiNonNeg(v, 15) }},
 	{"TRANSCODE_PATH_MAP", func(s *Settings, v string) { s.Transcode.PathMap = v }},
+	{"VERIFY_MEDIA", func(s *Settings, v string) {
+		if !strings.EqualFold(v, "auto") {
+			on := truthy(v)
+			s.Verify.Enabled = &on
+		}
+	}},
+	{"VERIFY_AUTO_REGRAB", func(s *Settings, v string) { s.Verify.AutoRegrab = truthy(v) }},
+	{"VERIFY_PATH_MAP", func(s *Settings, v string) { s.Verify.PathMap = v }},
 }
 
 func truthy(v string) bool {

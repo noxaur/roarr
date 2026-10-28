@@ -72,6 +72,9 @@ settings can also be changed in **Settings**, and is saved in `/config`.
 | `INDEXER_TIMEOUT` | `30` | Seconds before giving up on a slow indexer. |
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |
 | `PORT` | `3847` | |
+| `VERIFY_MEDIA` | `auto` | Check finished downloads with ffprobe/ffmpeg. `auto` is on when `ffprobe` is installed (`FFPROBE_PATH`, `FFMPEG_PATH` override the lookup). |
+| `VERIFY_AUTO_REGRAB` | `false` | When a download fails the checks, blocklist it and grab the next best release. |
+| `VERIFY_PATH_MAP` | — | `client=roarr` path prefixes, comma-separated, when roarr sees qBittorrent's files under another path (`/downloads=/data/downloads`). |
 
 ### AV1 converter (optional, off by default)
 
@@ -185,6 +188,21 @@ to qBittorrent in the *arr's category, and the *arr still imports it.
 fetches it in one go, or approve and decline as usual. With `SEERR_AUTO_FETCH`
 on, every approved request is fetched automatically with roarr's search and
 planner.
+
+**Fakes are caught.** Each download is checked once its files are on disk;
+a pack is checked as soon as its first episode is complete. roarr:
+1. Rejects payloads with executables, only archives, or only a sample or
+   trailer, and lengths far from the episode or movie runtime.
+2. Samples 7 frames across the file and fails black, flat or one static
+   slate.
+3. Compares the release name with the streams: resolution, codec, HDR,
+   10-bit, audio languages (MULTi, GERMAN DL, VFF) and subtitles (ENG SUBS,
+   VOSTFR), including subtitle tracks that are empty.
+
+A failed release is hidden from roarr's picks. `GET /api/verify` lists
+verdicts; `POST /api/verify/{hash}/regrab` deletes the download and anything
+it imported and grabs the next best. Needs ffmpeg in the container and the
+download folder mounted.
 
 ## Why it is fast (measured)
 
