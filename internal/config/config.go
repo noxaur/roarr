@@ -38,6 +38,27 @@ type Behaviour struct {
 	SeerrAutoFetch bool `json:"seerrAutoFetch"`
 }
 
+// Transcode controls the automatic AV1 conversion of imported files.
+type Transcode struct {
+	// Enabled turns the converter on. Off by default.
+	Enabled bool `json:"enabled"`
+	// Concurrency is how many files are converted at once.
+	Concurrency int `json:"concurrency"`
+	// Nice is the CPU niceness (0-19) of ffmpeg.
+	Nice int `json:"nice"`
+	// CRF overrides the per-resolution default (0 = automatic).
+	CRF int `json:"crf"`
+	// Preset is the encoder speed preset (SVT-AV1: 0 slowest - 13 fastest).
+	Preset int `json:"preset"`
+	// FilmGrain is the SVT-AV1 film-grain synthesis level (0 = off, 1-50).
+	FilmGrain int `json:"filmGrain"`
+	// MinSavings is the least size reduction, in percent, worth keeping.
+	MinSavings int `json:"minSavings"`
+	// PathMap rewrites *arr file paths to paths roarr can read:
+	// "/tv=/media/tv,/movies=/media/movies".
+	PathMap string `json:"pathMap,omitempty"`
+}
+
 // Settings is the full configuration.
 type Settings struct {
 	Sonarr   Service `json:"sonarr"`
@@ -54,6 +75,7 @@ type Settings struct {
 
 	Prefs     release.Prefs `json:"prefs"`
 	Behaviour Behaviour     `json:"behaviour"`
+	Transcode Transcode     `json:"transcode"`
 }
 
 // Defaults returns the out-of-the-box settings.
@@ -68,6 +90,7 @@ func Defaults() Settings {
 			IndexerTimeout: 30,
 			CacheMinutes:   20,
 		},
+		Transcode: Transcode{Concurrency: 1, Nice: 10, Preset: 6, MinSavings: 15},
 	}
 }
 
@@ -97,6 +120,14 @@ var envSpec = []struct {
 	{"INDEXER_TIMEOUT", func(s *Settings, v string) { s.Behaviour.IndexerTimeout = atoi(v, 30) }},
 	{"CACHE_MINUTES", func(s *Settings, v string) { s.Behaviour.CacheMinutes = atoi(v, 20) }},
 	{"SEERR_AUTO_FETCH", func(s *Settings, v string) { s.Behaviour.SeerrAutoFetch = truthy(v) }},
+	{"TRANSCODE", func(s *Settings, v string) { s.Transcode.Enabled = truthy(v) }},
+	{"TRANSCODE_CONCURRENCY", func(s *Settings, v string) { s.Transcode.Concurrency = atoi(v, 1) }},
+	{"TRANSCODE_NICE", func(s *Settings, v string) { s.Transcode.Nice = atoiNonNeg(v, 10) }},
+	{"TRANSCODE_CRF", func(s *Settings, v string) { s.Transcode.CRF = atoiNonNeg(v, 0) }},
+	{"TRANSCODE_PRESET", func(s *Settings, v string) { s.Transcode.Preset = atoiNonNeg(v, 6) }},
+	{"TRANSCODE_FILM_GRAIN", func(s *Settings, v string) { s.Transcode.FilmGrain = atoiNonNeg(v, 0) }},
+	{"TRANSCODE_MIN_SAVINGS", func(s *Settings, v string) { s.Transcode.MinSavings = atoiNonNeg(v, 15) }},
+	{"TRANSCODE_PATH_MAP", func(s *Settings, v string) { s.Transcode.PathMap = v }},
 }
 
 func truthy(v string) bool {
@@ -110,6 +141,14 @@ func truthy(v string) bool {
 func atoi(v string, def int) int {
 	n, err := strconv.Atoi(strings.TrimSpace(v))
 	if err != nil || n <= 0 {
+		return def
+	}
+	return n
+}
+
+func atoiNonNeg(v string, def int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
 		return def
 	}
 	return n
@@ -172,6 +211,16 @@ func (s *Store) recompute() {
 	if cur.Behaviour.CacheMinutes <= 0 {
 		cur.Behaviour.CacheMinutes = 20
 	}
+	tc := &cur.Transcode
+	tc.Concurrency = min(max(tc.Concurrency, 1), 8)
+	tc.Nice = min(max(tc.Nice, 0), 19)
+	tc.CRF = min(max(tc.CRF, 0), 63)
+	if tc.Preset <= 0 { // 0 would mean "slowest"; treat it as unset
+		tc.Preset = 6
+	}
+	tc.Preset = min(tc.Preset, 13)
+	tc.FilmGrain = min(max(tc.FilmGrain, 0), 50)
+	tc.MinSavings = min(max(tc.MinSavings, 0), 90)
 	if len(cur.Prefs.Resolutions) == 0 {
 		cur.Prefs.Resolutions = release.DefaultPrefs().Resolutions
 	}

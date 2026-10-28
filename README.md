@@ -8,7 +8,8 @@ show, a movie or a whole collection. Let roarr pick the best release, or pick
 it yourself. Season packs download episode by episode, and each episode lands
 in Jellyfin as soon as it is done.
 
-One Docker image (~17 MB), one port, one volume.
+One Docker image (~17 MB, or ~17 MB + ffmpeg if you want the optional AV1
+converter), one port, one volume.
 
 ## Quick start
 
@@ -71,6 +72,48 @@ settings can also be changed in **Settings**, and is saved in `/config`.
 | `INDEXER_TIMEOUT` | `30` | Seconds before giving up on a slow indexer. |
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |
 | `PORT` | `3847` | |
+
+### AV1 converter (optional, off by default)
+
+roarr can convert finished downloads to AV1 with ffmpeg (SVT-AV1; libaom only
+if the ffmpeg has no SVT-AV1), in a low-priority background queue.
+
+| Variable | Default | |
+|---|---|---|
+| `TRANSCODE` | `false` | Turn the converter on. |
+| `TRANSCODE_CONCURRENCY` | `1` | Files converted at once (1-8). |
+| `TRANSCODE_NICE` | `10` | CPU niceness of ffmpeg (0-19). |
+| `TRANSCODE_CRF` | auto | Quality (lower is better, 0-63). Auto: 26 for SD, 28 for 720p, 30 for 1080p, 32 for 1440p, 34 for 4K. |
+| `TRANSCODE_PRESET` | `6` | Speed (SVT-AV1 0-13; higher is faster and larger). 6-8 is a good range. |
+| `TRANSCODE_FILM_GRAIN` | `0` | Film-grain synthesis level (0 = off, 1-50). Try 8-12 for grainy film sources. |
+| `TRANSCODE_MIN_SAVINGS` | `15` | Keep the original unless the result is at least this many percent smaller. |
+| `TRANSCODE_PATH_MAP` | — | Only if roarr sees the media under other paths than Sonarr/Radarr: `/tv=/media/tv,/movies=/media/movies`. |
+
+How it works:
+- A file is queued when Sonarr or Radarr records its import (their own, or a
+  watch-first import). Only imports made after you turn it on are converted;
+  nothing from your existing library.
+- Video becomes 10-bit AV1. All audio, subtitle and attachment streams,
+  chapters and metadata are copied, and HDR colour tags are kept. `.mkv` and
+  `.mp4` files only. Files that are already AV1, or that carry Dolby Vision
+  (the Dolby layer would be lost), are skipped.
+- The result is written next to the original under a temporary name and
+  checked with ffprobe: duration within 1 s, same number of video, audio and
+  subtitle streams, same chapters, AV1 video. Only then does it replace the
+  original with an atomic rename. If anything fails, or the result is not
+  `TRANSCODE_MIN_SAVINGS` smaller, the original stays as it was.
+- Afterwards roarr asks Sonarr/Radarr to rescan and Jellyfin to refresh.
+- `GET /api/transcode` shows the queue, progress and bytes saved.
+
+roarr needs **read/write access to your media folders, at the same paths
+Sonarr/Radarr use** (mount them into the roarr container like you do for
+Sonarr; with `user:` set to a uid that may write to them). The torrent's own
+hard-linked copy is not touched, so seeding goes on, but the old data stays on
+disk until that torrent is removed.
+
+The image includes a static ffmpeg, which adds roughly 100-150 MB (estimate).
+Leave it out with `docker build --build-arg FFMPEG=false .`; the converter
+then reports itself as unavailable.
 
 Bind-mounting a host folder on `/config` instead of a named volume? The image
 runs as uid 65532. Add `user: "1000:1000"` (your uid) to the service.
@@ -187,6 +230,7 @@ internal/release   title parser, scoring, coverage, planner
 internal/search    per-indexer prioritised fan-out + cache
 internal/app       library, titles, search sessions, grab, watch-first, activity
 internal/server    HTTP API, SSE, auth, static UI
+internal/transcode AV1 conversion queue (ffmpeg, ffprobe, verify)
 internal/{arr,seerr,jellyfin,qbit}  upstream clients
 lab/               docker lab, mock indexers, benchmarks, experiments
 ```

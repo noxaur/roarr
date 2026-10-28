@@ -15,3 +15,24 @@ func TestNormalizeURL(t *testing.T) {
 		}
 	}
 }
+
+func TestTranscodeDefaultsAndEnv(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc := st.Get().Transcode
+	if tc.Enabled || tc.Concurrency != 1 || tc.Preset != 6 || tc.MinSavings != 15 {
+		t.Errorf("defaults wrong: %+v", tc)
+	}
+	t.Setenv("TRANSCODE", "true")
+	t.Setenv("TRANSCODE_CONCURRENCY", "99")
+	t.Setenv("TRANSCODE_NICE", "0")
+	t.Setenv("TRANSCODE_FILM_GRAIN", "8")
+	st, _ = Open(dir)
+	tc = st.Get().Transcode
+	if !tc.Enabled || tc.Concurrency != 8 || tc.Nice != 0 || tc.FilmGrain != 8 {
+		t.Errorf("env not applied or not clamped: %+v", tc)
+	}
+}

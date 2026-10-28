@@ -1,0 +1,443 @@
+package transcode
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Job states.
+const (
+	Queued  = "queued"
+	Running = "running"
+	Done    = "done"
+	Skipped = "skipped"
+	Failed  = "failed"
+)
+
+const maxFinished = 200
+
+// Item is a file to convert.
+type Item struct {
+	Path    string // path roarr can read
+	Title   string
+	Kind    string // "tv" | "movie"
+	TitleID int    // Sonarr series / Radarr movie id
+}
+
+// Job is one file's trip through the queue.
+type Job struct {
+	ID         string    `json:"id"`
+	Path       string    `json:"path"`
+	Title      string    `json:"title,omitempty"`
+	Kind       string    `json:"kind,omitempty"`
+	TitleID    int       `json:"titleId,omitempty"`
+	State      string    `json:"state"`
+	Percent    float64   `json:"percent"`
+	Speed      string    `json:"speed,omitempty"`
+	SrcBytes   int64     `json:"srcBytes,omitempty"`
+	OutBytes   int64     `json:"outBytes,omitempty"`
+	SavedBytes int64     `json:"savedBytes,omitempty"`
+	CRF        int       `json:"crf,omitempty"`
+	Encoder    string    `json:"encoder,omitempty"`
+	Message    string    `json:"message,omitempty"`
+	QueuedAt   time.Time `json:"queuedAt"`
+	StartedAt  time.Time `json:"startedAt,omitzero"`
+	FinishedAt time.Time `json:"finishedAt,omitzero"`
+}
+
+// Status is what the API shows.
+type Status struct {
+	Enabled     bool   `json:"enabled"`
+	Available   bool   `json:"available"` // ffmpeg with an AV1 encoder found
+	Encoder     string `json:"encoder,omitempty"`
+	Error       string `json:"error,omitempty"`
+	Concurrency int    `json:"concurrency"`
+	Counts      struct {
+		Queued  int `json:"queued"`
+		Running int `json:"running"`
+		Done    int `json:"done"`
+		Skipped int `json:"skipped"`
+		Failed  int `json:"failed"`
+	} `json:"counts"`
+	BytesSaved int64 `json:"bytesSaved"`
+	Jobs       []Job `json:"jobs"`
+}
+
+// Manager owns the queue.
+type Manager struct {
+	run     Runner
+	path    string // state file
+	ffmpeg  string
+	ffprobe string
+	onDone  func(Job)
+
+	mu       sync.Mutex
+	opts     Options
+	enc      string
+	encErr   string
+	detected bool
+	jobs     []*Job
+	saved    int64
+	seq      int
+	kick     chan struct{}
+}
+
+// New builds a manager; state is kept in dir/transcode.json.
+func New(r Runner, dir string) *Manager {
+	if r == nil {
+		r = ExecRunner{}
+	}
+	m := &Manager{run: r, path: filepath.Join(dir, "transcode.json"), ffmpeg: "ffmpeg", ffprobe: "ffprobe", kick: make(chan struct{}, 1)}
+	m.load()
+	return m
+}
+
+// OnDone registers a callback for files that were replaced by a smaller one.
+func (m *Manager) OnDone(f func(Job)) { m.onDone = f }
+
+// SetOptions applies new settings.
+func (m *Manager) SetOptions(o Options) {
+	m.mu.Lock()
+	m.opts = o
+	m.mu.Unlock()
+	m.wake()
+}
+
+func (m *Manager) wake() {
+	select {
+	case m.kick <- struct{}{}:
+	default:
+	}
+}
+
+// Detect finds ffmpeg, ffprobe and an AV1 encoder: SVT-AV1 first, libaom
+// only when SVT-AV1 is missing.
+func (m *Manager) Detect(ctx context.Context) {
+	enc, err := detectEncoder(ctx, m.run, m.ffmpeg, m.ffprobe)
+	m.mu.Lock()
+	m.detected, m.enc = true, enc
+	m.encErr = ""
+	if err != nil {
+		m.encErr = err.Error()
+	}
+	m.mu.Unlock()
+	if err != nil {
+		slog.Warn("transcode: AV1 conversion unavailable", "err", err)
+	} else {
+		slog.Info("transcode: encoder found", "encoder", enc)
+	}
+	m.wake()
+}
+
+func detectEncoder(ctx context.Context, r Runner, ffmpeg, ffprobe string) (string, error) {
+	out, err := r.Output(ctx, ffmpeg, "-hide_banner", "-encoders")
+	if err != nil {
+		return "", fmt.Errorf("ffmpeg not found: %w", err)
+	}
+	if _, err := r.Output(ctx, ffprobe, "-version"); err != nil {
+		return "", fmt.Errorf("ffprobe not found: %w", err)
+	}
+	return pickEncoder(string(out))
+}
+
+func pickEncoder(encoders string) (string, error) {
+	has := func(name string) bool {
+		for _, l := range strings.Split(encoders, "\n") {
+			f := strings.Fields(l)
+			if len(f) >= 2 && f[1] == name {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case has(EncSVT):
+		return EncSVT, nil
+	case has(EncAOM):
+		return EncAOM, nil
+	}
+	return "", errors.New("this ffmpeg has no AV1 encoder (libsvtav1 or libaom-av1)")
+}
+
+// Submit queues a file. It returns false when conversion is off or the file
+// is already queued.
+func (m *Manager) Submit(it Item) bool {
+	m.mu.Lock()
+	if !m.opts.Enabled {
+		m.mu.Unlock()
+		return false
+	}
+	for _, j := range m.jobs {
+		if j.Path == it.Path && (j.State == Queued || j.State == Running) {
+			m.mu.Unlock()
+			return false
+		}
+	}
+	m.seq++
+	m.jobs = append(m.jobs, &Job{
+		ID: strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + strconv.Itoa(m.seq), Path: it.Path, Title: it.Title,
+		Kind: it.Kind, TitleID: it.TitleID, State: Queued, QueuedAt: time.Now(),
+	})
+	m.mu.Unlock()
+	m.save()
+	m.wake()
+	return true
+}
+
+// Status returns a snapshot: running jobs, then queued, then finished
+// (newest first).
+func (m *Manager) Status() Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := Status{Enabled: m.opts.Enabled, Available: m.enc != "", Encoder: m.enc, Error: m.encErr, Concurrency: m.opts.Concurrency, BytesSaved: m.saved, Jobs: []Job{}}
+	rank := func(s string) int {
+		switch s {
+		case Running:
+			return 0
+		case Queued:
+			return 1
+		}
+		return 2
+	}
+	for _, j := range m.jobs {
+		switch j.State {
+		case Queued:
+			st.Counts.Queued++
+		case Running:
+			st.Counts.Running++
+		case Done:
+			st.Counts.Done++
+		case Skipped:
+			st.Counts.Skipped++
+		case Failed:
+			st.Counts.Failed++
+		}
+		st.Jobs = append(st.Jobs, *j)
+	}
+	sort.SliceStable(st.Jobs, func(a, b int) bool {
+		ja, jb := st.Jobs[a], st.Jobs[b]
+		if ra, rb := rank(ja.State), rank(jb.State); ra != rb {
+			return ra < rb
+		}
+		if ja.State == Queued {
+			return ja.QueuedAt.Before(jb.QueuedAt)
+		}
+		return ja.FinishedAt.After(jb.FinishedAt)
+	})
+	return st
+}
+
+// Loop starts queued jobs while there is capacity. It returns when ctx ends.
+func (m *Manager) Loop(ctx context.Context) {
+	m.Detect(ctx)
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		m.startReady(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.kick:
+		case <-t.C:
+		}
+	}
+}
+
+func (m *Manager) startReady(ctx context.Context) {
+	for {
+		m.mu.Lock()
+		if !m.opts.Enabled || m.enc == "" {
+			m.mu.Unlock()
+			return
+		}
+		running := 0
+		var next *Job
+		for _, j := range m.jobs {
+			switch {
+			case j.State == Running:
+				running++
+			case j.State == Queued && next == nil:
+				next = j
+			}
+		}
+		if next == nil || running >= max(m.opts.Concurrency, 1) {
+			m.mu.Unlock()
+			return
+		}
+		next.State, next.StartedAt, next.Percent, next.Message = Running, time.Now(), 0, ""
+		opts, enc := m.opts, m.enc
+		m.mu.Unlock()
+		go func() {
+			m.process(ctx, next, opts, enc)
+			m.save()
+			m.wake()
+		}()
+	}
+}
+
+// update changes a job under the lock.
+func (m *Manager) update(j *Job, f func(*Job)) {
+	m.mu.Lock()
+	f(j)
+	m.mu.Unlock()
+}
+
+func (m *Manager) finish(j *Job, state, msg string) {
+	m.update(j, func(j *Job) {
+		j.State, j.Message, j.FinishedAt = state, msg, time.Now()
+		if state == Done {
+			j.Percent = 100
+		}
+	})
+}
+
+// process converts one file. The original stays untouched until the very
+// last step, an atomic rename of the verified result.
+func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string) {
+	path := j.Path
+	st, err := os.Stat(path)
+	if err != nil {
+		m.finish(j, Failed, "cannot read file (is the media folder mounted in roarr at the same path as in Sonarr/Radarr?): "+err.Error())
+		return
+	}
+	src, err := Probe(ctx, m.run, m.ffprobe, path)
+	if err != nil {
+		m.finish(j, Failed, err.Error())
+		return
+	}
+	src.Size = st.Size()
+	if reason := Skip(src, path); reason != "" {
+		m.update(j, func(j *Job) { j.SrcBytes = src.Size })
+		m.finish(j, Skipped, reason)
+		return
+	}
+	tmp := tempPath(path)
+	_ = os.Remove(tmp)
+	defer os.Remove(tmp) // no-op after a successful rename
+	m.update(j, func(j *Job) { j.SrcBytes, j.CRF, j.Encoder = src.Size, CRFFor(opts, src), enc })
+
+	args := BuildArgs(opts, enc, src, path, tmp)
+	err = m.run.Run(ctx, opts.Nice, m.ffmpeg, args, func(line string) {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			return
+		}
+		switch k {
+		case "out_time_us":
+			if us, err := strconv.ParseInt(v, 10, 64); err == nil && src.Duration > 0 {
+				p := min(float64(us)/1e6/src.Duration*100, 99.9)
+				m.update(j, func(j *Job) { j.Percent = p })
+			}
+		case "speed":
+			m.update(j, func(j *Job) { j.Speed = strings.TrimSpace(v) })
+		}
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			// Shutting down: put the file back in the queue for next start.
+			m.update(j, func(j *Job) { j.State, j.Percent = Queued, 0 })
+			return
+		}
+		m.finish(j, Failed, "ffmpeg failed: "+err.Error())
+		return
+	}
+
+	ost, err := os.Stat(tmp)
+	if err != nil {
+		m.finish(j, Failed, "ffmpeg produced no output")
+		return
+	}
+	out, err := Probe(ctx, m.run, m.ffprobe, tmp)
+	if err != nil {
+		m.finish(j, Failed, "cannot read the result: "+err.Error())
+		return
+	}
+	out.Size = ost.Size()
+	if err := Verify(src, out); err != nil {
+		m.finish(j, Failed, "result rejected, original kept: "+err.Error())
+		return
+	}
+	m.update(j, func(j *Job) { j.OutBytes = out.Size })
+	if !WorthKeeping(src.Size, out.Size, opts.MinSavings) {
+		m.finish(j, Skipped, fmt.Sprintf("only %.0f%% smaller (need %d%%), original kept", savedPercent(src.Size, out.Size), opts.MinSavings))
+		return
+	}
+	// The *arr may have replaced the file while we worked.
+	if now, err := os.Stat(path); err != nil || now.Size() != st.Size() || !now.ModTime().Equal(st.ModTime()) {
+		m.finish(j, Failed, "the original changed during conversion, result discarded")
+		return
+	}
+	_ = os.Chmod(tmp, st.Mode().Perm())
+	if err := os.Rename(tmp, path); err != nil {
+		m.finish(j, Failed, "cannot replace the original: "+err.Error())
+		return
+	}
+	saved := src.Size - out.Size
+	m.mu.Lock()
+	m.saved += saved
+	j.SavedBytes = saved
+	m.mu.Unlock()
+	m.finish(j, Done, "")
+	slog.Info("transcode: converted", "file", filepath.Base(path), "saved", saved, "encoder", enc)
+	if m.onDone != nil {
+		m.onDone(*j)
+	}
+}
+
+func tempPath(path string) string {
+	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".roarr-av1.tmp")
+}
+
+type state struct {
+	Jobs       []*Job `json:"jobs"`
+	BytesSaved int64  `json:"bytesSaved"`
+}
+
+func (m *Manager) load() {
+	b, err := os.ReadFile(m.path)
+	if err != nil {
+		return
+	}
+	var s state
+	if json.Unmarshal(b, &s) != nil {
+		return
+	}
+	m.saved = s.BytesSaved
+	for _, j := range s.Jobs {
+		if j.State == Running {
+			j.State, j.Percent = Queued, 0 // interrupted by a restart
+		}
+		m.jobs = append(m.jobs, j)
+	}
+}
+
+func (m *Manager) save() {
+	m.mu.Lock()
+	finished := 0
+	for i := len(m.jobs) - 1; i >= 0; i-- {
+		if s := m.jobs[i].State; s != Queued && s != Running {
+			if finished++; finished > maxFinished {
+				m.jobs = append(m.jobs[:i], m.jobs[i+1:]...)
+			}
+		}
+	}
+	b, err := json.Marshal(state{Jobs: m.jobs, BytesSaved: m.saved})
+	m.mu.Unlock()
+	if err != nil {
+		return
+	}
+	tmp := m.path + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		_ = os.Rename(tmp, m.path)
+	}
+}
