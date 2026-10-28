@@ -149,6 +149,9 @@ func (a *App) Series(ctx context.Context, id int, fresh bool) (*SeriesDetail, er
 			return d.series, nil
 		}
 	}
+	if a.nativeLib("tv") {
+		return a.nativeSeriesDetail(ctx, id, fresh)
+	}
 	c := a.C()
 	if c.Sonarr == nil {
 		return nil, fmt.Errorf("sonarr %w", ErrNotConfigured)
@@ -311,6 +314,9 @@ func (a *App) SeriesByTvdb(ctx context.Context, tvdbID, tmdbID int) (*SeriesDeta
 
 // Movie loads a library movie.
 func (a *App) Movie(ctx context.Context, id int) (*MovieDetail, error) {
+	if a.nativeLib("movie") {
+		return a.nativeMovieDetail(ctx, id)
+	}
 	c := a.C()
 	if c.Radarr == nil {
 		return nil, fmt.Errorf("radarr %w", ErrNotConfigured)

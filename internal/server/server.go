@@ -429,7 +429,8 @@ func (s *Server) removeTitle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	if err := s.app.RemoveTitle(r.Context(), kind, id, r.URL.Query().Get("deleteFiles") == "1"); err != nil {
+	q := r.URL.Query()
+	if err := s.app.RemoveTitle(r.Context(), kind, id, q.Get("deleteFiles") == "1", q.Get("removeTorrent") == "1"); err != nil {
 		writeErr(w, statusFor(err), err)
 		return
 	}
@@ -456,7 +457,7 @@ func (s *Server) titleCommand(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteMovieFile(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
-	res, err := s.app.DeleteMovieFile(r.Context(), id)
+	res, err := s.app.DeleteMovieFile(r.Context(), id, r.URL.Query().Get("removeTorrent") == "1")
 	if err != nil {
 		writeErr(w, statusFor(err), err)
 		return
@@ -796,6 +797,8 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, app.ErrNotConfigured):
 		return http.StatusFailedDependency
+	case errors.Is(err, app.ErrNotFound):
+		return http.StatusNotFound
 	case errors.As(err, &he):
 		if he.Status == 404 {
 			return 404

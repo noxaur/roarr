@@ -75,6 +75,7 @@ settings can also be changed under **Admin** (account menu), and is saved in `/c
 | `QBIT_PATH_MAP` | — | Native mode: `qbit-path=roarr-path` pairs, comma separated, when the containers mount downloads at different paths. |
 | `QBIT_CATEGORY` | `roarr` | Native mode: qBittorrent category for roarr's torrents. |
 | `QBIT_SAVE_PATH` | qBittorrent default | Native mode: save path for roarr's torrents. |
+| `MISSING_SEARCH_HOURS` | `0` (off) | Native mode without Sonarr/Radarr: every N hours, search for monitored episodes and movies that aired but are not on disk, and get the best releases. |
 | `INDEXER_TIMEOUT` | `30` | Seconds before giving up on a slow indexer. |
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |
 | `PORT` | `3847` | |
@@ -263,6 +264,14 @@ Hardlinks only work inside one filesystem *and* one Docker volume. Mount
 one parent folder that holds both downloads and library (for example
 `/data/torrents` and `/data/media`) in roarr. Otherwise roarr copies.
 `IMPORT_TRANSFER=move` saves the space but stops the torrent from seeding.
+
+Without Sonarr and Radarr, roarr also keeps the library itself. The
+library list, the show and movie pages, **Delete** (episode, season, movie
+or the whole title) and **Search** use `/config/library.json`. A delete
+removes only files that roarr imported, and only inside `TV_ROOT` and
+`MOVIES_ROOT`. `MISSING_SEARCH_HOURS` turns on a periodic search for
+monitored episodes that are missing. Releases packed in ZIP archives are
+unpacked before the import. RAR and 7-Zip archives are not.
 
 Native mode does not do everything yet. See
 [docs/native-import.md](docs/native-import.md) for what it does not cover.

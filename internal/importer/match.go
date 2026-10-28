@@ -26,6 +26,21 @@ type Title struct {
 	// lookup failed). Absolute numbers are then not derived from it, and
 	// files named only by an absolute number match nothing.
 	Partial bool `json:"partial,omitempty"`
+
+	// Library management (native mode). PutTitle keeps these from the
+	// stored title; UpdateTitle changes them.
+	Poster string `json:"poster,omitempty"`
+	// Added is the day roarr started to track the title (2006-01-02).
+	// Episodes that air after it are monitored, like new episodes in
+	// Sonarr.
+	Added       string `json:"added,omitempty"`
+	Unmonitored bool   `json:"unmonitored,omitempty"`
+	// Monitor and Ignore are episodes (EpisodeID) monitored, or not
+	// monitored, on purpose. Monitor holds every episode that was grabbed.
+	Monitor []int `json:"monitor,omitempty"`
+	Ignore  []int `json:"ignore,omitempty"`
+	// MetaAt is when the episode list was last loaded.
+	MetaAt string `json:"metaAt,omitempty"`
 }
 
 // Episode is one episode in a title's episode list.

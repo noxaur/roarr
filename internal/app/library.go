@@ -157,6 +157,12 @@ func (l *Library) Load(ctx context.Context) {
 	for _, m := range movies {
 		items = append(items, movieItem(m))
 	}
+	// Native mode without Sonarr/Radarr: roarr's own library.json.
+	for _, kind := range []string{"tv", "movie"} {
+		if l.app.nativeLib(kind) {
+			items = append(items, l.app.Native.libraryItems(kind)...)
+		}
+	}
 	l.mu.Lock()
 	// Keep the previous side of the library when one service failed.
 	if errs["sonarr"] != "" || errs["radarr"] != "" {
