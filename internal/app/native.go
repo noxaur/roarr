@@ -752,13 +752,16 @@ func (n *Native) importReady(ctx context.Context, j *NativeJob, t qbit.Torrent, 
 		if len(subs) == 0 {
 			continue
 		}
-		placed, errs, err := im.AddSubtitles(f.Dest, subs)
+		placed, errs, err := im.AddSubtitles(f.Dest, j.Hash, j.Release, subs)
 		n.mu.Lock()
 		ff := &j.Files[i]
-		if err != nil {
+		switch {
+		case errors.Is(err, importer.ErrVideoReplaced):
+			ff.SubAttempts, ff.SubError = maxSubAttempts, err.Error() // give up: not ours any more
+		case err != nil:
 			ff.SubAttempts++
 			ff.SubError = err.Error()
-		} else {
+		default:
 			placedSubs(ff, subs, errs)
 		}
 		n.mu.Unlock()

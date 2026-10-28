@@ -102,7 +102,7 @@ Files that a person, Sonarr or Radarr put there also count.
 | Situation | Result |
 |---|---|
 | Same file (same hardlink) | Skipped: "already in the library". |
-| New release is better (resolution, then source, then proper/repack) | Replaced. roarr removes the old video. Its sidecar files (for example, subtitles that you added) stay and get the new video name. A new subtitle replaces an old one with the same name only after the new one is in place. |
+| New release is better (resolution, then source, then proper/repack) | Replaced. roarr removes the old video. Its sidecar files (for example, subtitles that you added) stay. They get the new video name only when the new video holds the same episodes; otherwise they keep their old name. A new subtitle replaces an old one with the same name only after the new one is in place. |
 | New release is equal or worse | Skipped, unless you selected this release for these episodes. |
 | Quality of the existing file is not known (a renamed file) | Skipped, unless you selected the release. |
 | The existing file is a multi-episode file that also holds other episodes | Skipped. roarr never deletes episodes that you would lose. |
@@ -110,7 +110,9 @@ Files that a person, Sonarr or Radarr put there also count.
 During a replacement, roarr first moves the old video aside. If the new
 video cannot be placed, roarr puts the old video back.
 
-A subtitle that finishes after its video is placed on a later pass. If a
+A subtitle that finishes after its video is placed on a later pass, but
+only if that video is still the one from the same release. If another
+release replaced the video in the meantime, roarr discards the subtitle. If a
 subtitle transfer fails, roarr tries again for about one minute.
 
 ## Path mapping and hardlinks

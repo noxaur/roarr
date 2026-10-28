@@ -456,14 +456,14 @@ func TestAddSubtitlesLater(t *testing.T) {
 	write(t, sub1, "first")
 	pl := Placement{Video: SourceFile{Rel: filepath.Base(src), Path: src}, Season: 1, Episodes: []int{2},
 		Subtitles: []SubtitleRef{{File: SourceFile{Rel: "a.en.srt", Path: sub1}, Info: SubtitleInfo{Lang: "en"}}}}
-	res, err := im.Import(context.Background(), Request{Title: ti, Placement: pl})
+	res, err := im.Import(context.Background(), Request{Title: ti, Placement: pl, Release: "R1", Hash: "h1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A second English subtitle arrives later: it must not overwrite the first.
 	sub2 := filepath.Join(dir, "dl", "b.en.srt")
 	write(t, sub2, "second")
-	placed, errs, err := im.AddSubtitles(res.Path, []SubtitleRef{{File: SourceFile{Rel: "b.en.srt", Path: sub2}, Info: SubtitleInfo{Lang: "en"}}})
+	placed, errs, err := im.AddSubtitles(res.Path, "H1", "R1", []SubtitleRef{{File: SourceFile{Rel: "b.en.srt", Path: sub2}, Info: SubtitleInfo{Lang: "en"}}})
 	if err != nil || len(errs) != 0 || len(placed) != 1 || !strings.HasSuffix(placed[0], ".en.2.srt") {
 		t.Fatalf("placed %v errs %v err %v", placed, errs, err)
 	}
@@ -474,6 +474,80 @@ func TestAddSubtitlesLater(t *testing.T) {
 	if f := im.Store().Files(ti.Key()); len(f) != 1 || len(f[0].Subtitles) != 2 {
 		t.Fatalf("record %+v", f)
 	}
+}
+
+func TestAddSubtitlesRefusesReplacedVideo(t *testing.T) {
+	im, dir, _ := newImporter(t)
+	ti := showTitle(8)
+	importVideo := func(name, hash string, replace bool) Result {
+		src := filepath.Join(dir, "dl", hash, name)
+		write(t, src, hash)
+		pl := Placement{Video: SourceFile{Rel: name, Path: src}, Season: 1, Episodes: []int{3}}
+		res, err := im.Import(context.Background(), Request{Title: ti, Placement: pl, Release: strings.TrimSuffix(name, ".mkv"), Hash: hash, Replace: replace})
+		if err != nil || res.Skipped {
+			t.Fatalf("import %s: %+v %v", hash, res, err)
+		}
+		return res
+	}
+	// Release A is imported while its subtitle is still downloading.
+	a := importVideo("The.Show.S01E03.720p.HDTV.mkv", "aaa", false)
+	// Release B takes the same path; its subtitle (or one added by hand) is there.
+	b := importVideo("The.Show.S01E03.1080p.WEB-DL.mkv", "bbb", true)
+	if a.Path != b.Path {
+		t.Fatalf("paths differ: %s %s", a.Path, b.Path)
+	}
+	preserved := strings.TrimSuffix(b.Path, ".mkv") + ".en.srt"
+	write(t, preserved, "B's subtitle")
+
+	// A's subtitle finishes now: it must not land next to B's video.
+	late := filepath.Join(dir, "dl", "a.en.srt")
+	write(t, late, "A's subtitle")
+	placed, _, err := im.AddSubtitles(a.Path, "aaa", "The.Show.S01E03.720p.HDTV", []SubtitleRef{{File: SourceFile{Rel: "a.en.srt", Path: late}, Info: SubtitleInfo{Lang: "en"}}})
+	if !errors.Is(err, ErrVideoReplaced) || len(placed) != 0 {
+		t.Fatalf("want ErrVideoReplaced, got %v %v", placed, err)
+	}
+	if got, _ := os.ReadFile(preserved); string(got) != "B's subtitle" {
+		t.Fatalf("preserved subtitle overwritten: %q", got)
+	}
+}
+
+func TestImportCombinedEpisodeLeavesOtherSidecars(t *testing.T) {
+	im, dir, _ := newImporter(t)
+	ti := showTitle(8)
+	season := filepath.Join(dir, "tv", "The Show (2020)", "Season 01")
+	for _, e := range []string{"01", "02"} {
+		src := filepath.Join(dir, "dl", "The.Show.S01E"+e+".720p.HDTV.mkv")
+		write(t, src, "old"+e)
+		n := atoi(e)
+		pl := Placement{Video: SourceFile{Rel: filepath.Base(src), Path: src}, Season: 1, Episodes: []int{n}}
+		if _, err := im.Import(context.Background(), Request{Title: ti, Placement: pl, Release: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(season, "The Show - S01E"+e+".en.srt"), "sub"+e)
+	}
+	src := filepath.Join(dir, "dl", "The.Show.S01E01E02.1080p.WEB-DL.mkv")
+	write(t, src, "both")
+	pl := Placement{Video: SourceFile{Rel: filepath.Base(src), Path: src}, Season: 1, Episodes: []int{1, 2}}
+	res, err := im.Import(context.Background(), Request{Title: ti, Placement: pl, Release: "The.Show.S01E01E02.1080p.WEB-DL"})
+	if err != nil || res.Skipped || len(res.Replaced) != 2 {
+		t.Fatalf("combined upgrade: %+v %v", res, err)
+	}
+	if _, err := os.Stat(filepath.Join(season, "The Show - S01E01-E02.en.srt")); err == nil {
+		t.Fatal("a single episode's subtitle was given to the combined video")
+	}
+	for _, e := range []string{"01", "02"} {
+		if b, _ := os.ReadFile(filepath.Join(season, "The Show - S01E"+e+".en.srt")); string(b) != "sub"+e {
+			t.Errorf("sidecar of E%s changed: %q", e, b)
+		}
+	}
+}
+
+func atoi(s string) int {
+	n := 0
+	for _, c := range s {
+		n = n*10 + int(c-'0')
+	}
+	return n
 }
 
 func TestPlanTVKeepsExplicitEpisodesMissingFromMetadata(t *testing.T) {

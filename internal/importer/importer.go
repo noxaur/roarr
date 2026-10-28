@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -260,7 +262,11 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 
 	destBase := strings.TrimSuffix(dest, filepath.Ext(dest))
 	for _, old := range replace {
-		keepSidecars(old, destBase)
+		// Sidecars follow only a video that holds the same episodes: E01's
+		// subtitle must not become the subtitle of a new E01-E02 file.
+		if t.Kind == "movie" || im.sameEpisodes(old, p.Season, p.Episodes) {
+			keepSidecars(old, destBase)
+		}
 	}
 	res.Subtitles, res.SubtitleErrors = im.placeSubtitles(destBase, p.Subtitles, map[string]bool{})
 
@@ -277,22 +283,32 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 	return res, nil
 }
 
+// ErrVideoReplaced means the library video is no longer the one the
+// subtitles were downloaded with: another release took its place.
+var ErrVideoReplaced = errors.New("the video was replaced by another release")
+
 // AddSubtitles places subtitles next to a video roarr already imported:
 // subtitles whose download finished after the video, or whose first
-// transfer failed. It returns the placed paths and, by subtitle path in
-// the torrent, the ones that failed.
-func (im *Importer) AddSubtitles(video string, subs []SubtitleRef) ([]string, map[string]string, error) {
+// transfer failed. hash and release identify the import the subtitles
+// belong to; when the library record at video is from another import,
+// nothing is placed and ErrVideoReplaced is returned. It returns the
+// placed paths and, by subtitle path in the torrent, the ones that failed.
+func (im *Importer) AddSubtitles(video, hash, release string, subs []SubtitleRef) ([]string, map[string]string, error) {
 	im.mu.Lock()
 	defer im.mu.Unlock()
 	if _, err := os.Stat(video); err != nil {
 		return nil, nil, err
 	}
 	im.store.mu.RLock()
+	r, ok := im.store.d.Files[video]
 	var rec FileRecord
-	if r, ok := im.store.d.Files[video]; ok {
+	if ok {
 		rec = *r
 	}
 	im.store.mu.RUnlock()
+	if !ok || !strings.EqualFold(rec.Hash, hash) || rec.Release != release {
+		return nil, nil, ErrVideoReplaced
+	}
 	ours := map[string]bool{}
 	for _, p := range rec.Subtitles {
 		ours[p] = true
@@ -341,6 +357,33 @@ func (im *Importer) placeSubtitles(destBase string, subs []SubtitleRef, ours map
 		placed = append(placed, name)
 	}
 	return placed, errs
+}
+
+// sameEpisodes reports whether the library video old holds exactly the
+// given episodes, by roarr's record or else by its name.
+func (im *Importer) sameEpisodes(old string, season int, eps []int) bool {
+	im.store.mu.RLock()
+	r, ok := im.store.d.Files[old]
+	var oldSeason int
+	var oldEps []int
+	if ok {
+		oldSeason, oldEps = r.Season, append([]int(nil), r.Episodes...)
+	}
+	im.store.mu.RUnlock()
+	if !ok {
+		i := release.Parse(filepath.Base(old))
+		if len(i.Seasons) == 0 {
+			return false
+		}
+		oldSeason, oldEps = i.Seasons[0], i.Episodes
+	}
+	if oldSeason != season {
+		return false
+	}
+	a, b := append([]int(nil), oldEps...), append([]int(nil), eps...)
+	sort.Ints(a)
+	sort.Ints(b)
+	return slices.Equal(a, b)
 }
 
 // keepSidecars moves the sidecars of a replaced video (subtitles added by
