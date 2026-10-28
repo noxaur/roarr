@@ -16,6 +16,7 @@ import (
 	"github.com/noxaur/roarr/internal/qbit"
 	"github.com/noxaur/roarr/internal/search"
 	"github.com/noxaur/roarr/internal/seerr"
+	"github.com/noxaur/roarr/internal/transcode"
 )
 
 // Clients is one consistent set of upstream clients built from settings.
@@ -37,11 +38,12 @@ type App struct {
 	mu      sync.RWMutex
 	clients *Clients
 
-	Library  *Library
-	Watch    *WatchFirst
-	bypassMu sync.Mutex // serializes temporary quality profile swaps
-	detailMu sync.Mutex
-	details  map[string]cachedDetail
+	Library   *Library
+	Watch     *WatchFirst
+	Transcode *transcode.Manager
+	bypassMu  sync.Mutex // serializes temporary quality profile swaps
+	detailMu  sync.Mutex
+	details   map[string]cachedDetail
 }
 
 // New builds the app and starts background loops.
@@ -58,6 +60,7 @@ func New(ctx context.Context, store *config.Store, dataDir string) *App {
 	go a.Watch.loop(ctx)
 	go a.sweepLoop(ctx)
 	go a.seerrLoop(ctx)
+	a.startTranscode(ctx)
 	return a
 }
 

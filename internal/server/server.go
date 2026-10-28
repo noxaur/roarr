@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	guarded("POST /api/auto", s.auto)
 	guarded("GET /api/activity", s.activity)
 	guarded("DELETE /api/activity/{id}", s.removeActivity)
+	guarded("GET /api/transcode", s.transcode)
 	guarded("GET /api/requests", s.requests)
 	guarded("POST /api/requests/{id}/{action}", s.requestAction)
 	guarded("GET /api/settings", s.getSettings)
@@ -633,6 +634,10 @@ func (s *Server) removeActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) transcode(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, s.app.Transcode.Status())
 }
 
 func (s *Server) requests(w http.ResponseWriter, r *http.Request) {
