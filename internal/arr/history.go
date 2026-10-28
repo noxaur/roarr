@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -16,14 +17,27 @@ type HistoryRecord struct {
 	EventType   string            `json:"eventType"` // grabbed | downloadFolderImported | seriesFolderImported | movieFolderImported | episodeFileDeleted | ...
 	Date        time.Time         `json:"date"`
 	DownloadID  string            `json:"downloadId"`
-	Data        map[string]string `json:"data"` // importedPath, droppedPath, ...
+	Data        map[string]string `json:"data"` // importedPath, fileId, droppedPath, ...
 }
 
-// EpisodeHistory lists the history of one episode.
-func (s *Sonarr) EpisodeHistory(ctx context.Context, seriesID, episodeID int) ([]HistoryRecord, error) {
+// Field reads a data value; key case varies between *arr versions.
+func (h HistoryRecord) Field(key string) string {
+	if v, ok := h.Data[key]; ok {
+		return v
+	}
+	for k, v := range h.Data {
+		if strings.EqualFold(k, key) {
+			return v
+		}
+	}
+	return ""
+}
+
+// SeriesHistory lists the history of a series. Sonarr ignores an episodeId
+// filter on this endpoint, so callers filter by EpisodeID themselves.
+func (s *Sonarr) SeriesHistory(ctx context.Context, seriesID int) ([]HistoryRecord, error) {
 	var out []HistoryRecord
-	q := url.Values{"seriesId": {strconv.Itoa(seriesID)}, "episodeId": {strconv.Itoa(episodeID)}}
-	err := s.get(ctx, "/history/series", q, &out)
+	err := s.get(ctx, "/history/series", url.Values{"seriesId": {strconv.Itoa(seriesID)}}, &out)
 	return out, err
 }
 

@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -742,13 +743,17 @@ func (v *Verification) deleteImported(ctx context.Context, c *Clients, r VerifyR
 		for _, f := range files {
 			pathOf[f.ID] = f.Path
 		}
+		hist, err := c.Sonarr.SeriesHistory(ctx, r.SeriesID)
+		if err != nil {
+			return 0, 0, err
+		}
+		byEpisode := map[int][]arr.HistoryRecord{}
+		for _, h := range hist {
+			byEpisode[h.EpisodeID] = append(byEpisode[h.EpisodeID], h)
+		}
 		del := map[int]bool{}
 		for epID, fileID := range fileOf {
-			hist, err := c.Sonarr.EpisodeHistory(ctx, r.SeriesID, epID)
-			if err != nil {
-				return 0, 0, err
-			}
-			if p, ok := importedBy(hist, r.Hash); ok && samePath(p, pathOf[fileID]) {
+			if p, id, ok := importedBy(byEpisode[epID], r.Hash); ok && id == fileID && samePath(p, pathOf[fileID]) {
 				del[fileID] = true
 			} else {
 				kept++
@@ -779,7 +784,7 @@ func (v *Verification) deleteImported(ctx context.Context, c *Clients, r VerifyR
 		if err != nil {
 			return 0, 0, err
 		}
-		if p, ok := importedBy(hist, r.Hash); !ok || !samePath(p, m.MovieFile.Path) {
+		if p, id, ok := importedBy(hist, r.Hash); !ok || id != m.MovieFile.ID || !samePath(p, m.MovieFile.Path) {
 			return 0, 1, nil
 		}
 		if err := c.Radarr.DeleteMovieFile(ctx, m.MovieFile.ID); err != nil {
@@ -790,9 +795,12 @@ func (v *Verification) deleteImported(ctx context.Context, c *Clients, r VerifyR
 	return 0, 0, nil
 }
 
-// importedBy returns the path of the file the latest import put in place,
-// when that import came from downloadID.
-func importedBy(hist []arr.HistoryRecord, downloadID string) (string, bool) {
+// importedBy returns the path and file id of the file the latest import put
+// in place, when that import came from downloadID. hist must be one
+// episode's or movie's history. A file replaced at the same path without a
+// new import keeps the old event as the latest, so callers must compare the
+// file id as well as the path.
+func importedBy(hist []arr.HistoryRecord, downloadID string) (string, int, bool) {
 	var latest *arr.HistoryRecord
 	for i := range hist {
 		h := &hist[i]
@@ -804,10 +812,14 @@ func importedBy(hist []arr.HistoryRecord, downloadID string) (string, bool) {
 		}
 	}
 	if latest == nil || latest.EventType != "downloadFolderImported" || !strings.EqualFold(latest.DownloadID, downloadID) {
-		return "", false
+		return "", 0, false
 	}
-	p := latest.Data["importedPath"]
-	return p, p != ""
+	p := latest.Field("importedPath")
+	id, err := strconv.Atoi(latest.Field("fileId"))
+	if p == "" || err != nil || id <= 0 {
+		return "", 0, false
+	}
+	return p, id, true
 }
 
 func samePath(a, b string) bool {

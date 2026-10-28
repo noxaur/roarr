@@ -31,8 +31,9 @@ type fakeStack struct {
 	torrents    []string
 	keepTorrent bool // qBittorrent ignores deletes
 	episodes    []arr.Episode
-	files       map[int]string // episode file id -> path
-	history     map[int][]arr.HistoryRecord
+	files       map[int]string      // episode file id -> path
+	history     []arr.HistoryRecord // the whole series' (or movie's) history
+	movieFile   map[string]any
 	deleted     []int
 	calls       []string
 }
@@ -78,9 +79,14 @@ func (f *fakeStack) sonarr(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.deleted = append(f.deleted, body.IDs...)
-	case p == "/history/series":
-		ep, _ := strconv.Atoi(r.URL.Query().Get("episodeId"))
-		_ = json.NewEncoder(w).Encode(f.history[ep])
+	case p == "/history/series", p == "/history/movie":
+		// Like the real Sonarr, /history/series ignores episodeId.
+		_ = json.NewEncoder(w).Encode(f.history)
+	case strings.HasPrefix(p, "/movie/"):
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 9, "tmdbId": 99, "movieFile": f.movieFile})
+	case strings.HasPrefix(p, "/moviefile/") && r.Method == http.MethodDelete:
+		id, _ := strconv.Atoi(strings.TrimPrefix(p, "/moviefile/"))
+		f.deleted = append(f.deleted, id)
 	default:
 		http.Error(w, "unexpected "+r.Method+" "+p, 404)
 	}
@@ -126,7 +132,7 @@ func newRegrabApp(t *testing.T, f *fakeStack) (*Verification, *Clients) {
 	t.Cleanup(qs.Close)
 	dir := t.TempDir()
 	a := &App{details: map[string]cachedDetail{}}
-	a.clients = &Clients{Sonarr: arr.NewSonarr(ss.URL, "k"), QBit: qbit.New(qs.URL, "", "")}
+	a.clients = &Clients{Sonarr: arr.NewSonarr(ss.URL, "k"), Radarr: arr.NewRadarr(ss.URL, "k"), QBit: qbit.New(qs.URL, "", "")}
 	a.Watch = newWatchFirst(a, dir)
 	v := &Verification{app: a, path: filepath.Join(dir, "verify.json"), sem: make(chan struct{}, 1), recs: map[string]*VerifyRecord{}}
 	a.Verify = v
@@ -135,29 +141,42 @@ func newRegrabApp(t *testing.T, f *fakeStack) (*Verification, *Clients) {
 	return v, a.clients
 }
 
-func imported(ep int, dl, path string, at time.Time) arr.HistoryRecord {
-	return arr.HistoryRecord{EpisodeID: ep, EventType: "downloadFolderImported", DownloadID: dl, Date: at, Data: map[string]string{"importedPath": path}}
+func imported(ep, fileID int, dl, path string, at time.Time) arr.HistoryRecord {
+	return arr.HistoryRecord{EpisodeID: ep, EventType: "downloadFolderImported", DownloadID: dl, Date: at, Data: map[string]string{"importedPath": path, "fileId": strconv.Itoa(fileID)}}
 }
 
 func TestRegrabDeletesOnlyFilesImportedByTheDownload(t *testing.T) {
 	t0 := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	bad := strings.ToUpper(badHash)
 	f := &fakeStack{
-		queue:    []map[string]any{{"id": 1, "downloadId": strings.ToUpper(badHash), "seriesId": 7}, {"id": 2, "downloadId": strings.ToUpper(badHash), "seriesId": 7}},
+		queue:    []map[string]any{{"id": 1, "downloadId": bad, "seriesId": 7}, {"id": 2, "downloadId": bad, "seriesId": 7}},
 		torrents: []string{badHash},
-		episodes: []arr.Episode{{ID: 101, EpisodeFileID: 11}, {ID: 102, EpisodeFileID: 12}, {ID: 103, EpisodeFileID: 13}, {ID: 104, EpisodeFileID: 14}, {ID: 105, EpisodeFileID: 15}},
-		files:    map[int]string{11: "/tv/Show/S01E01.mkv", 12: "/tv/Show/S01E02.mkv", 13: "/tv/Show/S01E03.mkv", 14: "/tv/Show/S01E04.mkv", 15: "/tv/Show/S01E05.mkv"},
-		history: map[int][]arr.HistoryRecord{
-			// The bad download's file is still in place: delete.
-			101: {{EventType: "grabbed", DownloadID: badHash, Date: t0}, imported(101, strings.ToUpper(badHash), "/tv/Show/S01E01.mkv", t0.Add(time.Hour))},
-			// A newer, good download replaced it since: keep.
-			102: {imported(102, badHash, "/tv/Show/S01E02.mkv", t0.Add(time.Hour)), imported(102, "other", "/tv/Show/S01E02.mkv", t0.Add(48*time.Hour))},
-			// Already in the library before, never imported by this download: keep.
-			103: {{EventType: "seriesFolderImported", Date: t0.Add(-time.Hour), Data: map[string]string{"importedPath": "/tv/Show/S01E03.mkv"}}},
-			// Imported by it, but the current file is another one: keep.
-			104: {imported(104, badHash, "/tv/Show/old-name.mkv", t0.Add(time.Hour))},
+		episodes: []arr.Episode{{ID: 101, EpisodeFileID: 11}, {ID: 102, EpisodeFileID: 12}, {ID: 103, EpisodeFileID: 13}, {ID: 104, EpisodeFileID: 14}, {ID: 105, EpisodeFileID: 15}, {ID: 106, EpisodeFileID: 26}, {ID: 107, EpisodeFileID: 17}},
+		files: map[int]string{11: "/tv/Show/S01E01.mkv", 12: "/tv/Show/S01E02.mkv", 13: "/tv/Show/S01E03.mkv", 14: "/tv/Show/S01E04.mkv",
+			15: "/tv/Show/S01E05.mkv", 26: "/tv/Show/S01E06.mkv", 17: "/tv/Show/S01E07.mkv"},
+		// One series history, as Sonarr returns it for every episode.
+		history: []arr.HistoryRecord{
+			{EpisodeID: 101, EventType: "grabbed", DownloadID: bad, Date: t0},
+			// 101, 105: the pack's files are still in place: delete both.
+			imported(101, 11, bad, "/tv/Show/S01E01.mkv", t0.Add(time.Hour)),
+			imported(105, 15, bad, "/tv/Show/S01E05.mkv", t0.Add(time.Hour)),
+			// 102: a newer, good download replaced it since: keep.
+			imported(102, 12, badHash, "/tv/Show/S01E02.mkv", t0.Add(time.Hour)),
+			imported(102, 12, "other", "/tv/Show/S01E02.mkv", t0.Add(48*time.Hour)),
+			// 103: in the library before, never imported by this download: keep.
+			{EpisodeID: 103, EventType: "seriesFolderImported", Date: t0.Add(-time.Hour), Data: map[string]string{"importedPath": "/tv/Show/S01E03.mkv"}},
+			// 104: imported by it, but the current file is another one: keep.
+			imported(104, 14, badHash, "/tv/Show/old-name.mkv", t0.Add(time.Hour)),
+			// 106: replaced by a valid file at the same path and rescanned,
+			// which leaves no new history: the file id differs, keep.
+			imported(106, 16, badHash, "/tv/Show/S01E06.mkv", t0.Add(time.Hour)),
+			// 107: not part of this download; its later import must not hide
+			// the pack's imports of other episodes.
+			imported(107, 17, "other", "/tv/Show/S01E07.mkv", t0.Add(72*time.Hour)),
 		},
 	}
 	v, c := newRegrabApp(t, f)
+	v.update(badHash, func(rec *VerifyRecord) { rec.EpisodeIDs = []int{101, 102, 103, 104, 105, 106} })
 	r, _ := v.Record(badHash)
 	if err := v.removeDownload(context.Background(), c, r); err != nil {
 		t.Fatal(err)
@@ -169,8 +188,33 @@ func TestRegrabDeletesOnlyFilesImportedByTheDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deleted != 1 || kept != 3 || !reflect.DeepEqual(f.deleted, []int{11}) {
+	if deleted != 2 || kept != 4 || !reflect.DeepEqual(f.deleted, []int{11, 15}) {
 		t.Fatalf("deleted=%d kept=%d ids=%v", deleted, kept, f.deleted)
+	}
+}
+
+func TestRegrabMovieNeedsSameFileID(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		fileID int
+		want   []int
+	}{
+		{"bad file still there", 31, []int{31}},
+		{"replaced at the same path", 32, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeStack{
+				movieFile: map[string]any{"id": c.fileID, "path": "/movies/M (2020)/M.mkv"},
+				history:   []arr.HistoryRecord{{MovieID: 9, EventType: "downloadFolderImported", DownloadID: badHash, Date: time.Now(), Data: map[string]string{"importedPath": "/movies/M (2020)/M.mkv", "FileId": "31"}}},
+			}
+			v, cl := newRegrabApp(t, f)
+			v.update(badHash, func(rec *VerifyRecord) { rec.Source, rec.Kind, rec.SeriesID, rec.MovieID = "radarr", "movie", 0, 9 })
+			r, _ := v.Record(badHash)
+			deleted, kept, err := v.deleteImported(context.Background(), cl, r)
+			if err != nil || !reflect.DeepEqual(f.deleted, c.want) || deleted+kept != 1 {
+				t.Fatalf("deleted=%d kept=%d ids=%v err=%v", deleted, kept, f.deleted, err)
+			}
+		})
 	}
 }
 
@@ -202,7 +246,7 @@ func TestRegrabStopsWhenRemovalFails(t *testing.T) {
 				torrents: []string{badHash},
 				episodes: []arr.Episode{{ID: 101, EpisodeFileID: 11}},
 				files:    map[int]string{11: "/tv/Show/S01E01.mkv"},
-				history:  map[int][]arr.HistoryRecord{101: {imported(101, badHash, "/tv/Show/S01E01.mkv", time.Now())}},
+				history:  []arr.HistoryRecord{imported(101, 11, badHash, "/tv/Show/S01E01.mkv", time.Now())},
 			}
 			setup(f)
 			v, _ := newRegrabApp(t, f)
@@ -233,15 +277,16 @@ func TestImportedBy(t *testing.T) {
 		ok   bool
 	}{
 		{"none", nil, false},
-		{"ours", []arr.HistoryRecord{imported(1, badHash, "/a.mkv", t0)}, true},
-		{"ours then other", []arr.HistoryRecord{imported(1, badHash, "/a.mkv", t0), imported(1, "x", "/a.mkv", t0.Add(time.Second))}, false},
-		{"other then ours", []arr.HistoryRecord{imported(1, "x", "/a.mkv", t0), imported(1, badHash, "/a.mkv", t0.Add(time.Second))}, true},
-		{"ours then rescan", []arr.HistoryRecord{imported(1, badHash, "/a.mkv", t0), {EventType: "seriesFolderImported", Date: t0.Add(time.Second)}}, false},
+		{"ours", []arr.HistoryRecord{imported(1, 5, badHash, "/a.mkv", t0)}, true},
+		{"ours then other", []arr.HistoryRecord{imported(1, 5, badHash, "/a.mkv", t0), imported(1, 6, "x", "/a.mkv", t0.Add(time.Second))}, false},
+		{"other then ours", []arr.HistoryRecord{imported(1, 6, "x", "/a.mkv", t0), imported(1, 5, badHash, "/a.mkv", t0.Add(time.Second))}, true},
+		{"ours then rescan", []arr.HistoryRecord{imported(1, 5, badHash, "/a.mkv", t0), {EventType: "seriesFolderImported", Date: t0.Add(time.Second)}}, false},
 		{"grab only", []arr.HistoryRecord{{EventType: "grabbed", DownloadID: badHash, Date: t0}}, false},
-		{"no path", []arr.HistoryRecord{imported(1, badHash, "", t0)}, false},
+		{"no path", []arr.HistoryRecord{imported(1, 5, badHash, "", t0)}, false},
+		{"no file id", []arr.HistoryRecord{{EventType: "downloadFolderImported", DownloadID: badHash, Date: t0, Data: map[string]string{"importedPath": "/a.mkv"}}}, false},
 	}
 	for _, c := range cases {
-		if _, ok := importedBy(c.hist, badHash); ok != c.ok {
+		if _, _, ok := importedBy(c.hist, badHash); ok != c.ok {
 			t.Errorf("%s: ok=%v", c.name, ok)
 		}
 	}
