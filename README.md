@@ -51,7 +51,7 @@ discovers in Prowlarr or Sonarr) is retried on the Docker host
 the container. Release links handed to Sonarr/Radarr are rewritten to the
 Prowlarr address *they* use, so the apps do not need to resolve the same names
 as roarr. Everything except connection
-settings can also be changed in **Settings**, and is saved in `/config`.
+settings can also be changed under **Admin** (account menu), and is saved in `/config`.
 
 ### Configuration
 
@@ -179,7 +179,9 @@ make swarm      # watch-first download strategy experiment
 
 The UI is React + Vite (`web/`), built into `internal/webui/dist` and embedded
 in the Go binary. `cd web && ROARR_API=http://localhost:3847 npm run dev`
-gives hot reload against a running roarr.
+gives hot reload against a running roarr. Without one, `node mock/server.mjs`
+(in `web/`) serves a fake API with a small library, a release list that
+exercises the language and subtitle columns, and a queue with stuck items.
 
 ```
 cmd/roarr          entry point

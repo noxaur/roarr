@@ -32,7 +32,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenu
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useConfirm } from "@/components/Confirm";
-import { Empty, Kbd, Notice } from "@/components/kit";
+import { Dot, Empty, Kbd, Notice, type Tone } from "@/components/kit";
 import { PosterImg } from "@/components/Poster";
 
 type Filter = "all" | "tv" | "movie" | "missing" | "downloading" | "unmonitored" | "pinned";
@@ -104,14 +104,8 @@ function usePinned(): [Set<string>, (next: Set<string>) => void] {
   return [p, set];
 }
 
-function greeting(user?: string) {
-  const h = new Date().getHours();
-  const part = h < 5 ? "Up late" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-  return user ? `${part}, ${user}` : part;
-}
-
 export function Home() {
-  const { user, library, libraryLoaded, libraryErrors, activity, reloadLibrary, reloadActivity } = useStore();
+  const { library, libraryLoaded, libraryErrors, activity, reloadLibrary, reloadActivity } = useStore();
   const { navigate, search } = useRouter();
   const { openSearch, toggleDownloads, openShortcuts } = useShell();
   const confirm = useConfirm();
@@ -251,7 +245,7 @@ export function Home() {
   const command = (xs: LibraryItem[], name: "search" | "refresh") => {
     if (!xs.length) return;
     run(
-      name === "search" ? `Asking ${xs.length === 1 ? appOf(xs[0]) : "Sonarr & Radarr"} to search…` : "Asking for a rescan…",
+      name === "search" ? `Asking ${xs.length === 1 ? appOf(xs[0]) : "Sonarr and Radarr"} to search…` : "Asking for a rescan…",
       () => Promise.all(xs.map((it) => api.titleCommand(it.kind, it.id, name))),
       name === "search" ? `Search started for ${xs.length === 1 ? xs[0].title : plural(xs.length, "title")}` : "Rescan started",
     ).then((ok) => ok && name === "refresh" && setTimeout(() => reloadLibrary(true), 2500));
@@ -262,7 +256,7 @@ export function Home() {
     const one = xs.length === 1 ? xs[0] : null;
     const a = await confirm({
       title: one ? `Remove ${one.title}?` : `Remove ${plural(xs.length, "title")}?`,
-      body: <p>{one ? appOf(one) : "Sonarr and Radarr"} forget about {one ? "it" : "them"}. roarr can add {one ? "it" : "them"} back any time you get something.</p>,
+      body: <p>{one ? appOf(one) : "Sonarr and Radarr"} forget about {one ? "it" : "them"}. Getting something later adds {one ? "it" : "them"} back.</p>,
       options: [{ id: "files", label: "Delete the files from disk too" }],
       confirm: one ? `Remove from ${appOf(one)}` : `Remove ${xs.length}`,
       danger: true,
@@ -414,7 +408,7 @@ export function Home() {
   const titleMenu = (
     <>
       <ContextMenuLabel className="truncate text-xs font-normal text-muted-foreground">
-        {menuOne ? [menuOne.title, menuOne.year].filter(Boolean).join(" · ") : `${menuTargets.length} selected`}
+        {menuOne ? [menuOne.title, menuOne.year].filter(Boolean).join(" ") : `${menuTargets.length} selected`}
       </ContextMenuLabel>
       {menuOne && (
         <>
@@ -442,7 +436,7 @@ export function Home() {
         </ContextMenuItem>
       )}
       <ContextMenuItem onSelect={() => command(menuTargets, "search")}>
-        <Radar /> Let {menuOne ? appOf(menuOne) : "the apps"} search
+        <Radar /> {menuOne ? appOf(menuOne) : "Sonarr/Radarr"} search
       </ContextMenuItem>
       <ContextMenuItem onSelect={() => command(menuTargets, "refresh")}>
         <FolderSync /> Rescan disk
@@ -464,7 +458,7 @@ export function Home() {
       )}
       <ContextMenuSeparator />
       <ContextMenuItem variant="destructive" onSelect={() => remove(menuTargets)}>
-        <Trash2 /> {menuOne ? `Remove from ${appOf(menuOne)}…` : `Remove ${menuTargets.length}…`} <ContextMenuShortcut>⌫</ContextMenuShortcut>
+        <Trash2 /> {menuOne ? `Remove from ${appOf(menuOne)}` : `Remove ${menuTargets.length}`} <ContextMenuShortcut>⌫</ContextMenuShortcut>
       </ContextMenuItem>
     </>
   );
@@ -473,7 +467,7 @@ export function Home() {
     <>
       <ContextMenuLabel className="text-xs font-normal text-muted-foreground">Library</ContextMenuLabel>
       <ContextMenuItem onSelect={openSearch}>
-        <Search /> Search or run… <ContextMenuShortcut>⌘K</ContextMenuShortcut>
+        <Search /> Find a title <ContextMenuShortcut>⌘K</ContextMenuShortcut>
       </ContextMenuItem>
       <ContextMenuItem onSelect={() => run("Refreshing from Sonarr & Radarr…", () => reloadLibrary(true), "Library is up to date")}>
         <FolderSync /> Refresh library
@@ -527,7 +521,7 @@ export function Home() {
         <Check /> Select all <ContextMenuShortcut>⌘A</ContextMenuShortcut>
       </ContextMenuItem>
       <ContextMenuItem onSelect={toggleDownloads}>
-        <Download /> Downloads <ContextMenuShortcut>D</ContextMenuShortcut>
+        <Download /> Downloads panel <ContextMenuShortcut>D</ContextMenuShortcut>
       </ContextMenuItem>
       <ContextMenuItem onSelect={toggleTheme}>
         Light / dark <ContextMenuShortcut>T</ContextMenuShortcut>
@@ -539,32 +533,26 @@ export function Home() {
   );
 
   // ---------- render ----------
-  const status = (it: LibraryItem): [string, string] => {
-    if (isDownloading(it)) return ["Downloading", "bg-lime-strong"];
+  const status = (it: LibraryItem): [string, Tone] => {
+    if (isDownloading(it)) return ["Downloading", "live"];
     const miss = missingOf(it);
-    if (!it.monitored) return ["Not monitored", "bg-muted-foreground/40"];
-    if (miss > 0) return [it.kind === "movie" ? "Missing" : `${miss} missing`, "bg-destructive"];
-    return ["On disk", "bg-muted-foreground/70"];
+    if (miss > 0) return [it.kind === "movie" ? "Missing" : `${miss} missing`, it.monitored ? "miss" : "none"];
+    return ["On disk", "have"];
   };
   const countOf = (it: LibraryItem) => (it.kind === "tv" ? `${it.have}/${it.total}` : it.sizeOnDisk ? bytes(it.sizeOnDisk) : "—");
   const selItems = targetsOf(null);
 
   return (
     <div className="space-y-7">
-      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
+      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
         <div>
-          <div className="label">{greeting(user)}</div>
-          <h1 className="mt-2 text-[40px] leading-none font-semibold tracking-[-0.04em]">Library</h1>
+          <h1 className="text-[26px] leading-none font-medium">Library</h1>
           {libraryLoaded && (
-            <p className="mt-2.5 text-sm text-muted-foreground">
-              <span className="font-mono tabular">{counts.all}</span> titles · <span className="font-mono tabular">{counts.missing}</span> with gaps ·{" "}
-              <span className="font-mono tabular">{counts.downloading}</span> downloading
-              {counts.disk > 0 && (
-                <>
-                  {" "}
-                  · <span className="font-mono tabular">{bytes(counts.disk)}</span> on disk
-                </>
-              )}
+            <p className="meta mt-2 flex flex-wrap gap-x-3 font-mono tabular">
+              <span>{counts.all} titles</span>
+              {counts.missing > 0 && <span className="text-miss">{counts.missing} with gaps</span>}
+              {counts.downloading > 0 && <span className="text-live">{counts.downloading} downloading</span>}
+              {counts.disk > 0 && <span>{bytes(counts.disk)}</span>}
             </p>
           )}
         </div>
@@ -577,8 +565,8 @@ export function Home() {
               value={find}
               onChange={(e) => setFind(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              placeholder="Filter…"
-              className="h-8 w-44 rounded-lg border bg-transparent pr-8 pl-8 text-[13px] outline-none placeholder:text-muted-foreground focus:border-ring focus:bg-card"
+              placeholder="Filter"
+              className="h-8 w-44 rounded-md border bg-card pr-8 pl-8 text-[13px] outline-none placeholder:text-muted-foreground focus:border-ring"
             />
             {find ? (
               <button onClick={() => setFind("")} className="absolute right-2 cursor-pointer text-muted-foreground hover:text-foreground" aria-label="Clear filter">
@@ -636,15 +624,16 @@ export function Home() {
         </Notice>
       ))}
 
-      <div className="flex flex-wrap gap-1 border-b pb-4">
+      <div className="flex flex-wrap gap-0.5 border-b pb-3">
         {FILTERS.filter(([k]) => k === "all" || counts[k] > 0 || k === filter).map(([k, l], n) => (
           <button
             key={k}
             onClick={() => setFilter(k)}
             title={`${l} (${n + 1})`}
+            aria-pressed={filter === k}
             className={cn(
-              "flex h-[30px] cursor-pointer items-center gap-2 rounded-full border border-transparent px-3 text-[13px] text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",
-              filter === k && "border-input bg-muted text-foreground",
+              "flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-transparent px-2.5 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",
+              filter === k && "border-border bg-card text-foreground",
             )}
           >
             {l}
@@ -669,7 +658,7 @@ export function Home() {
               <Empty>
                 {library.length === 0 ? (
                   <>
-                    Your library is empty. Press <Kbd>⌘K</Kbd> to find something.
+                    Nothing in Sonarr or Radarr yet. <Kbd>⌘K</Kbd> finds a title.
                   </>
                 ) : (
                   <>
@@ -701,14 +690,9 @@ export function Home() {
                       aria-pressed={sel}
                       onClick={(e) => onItemClick(e, it)}
                       onFocus={() => setCursor(it.key)}
-                      className={cn("group -m-1.5 block min-w-0 rounded-xl p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring", cursor === it.key && "ring-1 ring-ring/50")}
+                      className={cn("group -m-1.5 block min-w-0 rounded-lg p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring", cursor === it.key && "ring-1 ring-ring/50")}
                     >
-                      <div
-                        className={cn(
-                          "relative aspect-[2/3] overflow-hidden rounded-lg bg-muted transition-transform duration-200 group-hover:-translate-y-0.5",
-                          sel && "ring-2 ring-lime-strong ring-offset-2 ring-offset-background",
-                        )}
-                      >
+                      <div className={cn("relative aspect-[2/3] overflow-hidden rounded-md bg-muted", sel && "ring-2 ring-live ring-offset-2 ring-offset-background")}>
                         <PosterImg src={it.poster} title={it.title} year={it.year} />
                         <span
                           data-tick
@@ -716,27 +700,27 @@ export function Home() {
                           className={cn(
                             "absolute top-2 right-2 grid size-5 place-items-center rounded-full border-[1.5px] border-white/80 bg-black/35 text-transparent opacity-0 transition-opacity group-hover:opacity-100",
                             selected.size > 0 && "opacity-100",
-                            sel && "border-lime bg-lime text-ink opacity-100",
+                            sel && "border-live bg-live text-white opacity-100",
                           )}
                         >
                           <Check className="size-3" strokeWidth={3} />
                         </span>
                         {pinned.has(it.key) && (
-                          <span className="absolute top-2 left-2 grid size-5 place-items-center rounded-full bg-black/45 text-lime" title="Pinned">
+                          <span className="absolute top-2 left-2 grid size-5 place-items-center rounded-full bg-black/45 text-white" title="Pinned">
                             <Pin className="size-3" fill="currentColor" />
                           </span>
                         )}
                         {p !== undefined && (
-                          <div className="absolute inset-x-0 bottom-0 h-[3px] bg-white/15">
-                            <i className="block h-full bg-lime transition-[width] duration-700" style={{ width: `${Math.max(0.03, p) * 100}%` }} />
+                          <div className="absolute inset-x-0 bottom-0 h-[3px] bg-black/30">
+                            <i className="block h-full bg-live transition-[width] duration-700" style={{ width: `${Math.max(0.03, p) * 100}%` }} />
                           </div>
                         )}
                       </div>
-                      <div className="mt-2.5 truncate px-0.5 text-[14px] font-medium tracking-tight" title={it.title}>
+                      <div className="mt-2 truncate px-0.5 text-[13.5px] font-medium" title={it.title}>
                         {it.title}
                       </div>
-                      <div className="mt-0.5 flex items-center gap-2 px-0.5 text-[12.5px] text-muted-foreground">
-                        <span className={cn("size-1.5 shrink-0 rounded-full", dot)} />
+                      <div className="mt-0.5 flex items-center gap-1.5 px-0.5 text-[12px] text-muted-foreground">
+                        <Dot tone={dot} className="size-1.5" />
                         <span className="truncate">{label}</span>
                         <span className="ml-auto font-mono text-[11px] tabular">{countOf(it)}</span>
                       </div>
@@ -746,7 +730,7 @@ export function Home() {
               </Grid>
             ) : (
               <div role="table" className="border-t">
-                <div role="row" className="hidden h-9 grid-cols-[minmax(0,1fr)_80px_60px_90px_100px_150px] items-center gap-4 border-b px-3 label sm:grid">
+                <div role="row" className="meta hidden h-9 grid-cols-[minmax(0,1fr)_80px_60px_90px_100px_150px] items-center gap-4 border-b px-3 sm:grid">
                   <span>Title</span>
                   <span>Type</span>
                   <span>Year</span>
@@ -768,16 +752,16 @@ export function Home() {
                       onClick={(e) => onItemClick(e, it)}
                       onFocus={() => setCursor(it.key)}
                       className={cn(
-                        "grid h-12 grid-cols-[minmax(0,1fr)_110px] items-center gap-4 border-b px-3 outline-none hover:bg-muted/60 focus-visible:bg-accent sm:grid-cols-[minmax(0,1fr)_80px_60px_90px_100px_150px]",
+                        "grid h-11 grid-cols-[minmax(0,1fr)_110px] items-center gap-4 border-b px-3 outline-none hover:bg-card focus-visible:bg-accent sm:grid-cols-[minmax(0,1fr)_80px_60px_90px_100px_150px]",
                         cursor === it.key && "bg-accent",
-                        sel && "bg-lime/20 shadow-[inset_2px_0_0_var(--lime-strong)] hover:bg-lime/25 dark:bg-lime/10",
+                        sel && "bg-live-soft/60 shadow-[inset_2px_0_0_var(--live)] hover:bg-live-soft",
                       )}
                     >
                       <span className="flex min-w-0 items-center gap-3">
                         <span
                           data-tick
                           aria-hidden
-                          className={cn("grid size-4 shrink-0 place-items-center rounded-[4px] border-[1.5px] border-input text-transparent", sel && "border-lime-strong bg-lime-strong text-background")}
+                          className={cn("grid size-4 shrink-0 place-items-center rounded-[4px] border-[1.5px] border-input text-transparent", sel && "border-live bg-live text-white")}
                         >
                           <Check className="size-2.5" strokeWidth={3.5} />
                         </span>
@@ -785,14 +769,14 @@ export function Home() {
                           <PosterImg src={it.poster} title={it.title} />
                         </span>
                         <span className="truncate text-sm font-medium">{it.title}</span>
-                        {pinned.has(it.key) && <Pin className="size-3 shrink-0 text-lime-strong" fill="currentColor" />}
+                        {pinned.has(it.key) && <Pin className="size-3 shrink-0 text-muted-foreground" fill="currentColor" />}
                       </span>
                       <span className="hidden text-[13px] text-muted-foreground sm:block">{it.kind === "tv" ? "Show" : "Movie"}</span>
                       <span className="hidden font-mono text-xs text-muted-foreground sm:block">{it.year ?? ""}</span>
                       <span className="hidden font-mono text-xs text-muted-foreground tabular sm:block">{it.kind === "tv" ? `${it.have}/${it.total}` : it.have ? "1/1" : "0/1"}</span>
                       <span className="hidden font-mono text-xs text-muted-foreground tabular sm:block">{bytes(it.sizeOnDisk ?? 0)}</span>
                       <span className="flex items-center gap-2 text-[13px] text-muted-foreground">
-                        <span className={cn("size-1.5 rounded-full", dot)} />
+                        <Dot tone={dot} className="size-1.5" />
                         <span className="truncate">{label}</span>
                       </span>
                     </Link>
@@ -809,12 +793,9 @@ export function Home() {
 
       {selected.size > 0 && (
         <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 flex justify-center px-4 sm:bottom-6">
-          <div className="pointer-events-auto flex max-w-full animate-in items-center gap-0.5 overflow-x-auto rounded-xl border bg-popover p-1.5 pl-4 text-sm text-popover-foreground shadow-xl fade-in-0 slide-in-from-bottom-3">
-            <span className="mr-2 flex shrink-0 flex-col leading-tight whitespace-nowrap">
-              <span>
-                <b className="font-mono font-medium tabular">{selected.size}</b> selected
-              </span>
-              <span className="text-[11px] text-muted-foreground">click or drag to add</span>
+          <div className="pointer-events-auto flex max-w-full animate-in items-center gap-0.5 overflow-x-auto rounded-lg border bg-popover p-1.5 pl-4 text-sm text-popover-foreground shadow-xl fade-in-0 slide-in-from-bottom-3">
+            <span className="mr-2 shrink-0 whitespace-nowrap">
+              <b className="font-mono font-medium tabular">{selected.size}</b> selected
             </span>
             <BarBtn onClick={selectAll}>All</BarBtn>
             <BarBtn onClick={invert} hint="I">
@@ -880,7 +861,7 @@ function Segmented({
   disabled?: boolean;
 }) {
   return (
-    <div role="group" aria-label={label} className={cn("flex h-8 gap-0.5 rounded-lg border p-0.5", disabled && "opacity-50")}>
+    <div role="group" aria-label={label} className={cn("flex h-8 gap-0.5 rounded-md border bg-card p-0.5", disabled && "opacity-50")}>
       {options.map(([v, content, title]) => (
         <Tooltip key={v}>
           <TooltipTrigger asChild>
@@ -890,7 +871,7 @@ function Segmented({
               aria-label={title}
               onClick={() => onChange(v)}
               className={cn(
-                "grid min-w-7 cursor-pointer place-items-center rounded-md px-1.5 font-mono text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default",
+                "grid min-w-7 cursor-pointer place-items-center rounded-[4px] px-1.5 font-mono text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default",
                 value === v && "bg-muted text-foreground",
               )}
             >
@@ -921,47 +902,47 @@ function QuickLook({
 }: {
   item: LibraryItem | null;
   onClose: () => void;
-  status?: [string, string];
+  status?: [string, Tone];
   downloading: boolean;
   onGet: (it: LibraryItem) => void;
 }) {
   const { navigate } = useRouter();
   return (
     <Dialog open={!!item} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[640px]">
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[560px]">
         {item && (
           <div className="flex flex-col sm:flex-row">
-            <div className="aspect-[2/3] w-full shrink-0 bg-muted sm:w-[220px]">
+            <div className="aspect-[2/3] w-full shrink-0 bg-muted sm:w-[180px]">
               <PosterImg src={item.poster} title={item.title} year={item.year} />
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-5 p-6">
               <div>
-                <div className="label">
-                  {item.kind === "tv" ? "Show" : "Movie"}
-                  {item.year ? ` · ${item.year}` : ""}
-                  {item.network ? ` · ${item.network}` : ""}
+                <DialogTitle className="text-[22px] leading-tight font-medium">{item.title}</DialogTitle>
+                <div className="meta mt-1 flex gap-x-2">
+                  <span>{item.kind === "tv" ? "Show" : "Movie"}</span>
+                  {item.year ? <span>{item.year}</span> : null}
+                  {item.network ? <span>{item.network}</span> : null}
                 </div>
-                <DialogTitle className="mt-2 text-2xl font-semibold tracking-tight">{item.title}</DialogTitle>
                 <DialogDescription className="sr-only">Quick look at {item.title}</DialogDescription>
               </div>
               <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                 <div>
-                  <dt className="text-xs text-muted-foreground">Status</dt>
+                  <dt className="meta">Status</dt>
                   <dd className="mt-0.5 flex items-center gap-2">
-                    <span className={cn("size-1.5 rounded-full", status?.[1])} />
+                    <Dot tone={status?.[1] ?? "none"} />
                     {status?.[0]}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-muted-foreground">On disk</dt>
+                  <dt className="meta">On disk</dt>
                   <dd className="mt-0.5 font-mono tabular">{item.kind === "tv" ? `${item.have} of ${item.total} episodes` : item.have ? "Yes" : "No"}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-muted-foreground">Size</dt>
+                  <dt className="meta">Size</dt>
                   <dd className="mt-0.5 font-mono tabular">{bytes(item.sizeOnDisk ?? 0)}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-muted-foreground">Monitored</dt>
+                  <dt className="meta">Monitored</dt>
                   <dd className="mt-0.5">{item.monitored ? "Yes" : "No"}</dd>
                 </div>
               </dl>

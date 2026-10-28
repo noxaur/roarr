@@ -138,12 +138,19 @@ export interface ReleaseInfo {
   tenBit?: boolean;
   service?: string;
   group?: string;
+  /** Explicitly tagged audio languages. */
   languages?: string[];
   multi?: boolean;
   dualAudio?: boolean;
+  /** Explicitly tagged subtitle languages ("Multi" for multi-sub). */
+  subtitles?: string[];
+  subbed?: boolean;
+  hardSubbed?: boolean;
+  special?: boolean;
   proper?: boolean;
   repack?: boolean;
   remux?: boolean;
+  extended?: boolean;
 }
 
 export interface Release {

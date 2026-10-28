@@ -6,7 +6,7 @@ import { Toaster } from "./components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { ConfirmProvider } from "./components/Confirm";
 import { DownloadsDrawer } from "./components/Downloads";
-import { Nav } from "./components/Nav";
+import { Nav, isAdminPath, isDownloadsPath } from "./components/Nav";
 import { SearchPalette, type Command } from "./components/SearchPalette";
 import { ShortcutsDialog } from "./components/Shortcuts";
 import { ShellCtx, keyIsBusy } from "./lib/shell";
@@ -99,12 +99,12 @@ function Shell({ authMode }: { authMode: string }) {
   );
 
   const commands: Command[] = [
-    { id: "library", label: "Go to library", run: () => navigate("/") },
-    { id: "activity", label: "Go to activity", run: () => navigate("/activity") },
-    { id: "requests", label: "Go to requests", run: () => navigate("/requests") },
-    { id: "settings", label: "Go to settings", run: () => navigate("/settings") },
-    { id: "downloads", label: downloads ? "Hide downloads" : "Show downloads", kbd: "D", run: () => setDownloads((d) => !d) },
-    { id: "missing", label: "Show what's missing", run: () => navigate("/?filter=missing") },
+    { id: "library", label: "Library", run: () => navigate("/") },
+    { id: "activity", label: "Downloads", run: () => navigate("/downloads") },
+    { id: "requests", label: "Requests", run: () => navigate("/requests") },
+    { id: "settings", label: "Admin", run: () => navigate("/admin") },
+    { id: "downloads", label: downloads ? "Hide downloads panel" : "Downloads panel", kbd: "D", run: () => setDownloads((d) => !d) },
+    { id: "missing", label: "Library: missing only", run: () => navigate("/?filter=missing") },
     { id: "theme", label: "Switch light / dark", kbd: "T", run: toggleTheme },
     { id: "undo", label: "Undo last change", kbd: "⌘Z", run: undoLast },
     { id: "shortcuts", label: "Keyboard shortcuts", kbd: "?", run: () => setShortcuts(true) },
@@ -116,14 +116,14 @@ function Shell({ authMode }: { authMode: string }) {
   else if ((m = match("/tv/:id", path))) page = <SeriesPage key={path} id={+m.id} />;
   else if ((m = match("/movie/tmdb/:tmdb", path))) page = <MoviePage key={path} tmdb={+m.tmdb} />;
   else if ((m = match("/movie/:id", path))) page = <MoviePage key={path} id={+m.id} />;
-  else if (path === "/activity") page = <ActivityPage />;
+  else if (isDownloadsPath(path)) page = <ActivityPage />;
   else if (path === "/requests") page = <RequestsPage />;
-  else if (path === "/settings") page = <SettingsPage />;
+  else if (isAdminPath(path)) page = <SettingsPage />;
 
   return (
     <ShellCtx.Provider value={shell}>
       <Nav authMode={authMode} />
-      <main className="mx-auto max-w-[1360px] px-4 pt-8 pb-28 sm:px-6 lg:pt-10">
+      <main className="mx-auto max-w-[1280px] px-4 pt-6 pb-28 sm:px-6 lg:pt-8">
         <Suspense fallback={null}>{page}</Suspense>
       </main>
       <SearchPalette open={searching} onOpenChange={setSearching} commands={commands} />

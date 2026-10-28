@@ -9,16 +9,14 @@ import { usePointerSelect } from "@/lib/select";
 import { useStore } from "@/lib/store";
 import { useSearch } from "@/lib/useSearch";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { Notice } from "@/components/kit";
+import { Dot, Figure, Notice, State } from "@/components/kit";
 import { useConfirm } from "@/components/Confirm";
 import { FileLine, ManageMenu, MonitorToggle, RowMenu, SelectionBar } from "@/components/Manage";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
-import { Crumbs, GetCard, PosterColumn, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
+import { Crumbs, GetCard, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
 
 export function SeriesPage({ id, tvdb, tmdb }: { id?: number; tvdb?: number; tmdb?: number }) {
   const [d, setD] = useState<SeriesDetail | null>(null);
@@ -46,6 +44,14 @@ export function SeriesPage({ id, tvdb, tmdb }: { id?: number; tvdb?: number; tmd
 }
 
 type Scope = "missing" | "all" | "season" | "custom";
+
+/** What one episode cell shows. */
+function epState(e: EpisodeDetail): "have" | "live" | "miss" | "unaired" {
+  if (e.hasFile) return "have";
+  if (e.queued) return "live";
+  if (e.aired) return "miss";
+  return "unaired";
+}
 
 function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void; prefs: { prefetch: boolean; watchFirst: boolean } }) {
   const { reloadActivity, reloadLibrary } = useStore();
@@ -178,11 +184,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
       const all = have.length === selArr.length;
       const a = await confirm({
         title: all ? (have.length === 1 ? `${label(have[0].id)} is already on disk` : "These are already on disk") : `${have.length} of these are already on disk`,
-        body: (
-          <p>
-            Replacing deletes the current {have.length === 1 ? "file" : `${have.length} files`} ({bytes(sizeOf(have))}) and downloads {have.length === 1 ? "it" : "them"} again.
-          </p>
-        ),
+        body: <p>Replacing deletes the current {have.length === 1 ? "file" : `${have.length} files`} ({bytes(sizeOf(have))}) and downloads again.</p>,
         confirm: have.length === 1 ? "Replace it" : `Replace ${have.length}`,
         alt: rest.length ? `Only get the ${rest.length} missing` : undefined,
         danger: true,
@@ -286,7 +288,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
         await api.patchTitle("tv", d.id, { monitored: on, season: num });
         return api.episodes(d.id, on ? "monitor" : "unmonitor", ids);
       },
-      on ? `Sonarr watches season ${num} again` : `Sonarr stopped watching season ${num}`,
+      on ? `Season ${num} monitored` : `Season ${num} unmonitored`,
     );
     if (ok) changed();
   };
@@ -296,12 +298,8 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     if (!eps.length) return;
     const a = await confirm({
       title: `Delete ${describe(eps)} from disk?`,
-      body: (
-        <p>
-          Frees {bytes(sizeOf(eps))}. Sonarr moves files to its recycle bin when one is set up; otherwise they are gone for good.
-        </p>
-      ),
-      options: [{ id: "unmonitor", label: "Stop monitoring them", hint: "so Sonarr does not download them again by itself", checked: true }],
+      body: <p>Frees {bytes(sizeOf(eps))}. Sonarr uses its recycle bin when one is set up; otherwise the files are gone.</p>,
+      options: [{ id: "unmonitor", label: "Stop monitoring", hint: "so Sonarr does not download them again", checked: true }],
       confirm: eps.length === 1 ? "Delete file" : `Delete ${eps.length} files`,
       danger: true,
     });
@@ -324,12 +322,8 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     if (!eps.length) return;
     const a = await confirm({
       title: `Replace ${describe(eps)}?`,
-      body: (
-        <p>
-          roarr deletes the current {eps.length === 1 ? "file" : "files"} ({bytes(sizeOf(eps))}) and downloads {eps.length === 1 ? "it" : "them"} again.
-        </p>
-      ),
-      options: [{ id: "pick", label: "Let me choose the release", hint: "otherwise roarr grabs its best pick", checked: pick }],
+      body: <p>Deletes the current {eps.length === 1 ? "file" : "files"} ({bytes(sizeOf(eps))}) and downloads again.</p>,
+      options: [{ id: "pick", label: "Choose the release myself", checked: pick }],
       confirm: "Replace",
       danger: true,
     });
@@ -365,51 +359,51 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     const code = label(e.id);
     return (
       <>
-      <C.Label className="font-mono text-[11px] font-normal">
-        {code}
-        {e.file && <span className="mt-0.5 block break-all text-muted-foreground">{e.file.path}</span>}
-      </C.Label>
-      {e.hasFile ? (
-        <>
-          <C.Item onSelect={() => replace([e.id])}>
-            <RefreshCw /> Replace…
+        <C.Label className="font-mono text-[11px] font-normal">
+          {code}
+          {e.file && <span className="mt-0.5 block break-all text-muted-foreground">{e.file.path}</span>}
+        </C.Label>
+        {e.hasFile ? (
+          <>
+            <C.Item onSelect={() => replace([e.id])}>
+              <RefreshCw /> Replace
+            </C.Item>
+            <C.Item onSelect={() => replace([e.id], true)}>
+              <ListChecks /> Replace, choose release
+            </C.Item>
+          </>
+        ) : (
+          <>
+            <C.Item onSelect={() => getNow([e.id])}>
+              <Download /> Get
+            </C.Item>
+            <C.Item onSelect={() => choose([e.id])}>
+              <ListChecks /> Choose release
+            </C.Item>
+          </>
+        )}
+        {lib && (
+          <C.Item onSelect={() => episodesDo("search", [e.id], "Asking Sonarr…")}>
+            <Radar /> Sonarr search
           </C.Item>
-          <C.Item onSelect={() => replace([e.id], true)}>
-            <ListChecks /> Choose a replacement…
-          </C.Item>
-        </>
-      ) : (
-        <>
-          <C.Item onSelect={() => getNow([e.id])}>
-            <Download /> Get it now
-          </C.Item>
-          <C.Item onSelect={() => choose([e.id])}>
-            <ListChecks /> Choose release…
-          </C.Item>
-        </>
-      )}
-      {lib && (
-        <C.Item onSelect={() => episodesDo("search", [e.id], "Asking Sonarr…")}>
-          <Radar /> Let Sonarr search
+        )}
+        <C.Sep />
+        <C.Item onSelect={() => toggle(e)}>
+          <Check /> {sel.has(e.id) && scope === "custom" ? "Untick" : "Tick"}
         </C.Item>
-      )}
-      <C.Sep />
-      <C.Item onSelect={() => toggle(e)}>
-        <Check /> {sel.has(e.id) && scope === "custom" ? "Untick" : "Tick"}
-      </C.Item>
-      {lib && (
-        <C.Item onSelect={() => setMonitored([e.id], !isMon(e))}>
-          <Bookmark /> {isMon(e) ? "Stop monitoring" : "Monitor"}
-        </C.Item>
-      )}
-      {e.hasFile && (
-        <>
-          <C.Sep />
-          <C.Item variant="destructive" onSelect={() => deleteFiles([e.id])}>
-            <Trash2 /> Delete file…
+        {lib && (
+          <C.Item onSelect={() => setMonitored([e.id], !isMon(e))}>
+            <Bookmark /> {isMon(e) ? "Unmonitor" : "Monitor"}
           </C.Item>
-        </>
-      )}
+        )}
+        {e.hasFile && (
+          <>
+            <C.Sep />
+            <C.Item variant="destructive" onSelect={() => deleteFiles([e.id])}>
+              <Trash2 /> Delete file
+            </C.Item>
+          </>
+        )}
       </>
     );
   };
@@ -424,16 +418,16 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
         </C.Item>
       )}
       <C.Item onSelect={() => setSheet(true)}>
-        <ListChecks /> Choose releases…
+        <ListChecks /> Choose releases
       </C.Item>
       {lib && tickedOnDisk.length > 0 && (
         <C.Item onSelect={() => replace(tickedOnDisk.map((e) => e.id))}>
-          <RefreshCw /> Replace {plural(tickedOnDisk.length, "file")}…
+          <RefreshCw /> Replace {plural(tickedOnDisk.length, "file")}
         </C.Item>
       )}
       {lib && (
         <C.Item onSelect={() => setMonitored(tickedArr, !allMon)}>
-          <Bookmark /> {allMon ? "Stop monitoring" : "Monitor"} them
+          <Bookmark /> {allMon ? "Unmonitor" : "Monitor"}
         </C.Item>
       )}
       <C.Item onSelect={clearTicks}>
@@ -443,7 +437,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
         <>
           <C.Sep />
           <C.Item variant="destructive" onSelect={() => deleteFiles(tickedArr)}>
-            <Trash2 /> Delete {plural(tickedOnDisk.length, "file")}…
+            <Trash2 /> Delete {plural(tickedOnDisk.length, "file")}
           </C.Item>
         </>
       )}
@@ -463,13 +457,10 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
 
   // Drag down the list (or press and hold, then move) to tick a run of episodes.
   const tickedKeys = useMemo(() => new Set(tickedArr.map(String)), [tickedArr]);
-  const onPaint = useCallback(
-    (next: Set<string>) => {
-      setTicked(new Set([...next].map(Number)));
-      setScope("custom");
-    },
-    [],
-  );
+  const onPaint = useCallback((next: Set<string>) => {
+    setTicked(new Set([...next].map(Number)));
+    setScope("custom");
+  }, []);
   const pointer = usePointerSelect({ selected: tickedKeys, onChange: onPaint, paintOnDrag: true, clearOnBlankClick: false });
 
   const have = allEps.filter((e) => e.season > 0 && e.hasFile).length;
@@ -477,13 +468,14 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
   const n = selArr.length;
   const scopeTitle =
     scope === "all" ? "the whole show" : scope === "missing" ? `${n} missing episode${n === 1 ? "" : "s"}` : n === 1 ? label(selArr[0]) : `${n} episodes of ${d.title}`;
-  const sheetTitle = n === 1 ? `${d.title} · ${label(selArr[0])}` : scope === "season" ? `${d.title} · Season ${focusSeason}` : `${d.title} · ${n} episodes`;
+  const sheetTitle = d.title;
+  const sheetDetail = n === 1 ? label(selArr[0]) : scope === "season" ? `Season ${focusSeason}, ${n} episodes` : n <= 8 ? selArr.map(label).join(", ") : `${rangeLabel(selArr.map(label))}, ${n} episodes`;
   const focusAired = seasons.find((s) => s.number === focusSeason)?.episodes.filter((e) => e.aired) ?? [];
   const focusMissing = focusAired.filter((e) => !e.hasFile && !e.queued).length;
   const regularSeasons = seasons.filter((s) => s.number > 0).length;
 
   const options: GetOption[] = [
-    ...(d.inLibrary ? [{ value: "missing", label: "Missing episodes", sub: missing.length ? rangeLabel(missing.map(label)) : "nothing missing", count: missing.length, disabled: missing.length === 0 }] : []),
+    ...(d.inLibrary ? [{ value: "missing", label: "Missing", sub: missing.length ? rangeLabel(missing.map(label)) : "nothing missing", count: missing.length, disabled: missing.length === 0 }] : []),
     ...(regularSeasons > 1 || !d.inLibrary
       ? [
           {
@@ -495,42 +487,39 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
         ]
       : []),
     { value: "all", label: "Whole show", sub: `${regularSeasons} season${regularSeasons === 1 ? "" : "s"}`, count: everything.length },
-    { value: "custom", label: "Episodes I tick", sub: "in the list below", count: scope === "custom" ? ticked.size || "–" : "–" },
+    { value: "custom", label: "Ticked episodes", sub: "click cells below", count: scope === "custom" ? ticked.size || "–" : "–" },
   ];
 
   return (
     <>
       <Crumbs section="Shows" />
       <TitleLayout
-        poster={<PosterColumn poster={d.poster} title={d.title} year={d.year} />}
         head={
           <TitleHead
             poster={d.poster}
             title={d.title}
             year={d.year}
-            meta={["Show", d.network, d.year && `${d.year}–`, d.status, d.anime && "anime", d.runtime && `${d.runtime} min`]}
-            overview={d.overview}
+            meta={[d.year && `${d.year}–`, d.network, d.status, d.anime && "anime", d.runtime && `${d.runtime} min`]}
+            state={
+              d.inLibrary ? (
+                <>
+                  <Figure value={`${have}/${everything.length}`} label="on disk" tone="have" />
+                  {queued > 0 && <Figure value={queued} label="downloading" tone="live" />}
+                  {missing.length > 0 && <Figure value={missing.length} label="missing" tone="miss" />}
+                  {d.sizeOnDisk ? <Figure value={bytes(d.sizeOnDisk)} label="" /> : null}
+                  {!d.monitored && <State tone="none">Not monitored</State>}
+                </>
+              ) : (
+                <State tone="none">Not in Sonarr. Added when you get something.</State>
+              )
+            }
             actions={
               lib && (
                 <ManageMenu kind="tv" id={d.id} title={d.title} monitored={d.monitored} profileId={d.qualityProfileId} path={d.path} onChanged={changed}>
                   <DropdownMenuItem disabled={have === 0} onSelect={() => deleteFiles(allEps.filter((e) => e.hasFile).map((e) => e.id))}>
-                    <Trash2 /> Delete every file…
+                    <Trash2 /> Delete every file
                   </DropdownMenuItem>
                 </ManageMenu>
-              )
-            }
-            badges={
-              d.inLibrary ? (
-                <>
-                  <Badge variant="ok">
-                    <Check /> {have}/{everything.length} on disk
-                  </Badge>
-                  {queued > 0 && <Badge variant="ice">{queued} downloading</Badge>}
-                  {missing.length > 0 && <Badge variant="pink">{missing.length} missing</Badge>}
-                  {d.sizeOnDisk ? <Badge>{bytes(d.sizeOnDisk)}</Badge> : null}
-                </>
-              ) : (
-                <Badge variant="ice">Not in Sonarr yet · added when you get something</Badge>
               )
             }
           />
@@ -543,7 +532,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
               if (v === "custom" && scope !== "custom") setTicked(new Set(sel));
               setScope(v as Scope);
             }}
-            cta={n === 0 ? "Tick episodes to get" : n === 1 ? `Get ${label(selArr[0])}` : `Get ${n} episodes`}
+            cta={n === 0 ? "Tick episodes" : n === 1 ? `Get ${label(selArr[0])}` : `Get ${n} episodes`}
             onGet={get}
             busy={busy}
             done={gotFor === selKey}
@@ -554,26 +543,41 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
             onChoose={() => setSheet(true)}
             watchFirst={watchFirst}
             onWatchFirst={setWatchFirst}
-            note={lib && onDisk(selArr).length > 0 ? `${plural(onDisk(selArr).length, "episode")} of these ${onDisk(selArr).length === 1 ? "is" : "are"} on disk already; you can replace or skip ${onDisk(selArr).length === 1 ? "it" : "them"}.` : undefined}
+            note={lib && onDisk(selArr).length > 0 ? `${plural(onDisk(selArr).length, "episode")} of these already on disk.` : undefined}
           />
         }
         body={
-          <div className="border-t border-border select-none" onMouseDown={pointer.onMouseDown}>
+          <div className="select-none" onMouseDown={pointer.onMouseDown}>
+            <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5">
+                <i className="size-2.5 rounded-[3px] bg-have" /> on disk
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <i className="size-2.5 rounded-[3px] bg-live" /> downloading
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <i className="size-2.5 rounded-[3px] bg-miss-soft ring-1 ring-miss/60 ring-inset" /> missing
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <i className="size-2.5 rounded-[3px] ring-1 ring-border ring-inset" /> not aired
+              </span>
+              <span className="ml-auto hidden sm:inline">Click a cell to tick, shift-click for a run.</span>
+            </div>
             {seasons.map((s) => {
               const aired = s.episodes.filter((e) => e.aired);
               const haveS = aired.filter((e) => e.hasFile).length;
+              const queuedS = aired.filter((e) => !e.hasFile && e.queued).length;
               const isOpen = openSeasons.has(s.number);
-              const complete = !d.synthetic && aired.length > 0 && haveS === aired.length;
               const allTicked = aired.length > 0 && aired.every((e) => sel.has(e.id));
               const seasonName = s.number === 0 ? "Specials" : `Season ${s.number}`;
               const seasonMon = s.episodes.length > 0 ? s.episodes.some(isMon) : s.monitored;
               const seasonMissing = aired.filter((e) => !e.hasFile && !e.queued).map((e) => e.id);
               const seasonSize = s.episodes.reduce((n, e) => n + (e.file?.size ?? 0), 0);
               return (
-                <section key={s.number} className="border-b border-border">
-                  <div className="flex min-h-14 items-center gap-3">
+                <section key={s.number} className="border-t py-3">
+                  <div className="flex min-h-9 items-center gap-3">
                     <button
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left outline-none focus-visible:underline"
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 py-1 text-left outline-none focus-visible:underline"
                       aria-expanded={isOpen}
                       onClick={() => {
                         const next = new Set(openSeasons);
@@ -583,29 +587,41 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                       }}
                     >
                       <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", isOpen && "rotate-90")} />
-                      <b className="text-[17px] font-semibold tracking-tight whitespace-nowrap">{s.number === 0 ? "Specials" : `Season ${s.number}`}</b>
-                      <span className="font-mono text-xs text-muted-foreground">{d.synthetic ? `${s.episodes.length} eps` : `${haveS}/${aired.length}`}</span>
-                      {!d.synthetic && aired.length > 0 && (
-                        <span className="hidden h-1 w-28 overflow-hidden rounded-full bg-foreground/10 sm:block">
-                          <i className="block h-full rounded-full bg-foreground" style={{ width: `${(haveS / aired.length) * 100}%` }} />
+                      <b className="text-[15px] font-medium whitespace-nowrap">{seasonName}</b>
+                      {!d.synthetic && aired.length > 0 ? (
+                        <span className="flex items-center gap-x-3 font-mono text-[12px] whitespace-nowrap text-muted-foreground tabular">
+                          <span className={cn(haveS === aired.length && "text-have")}>
+                            {haveS}/{aired.length}
+                          </span>
+                          {queuedS > 0 && (
+                            <span className="text-live">
+                              {queuedS}
+                              <span className="hidden sm:inline"> downloading</span>
+                            </span>
+                          )}
+                          {seasonMissing.length > 0 && (
+                            <span className="text-miss">
+                              {seasonMissing.length}
+                              <span className="hidden sm:inline"> missing</span>
+                            </span>
+                          )}
+                          {seasonSize > 0 && <span className="hidden md:inline">{bytes(seasonSize)}</span>}
                         </span>
+                      ) : (
+                        <span className="font-mono text-[12px] text-muted-foreground">{s.episodes.length} eps</span>
                       )}
                     </button>
-                    {complete && !allTicked ? (
-                      <Badge variant="ok">Complete</Badge>
-                    ) : (
-                      aired.length > 0 && (
-                        <Button variant="outline" size="xs" onClick={() => tickSeason(s.number)}>
-                          {allTicked ? "Untick season" : "Tick season"}
-                        </Button>
-                      )
+                    {aired.length > 0 && (
+                      <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => tickSeason(s.number)}>
+                        {allTicked ? "Untick" : "Tick season"}
+                      </Button>
                     )}
                     {lib && (
                       <>
                         <MonitorToggle on={seasonMon} label={seasonName} onToggle={() => setSeasonMonitored(s.number, !seasonMon)} />
                         <RowMenu label={`${seasonName} actions`}>
                           <DropdownMenuLabel className="font-mono text-[11px] font-normal text-muted-foreground">
-                            {seasonName} · {haveS}/{aired.length} on disk{seasonSize ? ` · ${bytes(seasonSize)}` : ""}
+                            {seasonName}, {haveS}/{aired.length} on disk{seasonSize ? `, ${bytes(seasonSize)}` : ""}
                           </DropdownMenuLabel>
                           <DropdownMenuItem disabled={aired.length === 0} onSelect={() => tickOnly(aired.map((e) => e.id))}>
                             <ListChecks /> Tick only this season
@@ -614,75 +630,99 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                             <Download /> Get the {seasonMissing.length || ""} missing
                           </DropdownMenuItem>
                           <DropdownMenuItem disabled={haveS === 0} onSelect={() => replace(aired.map((e) => e.id))}>
-                            <RefreshCw /> Replace the season…
+                            <RefreshCw /> Replace the season
                           </DropdownMenuItem>
                           <DropdownMenuItem disabled={seasonMissing.length === 0} onSelect={() => episodesDo("search", seasonMissing, "Asking Sonarr…")}>
-                            <Radar /> Let Sonarr search
+                            <Radar /> Sonarr search
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem variant="destructive" disabled={haveS === 0} onSelect={() => deleteFiles(s.episodes.map((e) => e.id))}>
-                            <Trash2 /> Delete season files…
+                            <Trash2 /> Delete season files
                           </DropdownMenuItem>
                         </RowMenu>
                       </>
                     )}
                   </div>
-                  {isOpen && s.episodes.length > 0 && (
-                    <div className="pb-3">
+
+                  {/* The strip: one cell per episode. */}
+                  {s.episodes.length > 0 && (
+                    <div className="mt-1.5 grid gap-1 pl-[26px]" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(26px, 1fr))" }}>
                       {s.episodes.map((e) => {
+                        const st = epState(e);
                         const on = sel.has(e.id);
                         const code = label(e.id);
                         return (
-                          <ContextMenu key={e.id}>
-                          <ContextMenuTrigger asChild disabled={!e.aired}>
-                          <div
+                          <button
+                            key={e.id}
+                            type="button"
                             data-sel={e.aired ? String(e.id) : undefined}
+                            disabled={!e.aired}
+                            aria-pressed={on}
+                            aria-label={`${code} ${e.title}: ${st === "have" ? "on disk" : st === "live" ? "downloading" : st === "miss" ? "missing" : "not aired"}`}
+                            title={`${code} ${e.title}${e.file ? `\n${[e.file.quality, e.file.codec, bytes(e.file.size)].filter(Boolean).join(" ")}` : ""}`}
                             onClick={(ev) => {
                               if (pointer.swallowClick()) return;
-                              if (e.aired) toggle(e, ev.shiftKey);
+                              toggle(e, ev.shiftKey);
                             }}
                             className={cn(
-                              "group -mx-2.5 flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-2.5 py-1 transition-colors select-none hover:bg-muted/60",
-                              on && "bg-lime/45 hover:bg-lime/55 dark:bg-lime/12 dark:hover:bg-lime/18",
-                              !e.aired && "cursor-default",
+                              "cell focus-visible:ring-2 focus-visible:ring-ring",
+                              st === "have" && "bg-have text-background",
+                              st === "live" && "bg-live text-background",
+                              st === "miss" && "bg-miss-soft text-miss ring-1 ring-miss/60 ring-inset",
+                              st === "unaired" && "cursor-default bg-transparent text-muted-foreground/60 ring-1 ring-border ring-inset",
+                              on && "shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--foreground)]",
                             )}
                           >
-                            <Checkbox
-                              checked={on}
-                              disabled={!e.aired}
-                              onClick={(ev) => ev.preventDefault()}
-                              aria-label={`${code} ${e.title}`}
-                              className={cn(!e.aired && "opacity-40")}
-                            />
-                            <span className={cn("w-9 shrink-0 font-mono text-xs text-muted-foreground", !e.aired && "opacity-55")}>
-                              {e.absolute && d.anime ? `#${e.absolute}` : `E${pad(e.number)}`}
-                            </span>
-                            <span className={cn("min-w-0 flex-1", !e.aired && "opacity-55")}>
-                              <span className="block truncate">{e.title}</span>
-                              {e.file && <FileLine file={e.file} className="hidden sm:block" />}
-                            </span>
-                            {e.hasFile ? (
-                              <span className="font-mono text-[11px] tracking-wide whitespace-nowrap text-ok uppercase">
-                                ✓<span className="max-xl:hidden"> on disk</span>
-                              </span>
-                            ) : e.queued ? (
-                              <Badge variant="ice">Downloading</Badge>
-                            ) : e.aired ? (
-                              <Badge variant="pink">Missing</Badge>
-                            ) : (
-                              <span className="font-mono text-[11px] text-muted-foreground">{e.airDate ?? "TBA"}</span>
-                            )}
-                            {lib && <MonitorToggle on={isMon(e)} label={code} onToggle={() => setMonitored([e.id], !isMon(e))} />}
-                            {e.aired ? (
-                              <RowMenu label={`${code} actions`} className="opacity-60 group-hover:opacity-100 focus-visible:opacity-100">
-                                {epMenu(e, DM)}
-                              </RowMenu>
-                            ) : (
-                              <span className="w-7 shrink-0" />
-                            )}
-                          </div>
-                          </ContextMenuTrigger>
-                          <ContextMenuContent className="w-64">{tickedKeys.has(String(e.id)) && tickedArr.length > 1 ? bulkMenu(CM) : epMenu(e, CM)}</ContextMenuContent>
+                            {d.anime && e.absolute ? e.absolute : pad(e.number)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {isOpen && s.episodes.length > 0 && (
+                    <div className="mt-3 border-t">
+                      {s.episodes.map((e) => {
+                        const on = sel.has(e.id);
+                        const code = label(e.id);
+                        const st = epState(e);
+                        return (
+                          <ContextMenu key={e.id}>
+                            <ContextMenuTrigger asChild disabled={!e.aired}>
+                              <div
+                                data-sel={e.aired ? String(e.id) : undefined}
+                                onClick={(ev) => {
+                                  if (pointer.swallowClick()) return;
+                                  if (e.aired) toggle(e, ev.shiftKey);
+                                }}
+                                className={cn(
+                                  "group flex min-h-10 cursor-pointer items-center gap-3 border-b px-1.5 py-1 select-none hover:bg-card",
+                                  on && "bg-live-soft/60 hover:bg-live-soft",
+                                  !e.aired && "cursor-default",
+                                )}
+                              >
+                                <Dot tone={st === "have" ? "have" : st === "live" ? "live" : st === "miss" ? "miss" : "none"} />
+                                <span className={cn("w-9 shrink-0 font-mono text-[12px] text-muted-foreground tabular", !e.aired && "opacity-55")}>
+                                  {e.absolute && d.anime ? `#${e.absolute}` : `E${pad(e.number)}`}
+                                </span>
+                                <span className={cn("min-w-0 flex-1", !e.aired && "opacity-55")}>
+                                  <span className="block truncate text-[13.5px]">{e.title}</span>
+                                  {e.file && <FileLine file={e.file} className="hidden sm:block" />}
+                                </span>
+                                <span className="font-mono text-[11.5px] whitespace-nowrap text-muted-foreground tabular">
+                                  {st === "have" ? (e.file ? bytes(e.file.size) : "on disk") : st === "live" ? <span className="text-live">downloading</span> : st === "miss" ? <span className="text-miss">missing</span> : (e.airDate ?? "TBA")}
+                                </span>
+                                {lib && <MonitorToggle on={isMon(e)} label={code} onToggle={() => setMonitored([e.id], !isMon(e))} />}
+                                {e.aired ? (
+                                  <RowMenu label={`${code} actions`} className="opacity-60 group-hover:opacity-100 focus-visible:opacity-100">
+                                    {epMenu(e, DM)}
+                                  </RowMenu>
+                                ) : (
+                                  <span className="w-7 shrink-0" />
+                                )}
+                              </div>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent className="w-64">{tickedKeys.has(String(e.id)) && tickedArr.length > 1 ? bulkMenu(CM) : epMenu(e, CM)}</ContextMenuContent>
                           </ContextMenu>
                         );
                       })}
@@ -698,7 +738,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
         open={sheet}
         onOpenChange={setSheet}
         title={sheetTitle}
-        detail={n > 0 && n <= 8 ? selArr.map(label).join(" · ") : n > 8 ? rangeLabel(selArr.map(label)) : undefined}
+        detail={sheetDetail}
         kind="tv"
         state={search}
         plan={plan}
@@ -707,11 +747,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
         watchFirst={watchFirst}
         epLabel={label}
       />
-      <SelectionBar
-        count={tickedArr.length}
-        onClear={clearTicks}
-        summary={tickedOnDisk.length > 0 && `${tickedOnDisk.length} on disk · ${bytes(sizeOf(tickedOnDisk))}`}
-      >
+      <SelectionBar count={tickedArr.length} onClear={clearTicks} summary={tickedOnDisk.length > 0 && `${tickedOnDisk.length} on disk, ${bytes(sizeOf(tickedOnDisk))}`}>
         {tickedMissing.length > 0 && (
           <Button size="sm" className="shrink-0" onClick={() => getNow(tickedMissing)}>
             <Download /> Get {tickedMissing.length === tickedArr.length ? "" : `${tickedMissing.length} missing`}
@@ -742,11 +778,11 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/** "S02E08 – S02E10" for a sorted list of episode codes. */
+/** "S02E08–S02E10" for a sorted list of episode codes. */
 function rangeLabel(codes: string[]): string {
   if (codes.length === 0) return "";
   if (codes.length === 1) return codes[0];
-  return `${codes[0]} – ${codes[codes.length - 1]}`;
+  return `${codes[0]}–${codes[codes.length - 1]}`;
 }
 
 type MenuParts = { Item: typeof DropdownMenuItem | typeof ContextMenuItem; Label: typeof DropdownMenuLabel | typeof ContextMenuLabel; Sep: typeof DropdownMenuSeparator | typeof ContextMenuSeparator };
