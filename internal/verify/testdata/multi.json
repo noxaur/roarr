@@ -1,0 +1,13 @@
+{
+  "streams": [
+    {"index": 0, "codec_type": "video", "codec_name": "hevc", "width": 1920, "height": 1080, "pix_fmt": "yuv420p10le", "color_transfer": "smpte2084", "disposition": {"default": 1, "attached_pic": 0}, "tags": {"language": "eng"}},
+    {"index": 1, "codec_type": "audio", "codec_name": "eac3", "channels": 6, "disposition": {"default": 1}, "tags": {"language": "fre", "title": "VFF"}},
+    {"index": 2, "codec_type": "audio", "codec_name": "eac3", "channels": 6, "disposition": {"default": 0}, "tags": {"language": "eng"}},
+    {"index": 3, "codec_type": "audio", "codec_name": "aac", "channels": 2, "disposition": {"comment": 1}, "tags": {"language": "eng", "title": "Director's Commentary"}},
+    {"index": 4, "codec_type": "subtitle", "codec_name": "subrip", "disposition": {"forced": 1}, "tags": {"language": "fre", "NUMBER_OF_FRAMES-eng": "12"}},
+    {"index": 5, "codec_type": "subtitle", "codec_name": "subrip", "disposition": {"forced": 0}, "tags": {"language": "eng", "NUMBER_OF_FRAMES-eng": "812"}},
+    {"index": 6, "codec_type": "subtitle", "codec_name": "hdmv_pgs_subtitle", "disposition": {"forced": 0}, "tags": {"language": "ger", "NUMBER_OF_FRAMES": "1404"}},
+    {"index": 7, "codec_type": "video", "codec_name": "mjpeg", "width": 600, "height": 900, "disposition": {"attached_pic": 1}, "tags": {"filename": "cover.jpg"}}
+  ],
+  "format": {"format_name": "matroska,webm", "duration": "2641.024000", "size": "2147483648", "bit_rate": "6500000"}
+}

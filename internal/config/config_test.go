@@ -36,3 +36,22 @@ func TestTranscodeDefaultsAndEnv(t *testing.T) {
 		t.Errorf("env not applied or not clamped: %+v", tc)
 	}
 }
+
+func TestVerifyEnv(t *testing.T) {
+	t.Setenv("VERIFY_MEDIA", "auto")
+	t.Setenv("VERIFY_AUTO_REGRAB", "true")
+	t.Setenv("VERIFY_PATH_MAP", "/downloads=/data")
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := s.Get().Verify
+	if v.Enabled != nil || !v.AutoRegrab || v.PathMap != "/downloads=/data" {
+		t.Fatalf("auto: %+v", v)
+	}
+	t.Setenv("VERIFY_MEDIA", "false")
+	s, _ = Open(t.TempDir())
+	if v := s.Get().Verify; v.Enabled == nil || *v.Enabled {
+		t.Fatalf("off: %+v", v)
+	}
+}

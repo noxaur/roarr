@@ -347,7 +347,7 @@ func (a *App) Search(ctx context.Context, t Target, sc Scope, emit func(SearchEv
 		return c.Search.Run(ctx, req, plan, func(b search.Batch) {
 			out := make([]Release, 0, len(b.Results))
 			for _, r := range b.Results {
-				rel, changed := sess.merge(an.annotate(r, movie))
+				rel, changed := sess.merge(a.Verify.annotate(an.annotate(r, movie)))
 				if changed {
 					out = append(out, rel)
 				}

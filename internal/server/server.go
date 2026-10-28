@@ -82,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	guarded("POST /api/requests/{id}/{action}", s.requestAction)
 	guarded("GET /api/settings", s.getSettings)
 	guarded("PUT /api/settings", s.putSettings)
+	s.verifyRoutes(guarded)
 
 	mux.Handle("/", s.static())
 	return s.middleware(mux)
