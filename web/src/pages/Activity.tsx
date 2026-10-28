@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import { Ban, ExternalLink, ListChecks, MoreHorizontal, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { api, type ActivityItem, type WatchJob } from "@/lib/api";
+import { api, type ActivityItem, type VerifyRecord, type WatchJob } from "@/lib/api";
 import { autoGet, errText } from "@/lib/actions";
 import { bytes, epCode, pct, speed } from "@/lib/format";
 import { Link, useRouter } from "@/lib/router";
 import { needsYou, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { byHash, forActivity, headline, hrefOf, isBlocking, isFlagged, orphans } from "@/lib/verify";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useConfirm } from "@/components/Confirm";
 import { Bar, Dot, Empty, Figure, Notice, PageHeader, SectionHead, type Tone } from "@/components/kit";
 import { Thumb } from "@/components/Poster";
+import { VerdictActions, VerdictBadge, VerdictChecks } from "@/components/Verdict";
 
 const withPick = (href: string) => `${href}${href.includes("?") ? "&" : "?"}pick=1`;
 
@@ -21,7 +23,7 @@ const withPick = (href: string) => `${href}${href.includes("?") ? "&" : "?"}pick
  * pick again, remove it, or remove it and blocklist that release.
  */
 export function ActivityPage() {
-  const { activity, reloadActivity, reloadLibrary } = useStore();
+  const { activity, reloadActivity, reloadLibrary, verify, library } = useStore();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const confirm = useConfirm();
 
@@ -88,16 +90,26 @@ export function ActivityPage() {
     if (res) setTimeout(() => reloadLibrary(), 1500);
   };
 
-  const attention = activity.filter(needsYou);
-  const rest = activity.filter((a) => !needsYou(a));
+  const checks = byHash(verify);
+  const recOf = (a: ActivityItem) => forActivity(checks, a);
+  const stuck = (a: ActivityItem) => {
+    const r = recOf(a);
+    return needsYou(a) || (!!r && isBlocking(r));
+  };
+  const attention = activity.filter(stuck);
+  const rest = activity.filter((a) => !stuck(a));
+  // Failed checks whose download already left the queue.
+  const done = orphans(verify, activity);
+  const posterOf = (r: VerifyRecord) => library.find((x) => x.kind === r.kind && x.id === (r.kind === "tv" ? r.seriesId : r.movieId))?.poster;
   const total = activity.reduce((n, a) => n + (a.speed ?? 0), 0);
+  const needs = attention.length + done.length;
 
   return (
     <div className="space-y-8">
       <PageHeader title="Downloads" sub="Refreshes every 2 s">
         <div className="flex flex-wrap gap-x-5 gap-y-1">
           <Figure value={rest.length} label="in flight" tone={rest.length ? "live" : undefined} />
-          <Figure value={attention.length} label="need you" tone={attention.length ? "bad" : undefined} />
+          <Figure value={needs} label="need you" tone={needs ? "bad" : undefined} />
           <Figure value={total ? speed(total) : "0"} label="" />
         </div>
       </PageHeader>
@@ -108,13 +120,16 @@ export function ActivityPage() {
         </Notice>
       ))}
 
-      {activity.length === 0 && <Empty>Nothing downloading.</Empty>}
+      {activity.length === 0 && done.length === 0 && <Empty>Nothing downloading.</Empty>}
 
-      {attention.length > 0 && (
+      {needs > 0 && (
         <section>
           <SectionHead title="Needs you" className="mb-2" />
           {attention.map((a) => (
-            <Row key={a.id} a={a} attention onRemove={(b) => remove(a, b)} onRetry={() => retry(a)} />
+            <Row key={a.id} a={a} rec={recOf(a)} attention onRemove={(b) => remove(a, b)} onRetry={() => retry(a)} />
+          ))}
+          {done.map((r) => (
+            <CheckRow key={r.hash} r={r} poster={posterOf(r)} />
           ))}
         </section>
       )}
@@ -123,7 +138,7 @@ export function ActivityPage() {
         <section>
           <SectionHead title="In flight" className="mb-2" />
           {rest.map((a) => (
-            <Row key={a.id} a={a} onRemove={(b) => remove(a, b)} onRetry={() => retry(a)} />
+            <Row key={a.id} a={a} rec={recOf(a)} onRemove={(b) => remove(a, b)} onRetry={() => retry(a)} />
           ))}
         </section>
       )}
@@ -138,8 +153,11 @@ function toneOf(s: string): Tone {
 }
 const statusText = (s: string) => (s === "warning" ? "Stuck" : s === "failed" ? "Failed" : s === "importing" ? "Importing" : s === "queued" ? "Queued" : "");
 
-function Row({ a, attention, onRemove, onRetry }: { a: ActivityItem; attention?: boolean; onRemove: (blocklist: boolean) => void; onRetry: () => void }) {
+function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: VerifyRecord; attention?: boolean; onRemove: (blocklist: boolean) => void; onRetry: () => void }) {
   const { navigate } = useRouter();
+  // A failed check decides the row: its reasons and actions replace the
+  // generic stuck-download ones.
+  const failed = !!rec && isBlocking(rec);
   const title = a.href ? (
     <Link to={a.href} className="rounded-sm outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50">
       {a.title}
@@ -198,18 +216,28 @@ function Row({ a, attention, onRemove, onRetry }: { a: ActivityItem; attention?:
             </span>
           )}
           {a.watch && <span className="meta">imports as episodes finish</span>}
+          {rec && isFlagged(rec) && !failed && <VerdictBadge r={rec} />}
         </div>
         <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground" title={a.release}>
           {a.release}
         </div>
-        {a.messages?.map((m, i) => (
-          <div key={i} className={cn("mt-1 text-[13px]", attention ? "text-bad" : "text-foreground/80")}>
-            {m}
-          </div>
-        ))}
+        {failed ? (
+          <VerdictChecks r={rec!} className="mt-2" />
+        ) : (
+          a.messages?.map((m, i) => (
+            <div key={i} className={cn("mt-1 text-[13px]", attention ? "text-bad" : "text-foreground/80")}>
+              {m}
+            </div>
+          ))
+        )}
         {a.watch && <WatchStrip w={a.watch} />}
       </div>
-      {attention ? (
+      {failed ? (
+        <div className="col-span-3 flex flex-wrap items-center justify-end gap-2 md:col-span-2">
+          <VerdictActions r={rec!} className="justify-end" />
+          {menu}
+        </div>
+      ) : attention ? (
         <div className="col-span-3 flex flex-wrap items-center justify-end gap-2 md:col-span-2">
           {a.href && (
             <Button size="sm" onClick={() => navigate(withPick(a.href!))}>
@@ -239,6 +267,38 @@ function Row({ a, attention, onRemove, onRetry }: { a: ActivityItem; attention?:
           <div className="col-start-3 row-start-1 md:col-start-4">{menu}</div>
         </>
       )}
+    </div>
+  );
+}
+
+/** A finished download that failed its check: same row shape, verdict actions. */
+function CheckRow({ r, poster }: { r: VerifyRecord; poster?: string }) {
+  const href = hrefOf(r);
+  return (
+    <div className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-x-3.5 gap-y-2.5 border-t border-l-2 border-l-bad py-3 pl-3 md:grid-cols-[44px_minmax(0,1fr)_auto] md:gap-x-5">
+      <Thumb src={poster} title={r.title} className="w-10 md:w-11" />
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <span className="text-[15px] font-medium">
+            {href ? (
+              <Link to={href} className="rounded-sm outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50">
+                {r.title}
+              </Link>
+            ) : (
+              r.title
+            )}
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-[12.5px] text-bad" title={headline(r)}>
+            <Dot tone="bad" />
+            {r.rejected ? "Re-grab failed" : "Failed check"}
+          </span>
+        </div>
+        <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground" title={r.release}>
+          {r.release}
+        </div>
+        <VerdictChecks r={r} className="mt-2" />
+      </div>
+      <VerdictActions r={r} className="col-span-2 justify-end md:col-span-1" />
     </div>
   );
 }

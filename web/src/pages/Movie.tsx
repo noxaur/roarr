@@ -6,15 +6,18 @@ import { bytes } from "@/lib/format";
 import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
 import { useRouter } from "@/lib/router";
 import { useStore } from "@/lib/store";
+import { baseName, jobTag, useConverting } from "@/lib/transcode";
+import { forMovie, isBlocking, isFlagged } from "@/lib/verify";
 import { useSearch } from "@/lib/useSearch";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { Dot, Figure, Notice, SectionHead, State } from "@/components/kit";
+import { Dot, Figure, Notice, SectionHead, Spec, State } from "@/components/kit";
 import { useConfirm } from "@/components/Confirm";
 import { FileFacts, ManageMenu } from "@/components/Manage";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
+import { VerdictActions, VerdictChecks } from "@/components/Verdict";
 import { Crumbs, GetCard, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
 
 export function MoviePage({ id, tmdb }: { id?: number; tmdb?: number }) {
@@ -38,7 +41,13 @@ export function MoviePage({ id, tmdb }: { id?: number; tmdb?: number }) {
 type Scope = "this" | "missing" | "all" | "custom";
 
 function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
-  const { reloadActivity, reloadLibrary } = useStore();
+  const { reloadActivity, reloadLibrary, verify } = useStore();
+  const check = useMemo(() => {
+    const r = d.inLibrary ? forMovie(verify, d.id) : undefined;
+    return r && isFlagged(r) ? r : undefined;
+  }, [verify, d.id, d.inLibrary]);
+  const converting = useConverting("movie", d.inLibrary ? d.id : 0);
+  const job = d.file ? converting.get(baseName(d.file.path)) : undefined;
   const { navigate, search: params } = useRouter();
   const parts = d.collection?.movies ?? [];
   const inCollection = parts.length > 1;
@@ -202,6 +211,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
               d.hasFile ? (
                 <>
                   <State tone="have">On disk</State>
+                  {check && isBlocking(check) && <State tone="bad">Fails check</State>}
                   {d.sizeOnDisk ? <Figure value={bytes(d.sizeOnDisk)} label="" /> : null}
                   {!d.monitored && <State tone="none">Not monitored</State>}
                 </>
@@ -266,14 +276,29 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
         }
         body={
           <>
-            {d.file && (
+            {(d.file || check) && (
               <section className="border-t pt-4">
-                <SectionHead title="File" className="mb-3" />
-                <FileFacts file={d.file} />
+                <SectionHead title="File" className="mb-3">
+                  {job && (
+                    <Spec tone="live" title="Converting to AV1">
+                      {jobTag(job)}
+                    </Spec>
+                  )}
+                </SectionHead>
+                {check && (
+                  <div className={cn("mb-4 rounded-lg border-l-2 bg-card p-3.5", isBlocking(check) ? "border-l-bad" : "border-l-miss")}>
+                    <div className="mb-2 truncate font-mono text-[11px] text-muted-foreground" title={check.release}>
+                      {check.release}
+                    </div>
+                    <VerdictChecks r={check} />
+                    <VerdictActions r={check} className="mt-3" />
+                  </div>
+                )}
+                {d.file && <FileFacts file={d.file} />}
               </section>
             )}
             {inCollection && (
-              <section className={cn("border-t pt-4", d.file && "mt-6")}>
+              <section className={cn("border-t pt-4", (d.file || check) && "mt-6")}>
                 <SectionHead title={d.collection?.title} className="mb-2">
                   <span className="font-mono text-[12px] text-muted-foreground tabular">
                     {parts.filter((p) => p.hasFile).length}/{parts.length} on disk

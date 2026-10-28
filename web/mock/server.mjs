@@ -41,7 +41,7 @@ const series = shows.map((s) => {
         queued,
         runtime: 48,
         file: hasFile
-          ? { id: epId, path: `/tv/${s.title}/S${String(si + 1).padStart(2, "0")}/E${String(n).padStart(2, "0")}.mkv`, size: 1.3e9 + n * 2e7, quality: "WEBDL-1080p", resolution: 1080, group: "NTb", codec: "x265", audio: "EAC3", languages: "English" }
+          ? { id: epId, path: `/tv/${s.title}/Season ${String(si + 1).padStart(2, "0")}/${s.title} - S${String(si + 1).padStart(2, "0")}E${String(n).padStart(2, "0")}.mkv`, size: 1.3e9 + n * 2e7, quality: "WEBDL-1080p", resolution: 1080, group: "NTb", codec: "x265", audio: "EAC3", languages: "English" }
           : undefined,
       };
     }),
@@ -92,10 +92,10 @@ const library = { items: [...series, ...movieDetails].map(({ seasons: _s, file: 
 
 const activity = {
   items: [
-    { id: "a1", source: "sonarr", kind: "tv", title: "Severance", subtitle: "S02E07", release: "Severance.S02E07.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-FLUX", href: "/tv/1", status: "downloading", progress: 0.62, size: 2.9e9, sizeLeft: 1.1e9, speed: 11.2e6, eta: "2m" },
-    { id: "a2", source: "sonarr", kind: "tv", title: "Sousou no Frieren", subtitle: "S01E21", release: "[SubsPlease] Sousou no Frieren - 21 (1080p) [A1B2C3D4].mkv", href: "/tv/3", status: "queued", progress: 0, size: 0, sizeLeft: 0 },
-    { id: "a3", source: "radarr", kind: "movie", title: "Perfect Days", subtitle: "2023", release: "Perfect.Days.2023.1080p.BluRay.x264-GROUP", href: "/movie/14", status: "warning", progress: 0.1, size: 8e9, sizeLeft: 7.2e9, messages: ["No seeders for 2 days. qBittorrent reports the torrent as stalled."] },
-    { id: "a4", source: "sonarr", kind: "tv", title: "Pluribus", subtitle: "S01E05", release: "Pluribus.S01E05.720p.HDTV.x264-SYNCOPY", href: "/tv/4", status: "failed", progress: 1, size: 1.1e9, sizeLeft: 0, messages: ["Import failed: sample file detected, no video file found in the download."] },
+    { id: "a1", source: "sonarr", kind: "tv", title: "Severance", subtitle: "S02E07", downloadId: "c0ffee07", release: "Severance.S02E07.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-FLUX", href: "/tv/1", status: "downloading", progress: 0.62, size: 2.9e9, sizeLeft: 1.1e9, speed: 11.2e6, eta: "2m" },
+    { id: "a2", source: "sonarr", kind: "tv", title: "Sousou no Frieren", subtitle: "S01E21", downloadId: "f00d0021", release: "[SubsPlease] Sousou no Frieren - 21 (1080p) [A1B2C3D4].mkv", href: "/tv/3", status: "queued", progress: 0, size: 0, sizeLeft: 0 },
+    { id: "a3", source: "radarr", kind: "movie", title: "Perfect Days", subtitle: "2023", downloadId: "da150014", release: "Perfect.Days.2023.1080p.BluRay.x264-GROUP", href: "/movie/14", status: "warning", progress: 0.1, size: 8e9, sizeLeft: 7.2e9, messages: ["No seeders for 2 days. qBittorrent reports the torrent as stalled."] },
+    { id: "a4", source: "sonarr", kind: "tv", title: "Pluribus", subtitle: "S01E05", downloadId: "b1005005", release: "Pluribus.S01E05.720p.HDTV.x264-SYNCOPY", href: "/tv/4", status: "failed", progress: 1, size: 1.1e9, sizeLeft: 0, messages: ["Import failed: sample file detected, no video file found in the download."] },
   ],
   errors: {},
 };
@@ -112,9 +112,108 @@ const settings = {
     jellyfinAdminOnly: true,
     prefs: { resolutions: [1080, 2160, 720], videoCodecs: ["av1", "x265", "x264"], audioCodecs: ["Opus", "DDP", "AAC"], size: "balanced", allowRemux: false, allowHdr: true, maxGbPerHour: 12, minSeeders: 1, language: "English", preferDualAudio: false, preferredGroups: null, blockedTerms: null },
     behaviour: { watchFirst: true, prefetch: true, indexerTimeout: 30, cacheMinutes: 20, seerrAutoFetch: false },
+    transcode: { enabled: true, concurrency: 1, nice: 10, crf: 0, preset: 6, filmGrain: 0, minSavings: 15, pathMap: "/tv=/media/tv,/movies=/media/movies" },
+    verify: { autoRegrab: false, pathMap: "/downloads=/data/downloads" },
+    import: { mode: "arr", transfer: "hardlink", category: "roarr" },
   },
-  locked: { PROWLARR_URL: true, PROWLARR_API_KEY: true },
+  locked: { PROWLARR_URL: true, PROWLARR_API_KEY: true, TRANSCODE_NICE: true },
 };
+
+// ---- Download checks --------------------------------------------------------
+
+const epOf = (showId, season, n) => series.find((x) => x.id === showId).seasons[season - 1].episodes[n - 1].id;
+const ago = (min) => new Date(Date.now() - min * 60e3).toISOString();
+const verdict = (level, summary, checks, extra = {}) => ({ level, summary, checks, at: ago(3), tookMs: 4200, ...extra });
+const pass = (name, reason) => ({ name, level: "pass", reason });
+
+const verifyRecs = [
+  {
+    hash: "c0ffee06", source: "sonarr", kind: "tv", seriesId: 1, episodeIds: [epOf(1, 2, 6)], title: "Severance",
+    release: "Severance.S02E06.1080p.WEB.H264-SUCCESSORS", added: ago(90), state: "done",
+    verdict: verdict("fail", "frames are black or one static image", [
+      pass("payload", "one video file, 1.4 GB"),
+      { name: "picture", level: "fail", reason: "frames are black or one static image (9 of 9 samples)" },
+      { name: "duration", level: "warn", reason: "runs 12 min, the episode runs 48 min" },
+      pass("resolution", "1920x1080 as claimed"),
+    ]),
+  },
+  {
+    hash: "c0ffee07", source: "sonarr", kind: "tv", seriesId: 1, episodeIds: [epOf(1, 2, 7)], title: "Severance",
+    release: "Severance.S02E07.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-FLUX", added: ago(20), state: "done",
+    verdict: verdict("warn", "claims Atmos, the audio is plain EAC3 5.1", [
+      pass("payload", "one video file"),
+      pass("picture", "real, changing frames"),
+      { name: "audio", level: "warn", reason: "claims Atmos, the audio is plain EAC3 5.1" },
+    ]),
+  },
+  {
+    hash: "f00d0021", source: "sonarr", kind: "tv", seriesId: 3, episodeIds: [epOf(3, 1, 21)], title: "Sousou no Frieren",
+    release: "[SubsPlease] Sousou no Frieren - 21 (1080p) [A1B2C3D4].mkv", added: ago(5), state: "pending",
+  },
+  {
+    hash: "b1ade213", source: "radarr", kind: "movie", movieId: 13, title: "Blade Runner 2049",
+    release: "Blade.Runner.2049.2017.2160p.UHD.BluRay.x265.HDR.TrueHD.Atmos-FraMeSToR", added: ago(60 * 30), state: "done",
+    verdict: verdict("warn", "no English subtitles, the release claims them", [
+      pass("payload", "one video file, 9.8 GB"),
+      pass("resolution", "3840x1600 as claimed"),
+      { name: "subtitles", level: "warn", reason: "no English subtitles, the release claims them" },
+      { name: "hdr", level: "warn", reason: "claims HDR, no HDR metadata found" },
+    ]),
+  },
+  {
+    hash: "e7a50103", source: "sonarr", kind: "tv", seriesId: 2, episodeIds: [epOf(2, 1, 3)], title: "The Expanse",
+    release: "The.Expanse.S01E03.720p.HDTV.x264-KILLERS", added: ago(60 * 48), state: "done", dismissed: true,
+    verdict: verdict("fail", "claims 1080p, the file is 1280x720", [{ name: "resolution", level: "fail", reason: "claims 1080p, the file is 1280x720" }]),
+  },
+  {
+    hash: "d00e0011", source: "radarr", kind: "movie", movieId: 11, title: "Dune: Part Two",
+    release: "Dune.Part.Two.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-FLUX", added: ago(60 * 6), state: "done", rejected: true,
+    verdict: verdict("fail", "an executable is in the download", [{ name: "payload", level: "fail", reason: "an executable is in the download: Dune.Part.Two.2024.exe" }]),
+    regrab: { at: ago(60 * 5), auto: true, message: "", error: "no release left that passes your rules" },
+  },
+];
+const findRec = (h) => verifyRecs.find((r) => r.hash === h.toLowerCase());
+
+// ---- AV1 conversion -----------------------------------------------------------
+
+const t0 = Date.now();
+const epPath = (showId, season, n) => series.find((x) => x.id === showId).seasons[season - 1].episodes[n - 1].file.path;
+function transcodeStatus() {
+  const running = Math.min(99, ((Date.now() - t0) / 1000) % 100);
+  const jobs = [
+    { id: "t1", path: epPath(1, 1, 3), title: "Severance S01E03", kind: "tv", titleId: 1, state: "running", percent: running, speed: "1.8x", srcBytes: 1.36e9, crf: 30, encoder: "libsvtav1", queuedAt: ago(14), startedAt: ago(9) },
+    { id: "t2", path: epPath(1, 1, 4), title: "Severance S01E04", kind: "tv", titleId: 1, state: "queued", percent: 0, queuedAt: ago(14) },
+    { id: "t3", path: movieDetails[2].file.path, title: "Blade Runner 2049", kind: "movie", titleId: 13, state: "queued", percent: 0, queuedAt: ago(10) },
+    { id: "t4", path: epPath(2, 1, 1), title: "The Expanse S01E01", kind: "tv", titleId: 2, state: "done", percent: 100, srcBytes: 1.32e9, outBytes: 0.61e9, savedBytes: 0.71e9, crf: 30, encoder: "libsvtav1", queuedAt: ago(200), finishedAt: ago(150) },
+    { id: "t5", path: epPath(2, 1, 2), title: "The Expanse S01E02", kind: "tv", titleId: 2, state: "skipped", percent: 100, srcBytes: 1.34e9, message: "saved 6%, less than 15%", queuedAt: ago(200), finishedAt: ago(120) },
+    { id: "t6", path: epPath(5, 1, 1), title: "Slow Horses S01E01", kind: "tv", titleId: 5, state: "failed", percent: 41, message: "ffmpeg exited 1: Invalid data found when processing input", queuedAt: ago(300), finishedAt: ago(280) },
+  ];
+  const counts = { queued: 0, running: 0, done: 0, skipped: 0, failed: 0 };
+  for (const j of jobs) counts[j.state]++;
+  return { enabled: settings.settings.transcode.enabled, available: true, encoder: "libsvtav1", concurrency: settings.settings.transcode.concurrency, counts, bytesSaved: 0.71e9 + 41.2e9, jobs };
+}
+
+// ---- Native import --------------------------------------------------------------
+
+function importsStatus() {
+  const im = settings.settings.import;
+  return {
+    mode: im.mode || "arr", tvRoot: im.tvRoot || "", movieRoot: im.movieRoot || "", transfer: im.transfer || "hardlink", pathMap: im.pathMap || "", category: im.category || "roarr",
+    jobs: [
+      { hash: "aa01", release: "Severance.S02E07.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-FLUX", kind: "tv", titleKey: "tv:tvdb:70001", titleName: "Severance", href: "/tv/1", created: ago(20), state: "downloading", progress: 0.62, size: 2.9e9, files: [] },
+      { hash: "aa02", release: "Pluribus.S01E04.1080p.WEB.H264-SYNCOPY", kind: "tv", titleKey: "tv:tvdb:70004", titleName: "Pluribus", href: "/tv/4", created: ago(200), state: "done", progress: 1, size: 1.2e9, files: [] },
+      { hash: "aa03", release: "Perfect.Days.2023.1080p.BluRay.x264-GROUP", kind: "movie", titleKey: "movie:tmdb:976893", titleName: "Perfect Days", created: ago(400), state: "failed", message: "no file matches the movie: 3 samples skipped", progress: 1, size: 8e9, files: [] },
+    ],
+    files: [{ titleKey: "tv:tvdb:70004", path: "/media/tv/Pluribus/Season 01/Pluribus - S01E04.mkv", size: 1.2e9, importedAt: ago(190) }],
+  };
+}
+
+const readBody = (req) =>
+  new Promise((resolve) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => resolve(body ? JSON.parse(body) : {}));
+  });
 
 // Release titles that exercise the parser's language and subtitle fields.
 const TITLES = [
@@ -267,7 +366,44 @@ createServer((req, res) => {
   if (p === "/api/me") return json(res, { authMode: "none", authenticated: true, version: "mock" });
   if (p === "/api/library") return json(res, library);
   if (p === "/api/activity") return json(res, activity);
+  if (p === "/api/settings" && req.method === "PUT") {
+    // Like the Go server: the body replaces the whole object.
+    readBody(req).then((next) => {
+      settings.settings = next;
+      json(res, settings);
+    });
+    return;
+  }
   if (p === "/api/settings") return json(res, settings);
+  if (p === "/api/verify") return json(res, { enabled: true, items: verifyRecs, tools: { ffprobe: "/usr/bin/ffprobe", ffmpeg: "/usr/bin/ffmpeg" }, autoRegrab: !!settings.settings.verify?.autoRegrab });
+  if ((m = p.match(/^\/api\/verify\/([^/]+)(?:\/(recheck|regrab|dismiss))?$/))) {
+    const r = findRec(m[1]);
+    if (!r) return json(res, { error: "download not verified" }, 404);
+    if (!m[2]) return json(res, r);
+    if (m[2] === "dismiss") {
+      r.dismissed = true;
+      r.rejected = false;
+      return json(res, r);
+    }
+    setTimeout(() => {
+      if (m[2] === "recheck") {
+        if (r.verdict) r.verdict.at = new Date().toISOString();
+        r.state = "done";
+        return json(res, r);
+      }
+      r.rejected = true;
+      r.dismissed = false;
+      if (r.hash === "d00e0011") {
+        r.regrab = { at: new Date().toISOString(), auto: false, message: "", error: "no release left that passes your rules" };
+        return json(res, { error: r.regrab.error }, 424);
+      }
+      r.regrab = { at: new Date().toISOString(), auto: false, message: "Grabbed 1 release for 1 episode.", note: "Deleted 1 imported file(s)." };
+      json(res, r);
+    }, 900);
+    return;
+  }
+  if (p === "/api/transcode") return json(res, transcodeStatus());
+  if (p === "/api/imports") return json(res, importsStatus());
   if (p === "/api/status") return json(res, { version: "mock", services: { prowlarr: { configured: true, ok: true, version: "2.0", ms: 12 }, sonarr: { configured: true, ok: true, version: "4.0", ms: 20 }, radarr: { configured: true, ok: true, version: "6.0", ms: 18 }, seerr: { configured: false, ok: false }, jellyfin: { configured: false, ok: false }, qbittorrent: { configured: true, ok: false, error: "connection refused" } } });
   if (p === "/api/requests") return json(res, { error: "seerr not configured" }, 400);
   if (p.startsWith("/api/profiles")) return json(res, { profiles: [{ id: 1, name: "HD-1080p" }, { id: 2, name: "Ultra-HD" }] });
