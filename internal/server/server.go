@@ -18,6 +18,7 @@ import (
 	"github.com/noxaur/roarr/internal/app"
 	"github.com/noxaur/roarr/internal/config"
 	"github.com/noxaur/roarr/internal/httpx"
+	"github.com/noxaur/roarr/internal/importer"
 	"github.com/noxaur/roarr/internal/jellyfin"
 	"github.com/noxaur/roarr/internal/release"
 )
@@ -77,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	guarded("POST /api/auto", s.auto)
 	guarded("GET /api/activity", s.activity)
 	guarded("DELETE /api/activity/{id}", s.removeActivity)
+	guarded("GET /api/imports", s.imports)
 	guarded("GET /api/requests", s.requests)
 	guarded("POST /api/requests/{id}/{action}", s.requestAction)
 	guarded("GET /api/settings", s.getSettings)
@@ -221,7 +223,7 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 	if !fresh && time.Since(s.statusAt) < 15*time.Second && s.status != nil {
 		st := s.status
 		s.statusMu.Unlock()
-		writeJSON(w, 200, map[string]any{"services": st, "version": Version})
+		writeJSON(w, 200, map[string]any{"services": st, "version": Version, "importMode": s.app.Settings.Get().Import.Mode})
 		return
 	}
 	s.statusMu.Unlock()
@@ -275,7 +277,7 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 	s.statusMu.Lock()
 	s.status, s.statusAt = out, time.Now()
 	s.statusMu.Unlock()
-	writeJSON(w, 200, map[string]any{"services": out, "version": Version})
+	writeJSON(w, 200, map[string]any{"services": out, "version": Version, "importMode": s.app.Settings.Get().Import.Mode})
 }
 
 func baseOf(ok bool, f func() string) string {
@@ -627,6 +629,23 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"items": items, "errors": errs})
 }
 
+// imports shows the native import backend's state: its settings, every
+// torrent it follows (with per-file placement and errors) and the files it
+// placed in the library. ?title=<key> narrows files to one title.
+func (s *Server) imports(w http.ResponseWriter, r *http.Request) {
+	st := s.app.Settings.Get().Import
+	jobs := s.app.Native.Jobs()
+	files := s.app.Native.Store().Files(r.URL.Query().Get("title"))
+	if files == nil {
+		files = []importer.FileRecord{}
+	}
+	writeJSON(w, 200, map[string]any{
+		"mode": st.Mode, "tvRoot": st.TVRoot, "movieRoot": st.MovieRoot, "transfer": st.Transfer,
+		"pathMap": st.PathMap, "category": st.Category, "jobs": jobs, "files": files,
+		"titles": s.app.Native.Store().Titles(),
+	})
+}
+
 func (s *Server) removeActivity(w http.ResponseWriter, r *http.Request) {
 	if err := s.app.RemoveActivity(r.Context(), r.PathValue("id"), r.URL.Query().Get("blocklist") == "1"); err != nil {
 		writeErr(w, statusFor(err), err)
@@ -705,6 +724,9 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			keep(&p.next.Password, p.prev.Password)
 		}
 		keep(&in.AuthPassword, cur.AuthPassword)
+		if in.Import == (config.Import{}) {
+			in.Import = cur.Import // a client that does not know these settings
+		}
 		*cur = in
 	})
 	if err != nil {

@@ -109,7 +109,7 @@ func (a *App) Auto(ctx context.Context, r AutoRequest) (AutoResult, error) {
 		var retry []int
 		for _, p := range plan.Picks {
 			rel := byKey[p.Key]
-			g := GrabRequest{Kind: "tv", SeriesID: d.ID, TvdbID: d.TvdbID, EpisodeIDs: p.Fills, Release: rel}
+			g := GrabRequest{Kind: "tv", SeriesID: d.ID, TvdbID: d.TvdbID, TmdbID: d.TmdbID, EpisodeIDs: p.Fills, Release: rel}
 			if d.Synthetic {
 				g.SeriesID = 0
 			}

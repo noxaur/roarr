@@ -38,6 +38,28 @@ type Behaviour struct {
 	SeerrAutoFetch bool `json:"seerrAutoFetch"`
 }
 
+// Import decides who downloads and imports grabs.
+type Import struct {
+	// Mode is "arr" (Sonarr/Radarr import, the default) or "native" (roarr
+	// sends torrents to qBittorrent and imports finished files itself).
+	Mode string `json:"mode,omitempty"`
+	// TVRoot and MovieRoot are the library folders, as roarr sees them.
+	TVRoot    string `json:"tvRoot,omitempty"`
+	MovieRoot string `json:"movieRoot,omitempty"`
+	// Transfer is hardlink (default; copies when linking is impossible),
+	// copy or move.
+	Transfer string `json:"transfer,omitempty"`
+	// PathMap rewrites qBittorrent's paths to roarr's:
+	// "/downloads=/data/downloads,..." (longest prefix wins).
+	PathMap string `json:"pathMap,omitempty"`
+	// Category and SavePath are used for torrents roarr adds in native mode.
+	Category string `json:"category,omitempty"`
+	SavePath string `json:"savePath,omitempty"`
+}
+
+// Native reports whether roarr imports by itself.
+func (i Import) Native() bool { return i.Mode == "native" }
+
 // Settings is the full configuration.
 type Settings struct {
 	Sonarr   Service `json:"sonarr"`
@@ -54,6 +76,7 @@ type Settings struct {
 
 	Prefs     release.Prefs `json:"prefs"`
 	Behaviour Behaviour     `json:"behaviour"`
+	Import    Import        `json:"import"`
 }
 
 // Defaults returns the out-of-the-box settings.
@@ -97,6 +120,13 @@ var envSpec = []struct {
 	{"INDEXER_TIMEOUT", func(s *Settings, v string) { s.Behaviour.IndexerTimeout = atoi(v, 30) }},
 	{"CACHE_MINUTES", func(s *Settings, v string) { s.Behaviour.CacheMinutes = atoi(v, 20) }},
 	{"SEERR_AUTO_FETCH", func(s *Settings, v string) { s.Behaviour.SeerrAutoFetch = truthy(v) }},
+	{"IMPORT_MODE", func(s *Settings, v string) { s.Import.Mode = strings.ToLower(v) }},
+	{"TV_ROOT", func(s *Settings, v string) { s.Import.TVRoot = v }},
+	{"MOVIES_ROOT", func(s *Settings, v string) { s.Import.MovieRoot = v }},
+	{"IMPORT_TRANSFER", func(s *Settings, v string) { s.Import.Transfer = strings.ToLower(v) }},
+	{"QBIT_PATH_MAP", func(s *Settings, v string) { s.Import.PathMap = v }},
+	{"QBIT_CATEGORY", func(s *Settings, v string) { s.Import.Category = v }},
+	{"QBIT_SAVE_PATH", func(s *Settings, v string) { s.Import.SavePath = v }},
 }
 
 func truthy(v string) bool {
@@ -171,6 +201,17 @@ func (s *Store) recompute() {
 	}
 	if cur.Behaviour.CacheMinutes <= 0 {
 		cur.Behaviour.CacheMinutes = 20
+	}
+	if cur.Import.Mode != "native" {
+		cur.Import.Mode = "arr"
+	}
+	switch cur.Import.Transfer {
+	case "hardlink", "copy", "move":
+	default:
+		cur.Import.Transfer = "hardlink"
+	}
+	if cur.Import.Category == "" {
+		cur.Import.Category = "roarr"
 	}
 	if len(cur.Prefs.Resolutions) == 0 {
 		cur.Prefs.Resolutions = release.DefaultPrefs().Resolutions
