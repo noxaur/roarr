@@ -33,9 +33,10 @@ type Info struct {
 	Service    string `json:"service,omitempty"` // AMZN, NF, ATVP ...
 	Group      string `json:"group,omitempty"`
 
-	Languages  []string `json:"languages,omitempty"` // explicit non-English languages
+	Languages  []string `json:"languages,omitempty"` // explicitly tagged audio languages
 	Multi      bool     `json:"multi,omitempty"`     // MULTi / dual audio
 	DualAudio  bool     `json:"dualAudio,omitempty"`
+	Subtitles  []string `json:"subtitles,omitempty"` // explicitly tagged subtitle languages ("Multi" for multi-sub)
 	Subbed     bool     `json:"subbed,omitempty"`
 	HardSubbed bool     `json:"hardSubbed,omitempty"`
 
@@ -152,7 +153,8 @@ var services = map[string]string{
 }
 
 var languageTokens = map[string]string{
-	"french": "French", "vff": "French", "vfq": "French", "truefrench": "French", "vostfr": "French",
+	"english": "English", "eng": "English",
+	"french": "French", "vff": "French", "vfq": "French", "truefrench": "French",
 	"german": "German", "ger": "German", "deutsch": "German",
 	"spanish": "Spanish", "esp": "Spanish", "castellano": "Spanish", "latino": "Spanish",
 	"italian": "Italian", "ita": "Italian",
@@ -201,7 +203,24 @@ var (
 	channelsRe = regexp.MustCompile(`(?:^|[^0-9])([1-9])\.([01])(?:[^0-9]|$)`)
 	multiAnyRe = regexp.MustCompile(`(?i)\bmulti`)
 	multiSubRe = regexp.MustCompile(`(?i)\bmulti(?:ple)?[\s-]?sub`)
+
+	// "Eng Sub", "ENGSUBS", "NLSUBS", "Multi-Subs", "Multiple Subtitle",
+	// "VOSTFR" (French subs over original audio), "VOSTA" (English subs).
+	subLangRe = regexp.MustCompile(`(?i)\b(eng|en|english|nl|dutch|swe|swedish|dk|dan|danish|nor|norwegian|fin|finnish|ger|german|ita|italian|spa|spanish|esp|por|pt|ptbr|portuguese|fr|fre|french|kor|korean|chs|cht|chi|chinese|jp|jpn|japanese|ara|arabic|heb|hebrew|pl|pol|polish|rus|russian|tur|turkish|multi|multiple)[\s.-]?(?:subs?|subtitles?|subbed)\b`)
+	vostRe    = regexp.MustCompile(`(?i)\bvost(fr|a)?\b`)
 )
+
+var subLangNames = map[string]string{
+	"eng": "English", "en": "English", "english": "English", "nl": "Dutch", "dutch": "Dutch",
+	"swe": "Swedish", "swedish": "Swedish", "dk": "Danish", "dan": "Danish", "danish": "Danish",
+	"nor": "Norwegian", "norwegian": "Norwegian", "fin": "Finnish", "finnish": "Finnish",
+	"ger": "German", "german": "German", "ita": "Italian", "italian": "Italian",
+	"spa": "Spanish", "spanish": "Spanish", "esp": "Spanish", "por": "Portuguese", "pt": "Portuguese", "ptbr": "Portuguese", "portuguese": "Portuguese",
+	"fr": "French", "fre": "French", "french": "French", "kor": "Korean", "korean": "Korean",
+	"chs": "Chinese", "cht": "Chinese", "chi": "Chinese", "chinese": "Chinese", "jp": "Japanese", "jpn": "Japanese", "japanese": "Japanese",
+	"ara": "Arabic", "arabic": "Arabic", "heb": "Hebrew", "hebrew": "Hebrew", "pl": "Polish", "pol": "Polish", "polish": "Polish",
+	"rus": "Russian", "russian": "Russian", "tur": "Turkish", "turkish": "Turkish", "multi": "Multi", "multiple": "Multi",
+}
 
 // Parse extracts structured information from a release title.
 func Parse(raw string) Info {
@@ -255,17 +274,34 @@ func Parse(raw string) Info {
 		info.Resolution = resolution(m)
 	}
 
-	// Services and languages via a single token walk.
+	// Subtitle languages: tagged "XX Sub(s)" pairs, blanked out afterwards so
+	// "Eng Sub" is not mistaken for English audio.
+	langZone := flat
+	for _, m := range subLangRe.FindAllStringSubmatch(flat, -1) {
+		if lang, ok := subLangNames[strings.ToLower(m[1])]; ok && !contains(info.Subtitles, lang) {
+			info.Subtitles = append(info.Subtitles, lang)
+		}
+	}
+	if m := vostRe.FindStringSubmatch(flat); m != nil {
+		lang := "French"
+		if strings.EqualFold(m[1], "a") {
+			lang = "English"
+		}
+		if !contains(info.Subtitles, lang) {
+			info.Subtitles = append(info.Subtitles, lang)
+		}
+	}
+	if len(info.Subtitles) > 0 {
+		info.Subbed = true
+		langZone = vostRe.ReplaceAllString(subLangRe.ReplaceAllString(flat, " "), " ")
+	}
+
+	// Services via a token walk over the whole title.
 	titleEnd := len(flat)
 	for _, tok := range strings.FieldsFunc(flat, func(r rune) bool { return r == ' ' || r == '-' || r == '[' || r == ']' || r == '(' || r == ')' }) {
 		lt := strings.ToLower(tok)
 		if sv, ok := services[lt]; ok && sv != "" && info.Service == "" && isUpper(tok) {
 			info.Service = sv
-		}
-		if lang, ok := languageTokens[lt]; ok && (isUpper(tok) || len(tok) > 3) {
-			if !contains(info.Languages, lang) {
-				info.Languages = append(info.Languages, lang)
-			}
 		}
 	}
 
@@ -371,6 +407,21 @@ func Parse(raw string) Info {
 		cut(loc[0])
 	}
 	info.Title = cleanTitle(flat[:titleEnd])
+
+	// Audio languages: tags after the title, so "The French Dispatch" is not
+	// tagged French while "Dune.2021.FRENCH" is.
+	zone := langZone
+	if titleEnd <= len(zone) {
+		zone = zone[titleEnd:]
+	}
+	for _, tok := range strings.FieldsFunc(zone, func(r rune) bool { return r == ' ' || r == '-' || r == '[' || r == ']' || r == '(' || r == ')' }) {
+		lt := strings.ToLower(tok)
+		if lang, ok := languageTokens[lt]; ok && (isUpper(tok) || len(tok) > 3) {
+			if !contains(info.Languages, lang) {
+				info.Languages = append(info.Languages, lang)
+			}
+		}
+	}
 	return info
 }
 

@@ -6,11 +6,10 @@ import { autoGet, errText } from "@/lib/actions";
 import { ago } from "@/lib/format";
 import { Link } from "@/lib/router";
 import { useStore } from "@/lib/store";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Empty, Notice, PageHeader, Spinner } from "@/components/kit";
+import { Empty, Notice, PageHeader, Spinner, State } from "@/components/kit";
 import { Thumb } from "@/components/Poster";
 
 const FILTERS = [
@@ -87,7 +86,7 @@ export function RequestsPage() {
 
   return (
     <div className="space-y-10">
-      <PageHeader label="From Seerr" title="Requests">
+      <PageHeader title="Requests" sub="From Seerr">
         <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
           <TabsList>
             {FILTERS.map(([v, name]) => (
@@ -100,7 +99,7 @@ export function RequestsPage() {
         </Tabs>
       </PageHeader>
 
-      {error && <Notice>{notConfigured ? "Seerr is not set up. Add its URL and API key under Settings → Connections to see requests here." : error}</Notice>}
+      {error && <Notice>{notConfigured ? "Seerr is not connected. Admin, Connections." : error}</Notice>}
 
       {!items && !error && (
         <div className="space-y-3">
@@ -109,7 +108,7 @@ export function RequestsPage() {
           ))}
         </div>
       )}
-      {items && items.length === 0 && <Empty>{filter === "pending" ? "No one is waiting on you." : "No requests here."}</Empty>}
+      {items && items.length === 0 && <Empty>{filter === "pending" ? "No pending requests." : "No requests."}</Empty>}
 
       {items && items.length > 0 && (
         <section>
@@ -118,22 +117,20 @@ export function RequestsPage() {
             const canGet = r.kind === "movie" || !!r.tvdbId || !!r.libraryId;
             const b = busy[r.id];
             return (
-              <div key={r.id} className="grid grid-cols-[48px_minmax(0,1fr)] items-center gap-x-4 gap-y-3 border-t border-border py-4 sm:grid-cols-[54px_minmax(0,1fr)_auto] sm:gap-x-5">
-                <Thumb src={r.poster} title={r.title} className="w-12 sm:w-[54px]" />
+              <div key={r.id} className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-x-3.5 gap-y-2.5 border-t py-3 sm:grid-cols-[44px_minmax(0,1fr)_auto] sm:gap-x-5">
+                <Thumb src={r.poster} title={r.title} className="w-10 sm:w-11" />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                    <Link to={href(r)} className="text-[17px] font-semibold tracking-tight hover:underline hover:decoration-dash hover:underline-offset-4">
+                    <Link to={href(r)} className="text-[15px] font-medium hover:underline">
                       {r.title}
                     </Link>
-                    <span className="font-mono text-[11px] tracking-wide text-muted-foreground uppercase">
-                      {[r.kind === "tv" ? "Show" : "Movie", r.year, r.seasons?.length ? `Season ${r.seasons.join(", ")}` : null].filter(Boolean).join(" · ")}
-                    </span>
-                    {!pending && <Badge variant={r.status === "declined" ? "destructive" : "ok"}>{r.status}</Badge>}
-                    {r.available === "available" && <Badge variant="ok">Available</Badge>}
-                    {r.available === "partial" && <Badge variant="ice">Partly available</Badge>}
+                    <span className="meta">{[r.kind === "tv" ? "Show" : "Movie", r.year, r.seasons?.length ? `Season ${r.seasons.join(", ")}` : null].filter(Boolean).join(", ")}</span>
+                    {!pending && <State tone={r.status === "declined" ? "bad" : "have"}>{r.status}</State>}
+                    {r.available === "available" && <State tone="have">Available</State>}
+                    {r.available === "partial" && <State tone="live">Partly available</State>}
                   </div>
-                  <div className="mt-1 font-mono text-[11px] tracking-wide text-muted-foreground uppercase">
-                    Asked by {r.requestedBy} · {ago(r.createdAt)}
+                  <div className="meta mt-0.5">
+                    {r.requestedBy}, {ago(r.createdAt)}
                   </div>
                 </div>
                 <div className="col-span-2 flex flex-wrap justify-end gap-2 sm:col-span-1">
@@ -144,7 +141,7 @@ export function RequestsPage() {
                       </Button>
                       {autoFetch || !canGet ? (
                         <Button size="sm" disabled={!!b} onClick={() => act(r, "approve")}>
-                          {b === "approve" && <Spinner />} Approve{autoFetch ? " & get" : ""}
+                          {b === "approve" && <Spinner />} Approve{autoFetch ? " and get" : ""}
                         </Button>
                       ) : (
                         <>
@@ -152,7 +149,7 @@ export function RequestsPage() {
                             {b === "approve" && <Spinner />} Approve only
                           </Button>
                           <Button size="sm" disabled={!!b} onClick={() => act(r, "get")}>
-                            {b === "get" ? <Spinner /> : <Download />} Approve &amp; get
+                            {b === "get" ? <Spinner /> : <Download />} Approve and get
                           </Button>
                         </>
                       )}

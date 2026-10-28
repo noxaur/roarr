@@ -1,75 +1,47 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-// Small layout pieces shared by every page: the numbered mono labels, the
-// big display headings and the stat columns.
+// Small pieces every page shares. Colour here always means state:
+// have / miss / live / bad (see styles.css).
 
-export function Label({ children, mark, className }: { children: ReactNode; mark?: boolean; className?: string }) {
-  return (
-    <div className={cn("label", className)}>
-      {mark && <span aria-hidden className="mr-1.5 inline-block size-1.5 rounded-full bg-lime align-middle" />}
-      {children}
-    </div>
-  );
-}
+export type Tone = "have" | "miss" | "live" | "bad" | "none";
 
-export function PageHeader({ label, title, children, size = "xl" }: { label: ReactNode; title: ReactNode; children?: ReactNode; size?: "xl" | "lg" }) {
+export function PageHeader({ title, sub, children }: { title: ReactNode; sub?: ReactNode; children?: ReactNode }) {
   return (
-    <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-6">
+    <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
       <div className="min-w-0">
-        <Label mark>{label}</Label>
-        <h1 className={cn("mt-3 font-display", size === "xl" ? "text-[clamp(2.5rem,5vw,3.5rem)]" : "text-[clamp(2.25rem,4.5vw,3rem)]")}>{title}</h1>
+        <h1 className="text-[26px] leading-none font-medium">{title}</h1>
+        {sub && <p className="meta mt-2">{sub}</p>}
       </div>
       {children}
     </header>
   );
 }
 
-export function Stats({ children }: { children: ReactNode }) {
-  return <dl className="flex flex-wrap gap-y-4">{children}</dl>;
-}
-
-export function Stat({ value, unit, label }: { value: ReactNode; unit?: string; label: string }) {
+export function SectionHead({ title, children, className }: { title: ReactNode; children?: ReactNode; className?: string }) {
   return (
-    <div className="border-l border-border px-5 first:border-l-0 first:pl-0 sm:first:border-l sm:first:pl-5">
-      <dt className="font-display text-[1.75rem] leading-none tracking-[-0.04em] tabular">
-        {value}
-        {unit && <small className="ml-1 font-mono text-sm font-medium tracking-normal text-muted-foreground">{unit}</small>}
-      </dt>
-      <dd className="label mt-1.5">{label}</dd>
-    </div>
-  );
-}
-
-export function SectionHead({ index, title, children, className }: { index?: number; title: string; children?: ReactNode; className?: string }) {
-  return (
-    <div className={cn("flex flex-wrap items-center gap-x-5 gap-y-3", className)}>
-      <Label>
-        {index !== undefined && `${String(index).padStart(2, "0")} — `}
-        {title}
-      </Label>
+    <div className={cn("flex flex-wrap items-center gap-x-4 gap-y-2", className)}>
+      <h2 className="text-[15px] font-medium">{title}</h2>
       {children}
     </div>
   );
 }
 
 export function Empty({ children, className }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={cn("rounded-xl border border-border px-6 py-14 text-center text-muted-foreground", className)}>
-      {children}
-    </div>
-  );
+  return <div className={cn("rounded-lg border border-dashed px-6 py-12 text-center text-[13.5px] text-muted-foreground", className)}>{children}</div>;
 }
 
-export function Notice({ tone = "warn", children, className }: { tone?: "warn" | "bad" | "info"; children: ReactNode; className?: string }) {
+export function Notice({ tone = "miss", children, className }: { tone?: Tone; children: ReactNode; className?: string }) {
   return (
     <div
       role={tone === "bad" ? "alert" : "status"}
       className={cn(
-        "rounded-xl px-4 py-3 text-sm",
-        tone === "warn" && "bg-pink/60 text-ink dark:bg-pink/15 dark:text-foreground",
-        tone === "bad" && "border border-destructive/40 text-destructive",
-        tone === "info" && "bg-ice text-ink dark:bg-ice/10 dark:text-foreground",
+        "rounded-lg px-3.5 py-2.5 text-[13px] leading-snug",
+        tone === "miss" && "bg-miss-soft text-foreground",
+        tone === "bad" && "bg-bad-soft text-foreground",
+        tone === "live" && "bg-live-soft text-foreground",
+        tone === "have" && "bg-have-soft text-foreground",
+        tone === "none" && "bg-muted",
         className,
       )}
     >
@@ -82,17 +54,47 @@ export function Spinner({ className }: { className?: string }) {
   return <span aria-hidden className={cn("inline-block size-3.5 animate-spin rounded-full border-2 border-current border-t-transparent opacity-70", className)} />;
 }
 
-/** Thin progress bar; lime while moving, ink in the light theme's tiles. */
-export function Bar({ value, className, tone = "lime" }: { value: number; className?: string; tone?: "lime" | "ink" | "warn" | "bad" }) {
+/** A dot carrying one state. */
+export function Dot({ tone, pulse, className }: { tone: Tone; pulse?: boolean; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "inline-block size-2 shrink-0 rounded-full",
+        tone === "have" && "bg-have",
+        tone === "miss" && "bg-miss",
+        tone === "live" && "bg-live",
+        tone === "bad" && "bg-bad",
+        tone === "none" && "bg-muted-foreground/40",
+        pulse && "motion-safe:animate-pulse",
+        className,
+      )}
+    />
+  );
+}
+
+/** Pill with a state dot and short text: "4 missing", "Downloading". */
+export function State({ tone, children, className }: { tone: Tone; children: ReactNode; className?: string }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 text-[12.5px] whitespace-nowrap", tone === "bad" ? "text-bad" : "text-foreground/85", className)}>
+      <Dot tone={tone} />
+      {children}
+    </span>
+  );
+}
+
+/** Thin progress bar. */
+export function Bar({ value, className, tone = "live" }: { value: number; className?: string; tone?: Tone }) {
   return (
     <div className={cn("h-1 overflow-hidden rounded-full bg-foreground/10", className)}>
       <i
         className={cn(
           "block h-full rounded-full transition-[width] duration-500",
-          tone === "lime" && "bg-lime-strong",
-          tone === "ink" && "bg-foreground",
-          tone === "warn" && "bg-pink",
-          tone === "bad" && "bg-destructive",
+          tone === "live" && "bg-live",
+          tone === "have" && "bg-have",
+          tone === "miss" && "bg-miss",
+          tone === "bad" && "bg-bad",
+          tone === "none" && "bg-foreground",
         )}
         style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%` }}
       />
@@ -102,8 +104,40 @@ export function Bar({ value, className, tone = "lime" }: { value: number; classN
 
 export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <kbd className={cn("inline-flex h-5 min-w-5 items-center justify-center rounded-[5px] border border-b-2 border-border bg-background px-1.5 font-mono text-[10.5px] text-muted-foreground", className)}>
+    <kbd className={cn("inline-flex h-5 min-w-5 items-center justify-center rounded-[4px] border border-b-2 bg-background px-1.5 font-mono text-[10.5px] text-muted-foreground", className)}>
       {children}
     </kbd>
+  );
+}
+
+/** Compact mono spec tag. `tone` tints it; `dim` is for "unknown". */
+export function Spec({ children, tone, dim, title, className }: { children: ReactNode; tone?: Tone; dim?: boolean; title?: string; className?: string }) {
+  return (
+    <span
+      title={title}
+      className={cn(
+        "spec",
+        tone === "have" && "bg-have-soft text-have",
+        tone === "miss" && "bg-miss-soft text-miss",
+        tone === "live" && "bg-live-soft text-live",
+        tone === "bad" && "bg-bad-soft text-bad",
+        dim && "bg-transparent text-muted-foreground ring-1 ring-border ring-inset",
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** A labelled number for a header: "18 / 24  on disk". */
+export function Figure({ value, label, tone }: { value: ReactNode; label: string; tone?: Tone }) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+      <b className={cn("font-mono text-[15px] font-medium tabular", tone === "miss" && "text-miss", tone === "live" && "text-live", tone === "bad" && "text-bad", tone === "have" && "text-have")}>
+        {value}
+      </b>
+      <span className="meta">{label}</span>
+    </span>
   );
 }

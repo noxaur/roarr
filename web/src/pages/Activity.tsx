@@ -1,34 +1,29 @@
 import { useEffect, useState } from "react";
-import { Ban, ExternalLink, MoreHorizontal, Trash2 } from "lucide-react";
+import { Ban, ExternalLink, ListChecks, MoreHorizontal, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type ActivityItem, type WatchJob } from "@/lib/api";
-import { errText } from "@/lib/actions";
+import { autoGet, errText } from "@/lib/actions";
 import { bytes, epCode, pct, speed } from "@/lib/format";
 import { Link, useRouter } from "@/lib/router";
 import { needsYou, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Bar, Empty, Notice, PageHeader, SectionHead, Stat, Stats } from "@/components/kit";
+import { useConfirm } from "@/components/Confirm";
+import { Bar, Dot, Empty, Figure, Notice, PageHeader, SectionHead, type Tone } from "@/components/kit";
 import { Thumb } from "@/components/Poster";
 
 const withPick = (href: string) => `${href}${href.includes("?") ? "&" : "?"}pick=1`;
 
+/**
+ * Everything in flight, with the ones that need a decision first. For a
+ * stuck or failed download the choices are: pick another release, let roarr
+ * pick again, remove it, or remove it and blocklist that release.
+ */
 export function ActivityPage() {
-  const { activity, reloadActivity } = useStore();
+  const { activity, reloadActivity, reloadLibrary } = useStore();
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [removing, setRemoving] = useState<{ item: ActivityItem; blocklist: boolean } | null>(null);
+  const confirm = useConfirm();
 
   // Faster refresh while this page is open.
   useEffect(() => {
@@ -44,10 +39,19 @@ export function ActivityPage() {
     return () => clearInterval(t);
   }, [reloadActivity]);
 
-  const remove = async () => {
-    if (!removing) return;
-    const { item, blocklist } = removing;
-    setRemoving(null);
+  const remove = async (item: ActivityItem, blocklist: boolean) => {
+    const a = await confirm({
+      title: blocklist ? `Remove and blocklist ${item.title}?` : `Remove ${item.title}?`,
+      body: (
+        <>
+          <p>{blocklist ? "The download is removed from the client and this release is blocklisted, so it is never picked again." : "The download is removed from the client."}</p>
+          <p className="font-mono text-xs break-all text-foreground/70">{item.release}</p>
+        </>
+      ),
+      confirm: blocklist ? "Remove and blocklist" : "Remove",
+      danger: true,
+    });
+    if (!a) return;
     try {
       await api.removeActivity(item.id, blocklist);
       toast.success(blocklist ? `Removed and blocklisted ${item.title}` : `Removed ${item.title}`);
@@ -57,88 +61,87 @@ export function ActivityPage() {
     }
   };
 
+  // Blocklist the stuck release, then let roarr pick again for the same title.
+  const retry = async (item: ActivityItem) => {
+    const a = await confirm({
+      title: `Try another release for ${item.title}?`,
+      body: <p>Removes and blocklists this download, then roarr picks the next best release.</p>,
+      confirm: "Remove and pick again",
+      danger: true,
+    });
+    if (!a) return;
+    try {
+      await api.removeActivity(item.id, true);
+    } catch (e) {
+      toast.error(errText(e));
+      return;
+    }
+    const m = item.href?.match(/^\/(tv|movie)\/(\d+)/);
+    if (!m) {
+      reloadActivity();
+      return;
+    }
+    const lib = await api.library().catch(() => null);
+    const it = lib?.items.find((x) => x.kind === m[1] && x.id === +m[2]);
+    const res = m[1] === "tv" ? await autoGet({ kind: "tv", seriesId: +m[2] }, item.title) : it?.tmdbId ? await autoGet({ kind: "movie", movies: [it.tmdbId] }, item.title) : null;
+    reloadActivity();
+    if (res) setTimeout(() => reloadLibrary(), 1500);
+  };
+
   const attention = activity.filter(needsYou);
   const rest = activity.filter((a) => !needsYou(a));
   const total = activity.reduce((n, a) => n + (a.speed ?? 0), 0);
-  const [rate, unit] = total ? speed(total).split(" ") : ["0", "MB/s"];
 
   return (
-    <div className="space-y-10">
-      <PageHeader label="Live · refreshes every 2 s" title="Activity">
-        <Stats>
-          <Stat value={rest.length} label="Downloading" />
-          <Stat value={attention.length} label="Needs you" />
-          <Stat value={rate} unit={unit} label="Combined" />
-        </Stats>
+    <div className="space-y-8">
+      <PageHeader title="Downloads" sub="Refreshes every 2 s">
+        <div className="flex flex-wrap gap-x-5 gap-y-1">
+          <Figure value={rest.length} label="in flight" tone={rest.length ? "live" : undefined} />
+          <Figure value={attention.length} label="need you" tone={attention.length ? "bad" : undefined} />
+          <Figure value={total ? speed(total) : "0"} label="" />
+        </div>
       </PageHeader>
 
       {Object.entries(errors).map(([k, v]) => (
-        <Notice key={k}>
+        <Notice key={k} tone="bad">
           <b className="capitalize">{k}</b>: {v}
         </Notice>
       ))}
 
-      {activity.length === 0 && <Empty>Nothing downloading. Find something with ⌘K.</Empty>}
+      {activity.length === 0 && <Empty>Nothing downloading.</Empty>}
 
       {attention.length > 0 && (
-        <section className="space-y-3">
-          <SectionHead index={1} title="Needs you" />
+        <section>
+          <SectionHead title="Needs you" className="mb-2" />
           {attention.map((a) => (
-            <Row key={a.id} a={a} attention onRemove={(blocklist) => setRemoving({ item: a, blocklist })} />
+            <Row key={a.id} a={a} attention onRemove={(b) => remove(a, b)} onRetry={() => retry(a)} />
           ))}
         </section>
       )}
 
       {rest.length > 0 && (
         <section>
-          <SectionHead index={attention.length ? 2 : 1} title="Downloading" className="mb-3" />
+          <SectionHead title="In flight" className="mb-2" />
           {rest.map((a) => (
-            <Row key={a.id} a={a} onRemove={(blocklist) => setRemoving({ item: a, blocklist })} />
+            <Row key={a.id} a={a} onRemove={(b) => remove(a, b)} onRetry={() => retry(a)} />
           ))}
         </section>
       )}
-
-      <AlertDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-xl font-semibold tracking-tight">
-              {removing?.blocklist ? "Remove and never grab again?" : "Remove this download?"}
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2">
-                <p>
-                  {removing?.blocklist
-                    ? "The download is deleted from the client and this exact release is blocklisted, so roarr and Sonarr/Radarr will pick a different one next time."
-                    : "The download is deleted from the client. You can grab it, or something else, again at any time."}
-                </p>
-                <p className="font-mono text-xs break-all text-foreground/70">{removing?.item.release}</p>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep it</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={remove}>
-              {removing?.blocklist ? "Remove & blocklist" : "Remove"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
 
-function StatusBadge({ s }: { s: string }) {
-  if (s === "queued") return <Badge>Queued</Badge>;
-  if (s === "importing") return <Badge variant="ice">Importing</Badge>;
-  if (s === "warning") return <Badge variant="destructive">Stuck</Badge>;
-  if (s === "failed") return <Badge variant="destructive">Failed</Badge>;
-  return null;
+function toneOf(s: string): Tone {
+  if (s === "warning" || s === "failed") return "bad";
+  if (s === "downloading" || s === "importing") return "live";
+  return "none";
 }
+const statusText = (s: string) => (s === "warning" ? "Stuck" : s === "failed" ? "Failed" : s === "importing" ? "Importing" : s === "queued" ? "Queued" : "");
 
-function Row({ a, attention, onRemove }: { a: ActivityItem; attention?: boolean; onRemove: (blocklist: boolean) => void }) {
+function Row({ a, attention, onRemove, onRetry }: { a: ActivityItem; attention?: boolean; onRemove: (blocklist: boolean) => void; onRetry: () => void }) {
   const { navigate } = useRouter();
   const title = a.href ? (
-    <Link to={a.href} className="hover:underline hover:decoration-dash hover:underline-offset-4">
+    <Link to={a.href} className="rounded-sm outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50">
       {a.title}
     </Link>
   ) : (
@@ -151,22 +154,26 @@ function Row({ a, attention, onRemove }: { a: ActivityItem; attention?: boolean;
           <MoreHorizontal />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className="w-60">
         {a.href && (
           <DropdownMenuItem onSelect={() => navigate(a.href!)}>
-            <ExternalLink /> Open {a.title}
+            <ExternalLink /> Open title
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onSelect={() => onRemove(false)}>
-          <Trash2 /> Remove download
+        {a.href && (
+          <DropdownMenuItem onSelect={() => navigate(withPick(a.href!))}>
+            <ListChecks /> Choose another release
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onSelect={onRetry}>
+          <RefreshCw /> Blocklist and pick again
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onSelect={() => onRemove(true)} className="items-start">
-          <Ban className="mt-0.5" />
-          <span>
-            Remove and never grab again
-            <span className="block font-mono text-[10.5px] text-muted-foreground">Blocklists this release</span>
-          </span>
+        <DropdownMenuItem onSelect={() => onRemove(false)}>
+          <Trash2 /> Remove
+        </DropdownMenuItem>
+        <DropdownMenuItem variant="destructive" onSelect={() => onRemove(true)}>
+          <Ban /> Remove and blocklist
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -175,47 +182,58 @@ function Row({ a, attention, onRemove }: { a: ActivityItem; attention?: boolean;
   return (
     <div
       className={cn(
-        "grid grid-cols-[48px_minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 md:grid-cols-[54px_minmax(0,1fr)_minmax(220px,300px)_auto] md:gap-x-5",
-        attention ? "rounded-2xl bg-pink/40 p-4 dark:bg-pink/10" : "border-t border-border py-4",
+        "grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-x-3.5 gap-y-2.5 border-t py-3 md:grid-cols-[44px_minmax(0,1fr)_minmax(200px,280px)_auto] md:gap-x-5",
+        attention && "border-l-2 border-l-bad pl-3",
       )}
     >
-      <Thumb src={a.poster} title={a.title} className="w-12 md:w-[54px]" />
+      <Thumb src={a.poster} title={a.title} className="w-10 md:w-11" />
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-          <span className="text-[17px] font-semibold tracking-tight">{title}</span>
-          {a.subtitle && <span className="font-mono text-[11px] tracking-wide text-muted-foreground uppercase">{a.subtitle}</span>}
-          <StatusBadge s={a.status} />
-          {a.watch && <Badge variant="lime">Plays in order</Badge>}
+          <span className="text-[15px] font-medium">{title}</span>
+          {a.subtitle && <span className="font-mono text-[12px] text-muted-foreground">{a.subtitle}</span>}
+          {statusText(a.status) && (
+            <span className={cn("inline-flex items-center gap-1.5 text-[12.5px]", toneOf(a.status) === "bad" ? "text-bad" : "text-muted-foreground")}>
+              <Dot tone={toneOf(a.status)} />
+              {statusText(a.status)}
+            </span>
+          )}
+          {a.watch && <span className="meta">imports as episodes finish</span>}
         </div>
         <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground" title={a.release}>
           {a.release}
         </div>
         {a.messages?.map((m, i) => (
-          <div key={i} className="mt-1.5 text-[13px] text-foreground/80">
+          <div key={i} className={cn("mt-1 text-[13px]", attention ? "text-bad" : "text-foreground/80")}>
             {m}
           </div>
         ))}
         {a.watch && <WatchStrip w={a.watch} />}
       </div>
       {attention ? (
-        <div className="col-span-3 flex items-center justify-end gap-2 md:col-span-2">
+        <div className="col-span-3 flex flex-wrap items-center justify-end gap-2 md:col-span-2">
           {a.href && (
             <Button size="sm" onClick={() => navigate(withPick(a.href!))}>
-              Pick another release
+              <ListChecks /> Choose another release
             </Button>
           )}
+          <Button size="sm" variant="outline" onClick={onRetry}>
+            <RefreshCw /> Pick again
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => onRemove(false)}>
+            <Trash2 /> Remove
+          </Button>
           {menu}
         </div>
       ) : (
         <>
           <div className="col-span-3 md:col-span-1">
-            <div className="flex justify-between font-mono text-xs tabular">
+            <div className="flex justify-between font-mono text-[11.5px] tabular">
               <span>{a.size > 0 ? `${bytes(a.size - a.sizeLeft)} / ${bytes(a.size)}` : "size unknown yet"}</span>
               <span>{pct(a.progress)}</span>
             </div>
-            <Bar value={a.progress} className="my-1.5" tone={a.status === "importing" ? "ink" : "lime"} />
-            <div className="font-mono text-[10.5px] tracking-wide text-muted-foreground uppercase">
-              {[a.speed ? speed(a.speed) : a.status === "queued" ? "waiting" : null, a.eta && a.status === "downloading" ? `${a.eta} left` : null].filter(Boolean).join(" · ") || " "}
+            <Bar value={a.progress} className="my-1.5" tone={a.status === "importing" ? "have" : "live"} />
+            <div className="meta font-mono tabular">
+              {[a.speed ? speed(a.speed) : a.status === "queued" ? "waiting" : null, a.eta && a.status === "downloading" ? `${a.eta} left` : null].filter(Boolean).join(", ") || " "}
             </div>
           </div>
           <div className="col-start-3 row-start-1 md:col-start-4">{menu}</div>
@@ -230,7 +248,7 @@ function WatchStrip({ w }: { w: WatchJob }) {
   const focus = files.find((f) => !f.skipped && f.progress < 1);
   const imported = files.filter((f) => f.imported).length;
   return (
-    <div className="mt-2.5">
+    <div className="mt-2">
       <div className="flex flex-wrap gap-1">
         {files.map((f) => {
           const isFocus = focus?.index === f.index;
@@ -239,22 +257,22 @@ function WatchStrip({ w }: { w: WatchJob }) {
               key={f.index}
               title={f.error ?? f.name}
               className={cn(
-                "relative grid h-[22px] min-w-[34px] place-items-center overflow-hidden rounded-[5px] border border-border px-1 font-mono text-[10px] text-muted-foreground",
-                f.imported && "border-transparent bg-foreground text-background",
-                isFocus && "border-foreground text-foreground",
+                "relative grid h-5 min-w-[30px] place-items-center overflow-hidden rounded-[4px] border px-1 font-mono text-[10px] text-muted-foreground",
+                f.imported && "border-transparent bg-have text-background",
+                isFocus && "border-live text-foreground",
                 f.skipped && "line-through opacity-50",
-                f.error && "border-destructive text-destructive",
+                f.error && "border-bad text-bad",
               )}
             >
-              {!f.imported && f.progress > 0 && f.progress < 1 && <i className="absolute inset-y-0 left-0 -z-0 bg-lime/70" style={{ width: pct(f.progress) }} />}
+              {!f.imported && f.progress > 0 && f.progress < 1 && <i className="absolute inset-y-0 left-0 bg-live-soft" style={{ width: pct(f.progress) }} />}
               <span className="relative">{epCode(f.season, f.episode).replace(/^S\d+/, "")}</span>
             </span>
           );
         })}
       </div>
-      <div className="mt-1.5 font-mono text-[10.5px] text-muted-foreground">
-        {files.length === 0 ? "waiting for the torrent's file list" : imported > 0 ? `${imported} ready to watch` : "first episode downloads first"}
-        {w.message ? ` · ${w.message}` : ""}
+      <div className="meta mt-1 font-mono">
+        {files.length === 0 ? "waiting for the file list" : imported > 0 ? `${imported} imported` : "first episode first"}
+        {w.message ? `, ${w.message}` : ""}
       </div>
     </div>
   );

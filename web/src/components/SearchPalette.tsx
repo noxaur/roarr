@@ -7,10 +7,9 @@ import { bytes, fold } from "@/lib/format";
 import { discoverHref, libraryHref, rankLibrary } from "@/lib/rank";
 import { useRouter } from "@/lib/router";
 import { useStore } from "@/lib/store";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Kbd, Spinner } from "./kit";
+import { Kbd, Spinner, State } from "./kit";
 import { Thumb } from "./Poster";
 
 type Row = { key: string; href: string; lib?: LibraryItem; remote?: DiscoverItem };
@@ -127,26 +126,24 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
         <DialogTitle className="sr-only">Search</DialogTitle>
         <DialogDescription className="sr-only">Search your library and everything on TMDB</DialogDescription>
         <CommandPrimitive shouldFilter={false} loop value={selected} onValueChange={setSelected} onKeyDown={onKeyDown} className="flex flex-col">
-          <div className="flex h-14 items-center gap-3 border-b border-border px-5">
+          <div className="flex h-13 items-center gap-3 border-b px-4">
             <Search className="size-5 shrink-0 text-muted-foreground" />
             <CommandPrimitive.Input
               value={q}
               onValueChange={setQ}
-              placeholder="Search shows, movies, commands…"
-              className="h-full flex-1 bg-transparent text-lg font-medium tracking-tight outline-none placeholder:text-muted-foreground/70"
+              placeholder="Find a show or movie"
+              className="h-full flex-1 bg-transparent text-[17px] font-medium outline-none placeholder:text-muted-foreground/70"
             />
             {loading && <Spinner />}
             <Kbd>esc</Kbd>
           </div>
           <CommandPrimitive.List className="max-h-[min(60vh,520px)] overflow-y-auto px-2.5 py-2">
-            {term.length === 0 && (
-              <div className="px-3 pt-3 pb-1 text-sm text-muted-foreground">Type a title. Your library answers instantly; TMDB follows in a blink.</div>
-            )}
+            {term.length === 0 && <div className="meta px-3 pt-3 pb-1">Library first, then TMDB.</div>}
             {term.length > 0 && !loading && rows.a.length + rows.b.length + cmds.length === 0 && (
-              <CommandPrimitive.Empty className="px-3 py-8 text-center text-sm text-muted-foreground">{error ?? `Nothing found for “${term}”.`}</CommandPrimitive.Empty>
+              <CommandPrimitive.Empty className="px-3 py-8 text-center text-sm text-muted-foreground">{error ?? `No match for “${term}”.`}</CommandPrimitive.Empty>
             )}
             {rows.a.length > 0 && (
-              <CommandPrimitive.Group heading="In your library · instant" className="pb-2 **:[[cmdk-group-heading]]:label **:[[cmdk-group-heading]]:px-2.5 **:[[cmdk-group-heading]]:py-2">
+              <CommandPrimitive.Group heading="In the library" className="pb-2 **:[[cmdk-group-heading]]:meta **:[[cmdk-group-heading]]:px-2.5 **:[[cmdk-group-heading]]:py-2">
                 {rows.a.map((row) => {
                   const it = row.lib!;
                   const missing = it.total - it.have;
@@ -155,17 +152,19 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
                       <Thumb src={it.poster} title={it.title} className="w-9" />
                       <Meta title={it.title} sub={[it.kind === "tv" ? "Show" : "Movie", it.year, it.kind === "tv" ? `${it.have}/${it.total} eps` : it.sizeOnDisk ? bytes(it.sizeOnDisk) : null]} />
                       {it.kind === "movie" ? (
-                        it.have ? <Badge variant="ok">On disk</Badge> : <Badge variant="pink">Missing</Badge>
+                        it.have ? <State tone="have">On disk</State> : <State tone="miss">Missing</State>
                       ) : missing > 0 ? (
-                        <Badge variant="pink">{missing} missing</Badge>
-                      ) : null}
+                        <State tone="miss">{missing} missing</State>
+                      ) : (
+                        <State tone="have">Complete</State>
+                      )}
                     </Item>
                   );
                 })}
               </CommandPrimitive.Group>
             )}
             {rows.b.length > 0 && (
-              <CommandPrimitive.Group heading="Not in your library · TMDB" className="**:[[cmdk-group-heading]]:label **:[[cmdk-group-heading]]:px-2.5 **:[[cmdk-group-heading]]:py-2">
+              <CommandPrimitive.Group heading="Not in the library" className="**:[[cmdk-group-heading]]:meta **:[[cmdk-group-heading]]:px-2.5 **:[[cmdk-group-heading]]:py-2">
                 {rows.b.map((row) => {
                   const r = row.remote!;
                   return (
@@ -173,7 +172,7 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
                       <Thumb src={r.poster} title={r.title} className="w-9" />
                       <Meta title={r.title} sub={[r.kind === "tv" ? "Show" : "Movie", r.year, r.requested ? "requested" : null]} />
                       {r.inLibrary ? (
-                        <Badge variant="ok">In library</Badge>
+                        <State tone="have">In library</State>
                       ) : canGet(r) ? (
                         <Button
                           size="sm"
@@ -198,7 +197,7 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
               </CommandPrimitive.Group>
             )}
             {cmds.length > 0 && (
-              <CommandPrimitive.Group heading="Commands" className="**:[[cmdk-group-heading]]:label **:[[cmdk-group-heading]]:px-2.5 **:[[cmdk-group-heading]]:py-2">
+              <CommandPrimitive.Group heading="Go to" className="**:[[cmdk-group-heading]]:meta **:[[cmdk-group-heading]]:px-2.5 **:[[cmdk-group-heading]]:py-2">
                 {cmds.map((c) => (
                   <Item key={c.id} value={`cmd:${c.id}`} onSelect={() => runCmd(c)}>
                     <span className="size-2 shrink-0 rounded-[2px] bg-muted-foreground/40" />
@@ -217,9 +216,9 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
               <Kbd>↵</Kbd> open
             </span>
             <span>
-              <Kbd>⌘↵</Kbd> get best release
+              <Kbd>⌘↵</Kbd> get movie now
             </span>
-            <span className="ml-auto hidden sm:inline">{ms !== null && remote ? `TMDB · ${ms} ms` : ""}</span>
+            <span className="ml-auto hidden sm:inline">{ms !== null && remote ? `TMDB ${ms} ms` : ""}</span>
           </div>
         </CommandPrimitive>
       </DialogContent>
@@ -242,8 +241,8 @@ function Item({ value, onSelect, children }: { value: string; onSelect: () => vo
 function Meta({ title, sub }: { title: string; sub: (string | number | null | undefined)[] }) {
   return (
     <div className="min-w-0 flex-1">
-      <div className="truncate font-semibold">{title}</div>
-      <div className="truncate font-mono text-[10.5px] tracking-wider text-muted-foreground uppercase">{sub.filter(Boolean).join(" · ")}</div>
+      <div className="truncate font-medium">{title}</div>
+      <div className="meta truncate">{sub.filter(Boolean).join(", ")}</div>
     </div>
   );
 }

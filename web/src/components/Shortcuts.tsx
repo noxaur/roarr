@@ -5,16 +5,16 @@ const GROUPS: [string, [string, string][]][] = [
   [
     "Anywhere",
     [
-      ["Search & commands", "⌘K"],
-      ["Search", "/"],
-      ["Downloads", "D"],
+      ["Find a title", "⌘K"],
+      ["Find a title", "/"],
+      ["Downloads panel", "D"],
       ["Light / dark", "T"],
       ["Undo", "⌘Z"],
       ["This sheet", "?"],
     ],
   ],
   [
-    "Library & episodes",
+    "Library and episodes",
     [
       ["Move", "← → ↑ ↓"],
       ["Open", "↵"],
@@ -42,14 +42,14 @@ export function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenC
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[640px]">
-        <DialogTitle className="text-lg font-semibold tracking-tight">Keyboard shortcuts</DialogTitle>
+        <DialogTitle className="text-[17px] font-medium">Keyboard shortcuts</DialogTitle>
         <DialogDescription className="sr-only">Every keyboard shortcut in roarr</DialogDescription>
         <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
           {GROUPS.map(([name, rows]) => (
             <section key={name}>
-              <div className="label mb-2">{name}</div>
+              <div className="meta mb-1.5">{name}</div>
               {rows.map(([label, k]) => (
-                <div key={label} className="flex h-9 items-center justify-between border-b text-sm">
+                <div key={label} className="flex h-8 items-center justify-between border-b text-[13px]">
                   <span className="text-muted-foreground">{label}</span>
                   <Kbd>{k}</Kbd>
                 </div>
