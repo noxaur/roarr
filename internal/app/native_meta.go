@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 
@@ -64,12 +65,21 @@ func (a *App) nativeShow(ctx context.Context, g GrabRequest) (*nativeTarget, err
 		for _, s := range d.Seasons {
 			seasons = append(seasons, s.Number)
 		}
-		if eps, err := seerrEpisodes(ctx, c.Seerr, t.TmdbID, seasons); err == nil && len(eps) > 0 {
-			t.Episodes = eps
+		eps, err := seerrEpisodes(ctx, c.Seerr, t.TmdbID, seasons)
+		if err != nil {
+			slog.Warn("native: TMDB episode lists incomplete; using episode counts", "title", t.Title, "err", err)
 		}
+		t.Episodes = eps
 	}
 	if len(t.Episodes) == 0 {
 		t.Episodes = episodesOf(d)
+		// Episode counts can be missing for a season (Sonarr preview with
+		// no TMDB data): then the list is not safe for absolute numbers.
+		for _, s := range d.Seasons {
+			if s.Number > 0 && len(s.Episodes) == 0 {
+				t.Partial = true
+			}
+		}
 	}
 	a.Native.keepName(&t)
 
@@ -105,7 +115,9 @@ func episodesOf(d *SeriesDetail) []importer.Episode {
 	return out
 }
 
-// seerrEpisodes fetches TMDB episode lists for the given seasons.
+// seerrEpisodes fetches TMDB episode lists for the given seasons. It is
+// all or nothing: absolute numbers are derived from the whole list, so one
+// missing season would shift every later episode.
 func seerrEpisodes(ctx context.Context, s *seerr.Client, tmdbID int, seasons []int) ([]importer.Episode, error) {
 	var (
 		mu   sync.Mutex
@@ -133,7 +145,7 @@ func seerrEpisodes(ctx context.Context, s *seerr.Client, tmdbID int, seasons []i
 		}(n)
 	}
 	wg.Wait()
-	if len(out) == 0 && len(errs) > 0 {
+	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
 	sort.Slice(out, func(i, j int) bool {

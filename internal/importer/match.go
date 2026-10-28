@@ -22,6 +22,10 @@ type Title struct {
 	Aliases  []string  `json:"aliases,omitempty"`
 	Anime    bool      `json:"anime,omitempty"`
 	Episodes []Episode `json:"episodes,omitempty"`
+	// Partial means the episode list may miss whole seasons (a metadata
+	// lookup failed). Absolute numbers are then not derived from it, and
+	// files named only by an absolute number match nothing.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // Episode is one episode in a title's episode list.
@@ -72,7 +76,7 @@ func (t Title) Show() release.Show {
 		a := e.Absolute
 		if e.Season > 0 {
 			abs++
-			if !hasAbs {
+			if !hasAbs && !t.Partial {
 				a = abs
 			}
 		}
@@ -216,11 +220,38 @@ func episodesOf(rel string, pack release.Info, show release.Show, anime bool) (s
 		return 0, nil, false // a file never stands for a whole season
 	}
 	info.Complete, info.FullSeason = false, false
+	if len(info.Seasons) > 0 && len(info.Episodes) > 0 {
+		// Explicit numbers in the name are kept as they are, even the ones
+		// the metadata does not list (yet): a S01E01E02 file holds E02 too.
+		season = info.Seasons[0]
+		known := map[int]bool{}
+		for _, e := range show.Episodes {
+			known[e.ID] = true
+		}
+		verified = true
+		seen := map[int]bool{}
+		for _, e := range info.Episodes {
+			if seen[e] {
+				continue
+			}
+			seen[e] = true
+			eps = append(eps, e)
+			verified = verified && known[EpisodeID(season, e)]
+		}
+		sort.Ints(eps)
+		return season, eps, verified
+	}
+	// Absolute numbers only mean something against a complete, absolutely
+	// numbered episode list.
+	hasAbs := false
+	for _, e := range show.Episodes {
+		hasAbs = hasAbs || e.Absolute > 0
+	}
+	if !hasAbs {
+		return 0, nil, false
+	}
 	ids := release.Covers(info, show)
 	if len(ids) == 0 {
-		if len(info.Seasons) > 0 && len(info.Episodes) > 0 {
-			return info.Seasons[0], append([]int(nil), info.Episodes...), false
-		}
 		return 0, nil, false
 	}
 	season = ids[0] / 10000

@@ -68,10 +68,14 @@ downloading show as queued.
   or `05 - Title`, roarr uses the season from the parent folder
   (`Season 2/`). If no folder gives a season, roarr uses the pack name.
 - **Absolute numbers:** roarr calculates them from the episode order
-  when the metadata has none (TMDB has none).
+  when the metadata has none (TMDB has none). It does this only when the
+  episode list is complete. If one TMDB season cannot be loaded, roarr
+  uses no TMDB episode list. If the list can still miss a season, files
+  named only by an absolute number match nothing.
 - **Episodes not in the metadata:** a file that names such an episode
   (for example, a new episode that TMDB does not list yet) is still
-  placed. The placement has the flag `unverified`.
+  placed. roarr keeps all episode numbers from the name. The placement
+  has the flag `unverified`.
 - **Two files for one episode:** roarr keeps the larger file.
 - **Samples:** `sample` in the name, or a `Sample/` folder.
 - **Extras:** featurettes, trailers, behind the scenes, deleted scenes,
@@ -98,13 +102,16 @@ Files that a person, Sonarr or Radarr put there also count.
 | Situation | Result |
 |---|---|
 | Same file (same hardlink) | Skipped: "already in the library". |
-| New release is better (resolution, then source, then proper/repack) | Replaced. roarr removes the old video and its sidecar files. |
+| New release is better (resolution, then source, then proper/repack) | Replaced. roarr removes the old video. Its sidecar files (for example, subtitles that you added) stay and get the new video name. A new subtitle replaces an old one with the same name only after the new one is in place. |
 | New release is equal or worse | Skipped, unless you selected this release for these episodes. |
 | Quality of the existing file is not known (a renamed file) | Skipped, unless you selected the release. |
 | The existing file is a multi-episode file that also holds other episodes | Skipped. roarr never deletes episodes that you would lose. |
 
-During a replacement, roarr first moves the old files aside. If the new
-file cannot be placed, roarr puts the old files back.
+During a replacement, roarr first moves the old video aside. If the new
+video cannot be placed, roarr puts the old video back.
+
+A subtitle that finishes after its video is placed on a later pass. If a
+subtitle transfer fails, roarr tries again for about one minute.
 
 ## Path mapping and hardlinks
 

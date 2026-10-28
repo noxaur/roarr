@@ -356,19 +356,28 @@ func TestImportEpisodeWithSubtitlesAndHooks(t *testing.T) {
 func TestImportUpgradeAndDowngrade(t *testing.T) {
 	im, dir, _ := newImporter(t)
 	ti := showTitle(8)
-	place := func(name, body string, replace bool) (Result, error) {
+	place := func(name, body string, replace bool, subs ...SubtitleRef) (Result, error) {
 		p := filepath.Join(dir, "dl", name)
 		write(t, p, body)
-		pl := Placement{Video: SourceFile{Rel: name, Path: p}, Season: 1, Episodes: []int{1}}
+		pl := Placement{Video: SourceFile{Rel: name, Path: p}, Season: 1, Episodes: []int{1}, Subtitles: subs}
 		return im.Import(context.Background(), Request{Title: ti, Placement: pl, Release: strings.TrimSuffix(name, ".mkv"), Replace: replace})
+	}
+	read := func(p string) string {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return "<missing>"
+		}
+		return string(b)
 	}
 	if _, err := place("The.Show.S01E01.720p.HDTV.mkv", "720", false); err != nil {
 		t.Fatal(err)
 	}
-	// An old sidecar next to the 720p file goes with it on upgrade.
+	// Subtitles someone added next to the 720p file.
 	old := filepath.Join(dir, "tv", "The Show (2020)", "Season 01", "The Show - S01E01")
 	write(t, old+".en.srt", "old subs")
+	write(t, old+".fr.srt", "hand fr")
 
+	// An upgrade without subtitles keeps the existing ones.
 	res, err := place("The.Show.S01E01.1080p.WEB-DL.mp4", "1080", false)
 	if err != nil || res.Skipped || len(res.Replaced) != 1 {
 		t.Fatalf("upgrade: %+v %v", res, err)
@@ -376,27 +385,126 @@ func TestImportUpgradeAndDowngrade(t *testing.T) {
 	if _, err := os.Stat(old + ".mkv"); !os.IsNotExist(err) {
 		t.Fatal("old video still there")
 	}
-	if _, err := os.Stat(old + ".en.srt"); !os.IsNotExist(err) {
-		t.Fatal("old subtitle still there")
-	}
-	if b, _ := os.ReadFile(old + ".mp4"); string(b) != "1080" {
-		t.Fatalf("new file %q", b)
+	if read(old+".mp4") != "1080" || read(old+".en.srt") != "old subs" || read(old+".fr.srt") != "hand fr" {
+		t.Fatalf("after upgrade: video %q en %q fr %q", read(old+".mp4"), read(old+".en.srt"), read(old+".fr.srt"))
 	}
 
 	res, err = place("The.Show.S01E01.480p.DVD.mkv", "480", false)
 	if err != nil || !res.Skipped {
 		t.Fatalf("downgrade should be skipped: %+v %v", res, err)
 	}
-	// Explicitly chosen: replaces even though it is worse.
-	res, err = place("The.Show.S01E01.720p.WEBRip.mkv", "720b", true)
-	if err != nil || res.Skipped {
+
+	// Explicitly chosen, worse, and its subtitle cannot be read: the video
+	// is replaced, the old English subtitle stays.
+	broken := SubtitleRef{File: SourceFile{Rel: "x.en.srt", Path: filepath.Join(dir, "dl", "missing.en.srt")}, Info: SubtitleInfo{Lang: "en"}}
+	res, err = place("The.Show.S01E01.720p.WEBRip.mkv", "720b", true, broken)
+	if err != nil || res.Skipped || len(res.SubtitleErrors) != 1 {
 		t.Fatalf("explicit replace: %+v %v", res, err)
+	}
+	if read(old+".mkv") != "720b" || read(old+".en.srt") != "old subs" {
+		t.Fatalf("after failed subtitle: video %q en %q", read(old+".mkv"), read(old+".en.srt"))
+	}
+
+	// A new English subtitle replaces the old one; French stays.
+	subSrc := filepath.Join(dir, "dl", "new.en.srt")
+	write(t, subSrc, "new subs")
+	good := SubtitleRef{File: SourceFile{Rel: "new.en.srt", Path: subSrc}, Info: SubtitleInfo{Lang: "en"}}
+	if res, err = place("The.Show.S01E01.2160p.WEB-DL.mkv", "2160", false, good); err != nil || res.Skipped {
+		t.Fatalf("upgrade with subtitle: %+v %v", res, err)
+	}
+	if read(old+".en.srt") != "new subs" || read(old+".fr.srt") != "hand fr" {
+		t.Fatalf("subtitles: en %q fr %q", read(old+".en.srt"), read(old+".fr.srt"))
+	}
+	ents, _ := os.ReadDir(filepath.Dir(old))
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), ".") {
+			t.Errorf("leftover %s", e.Name())
+		}
 	}
 	if got := im.Existing(ti, 1, []int{1}); len(got) != 1 || !strings.HasSuffix(got[0], "S01E01.mkv") {
 		t.Fatalf("existing after replace %v", got)
 	}
 	if n := len(im.Store().Files(ti.Key())); n != 1 {
 		t.Fatalf("store has %d records, want 1", n)
+	}
+}
+
+func TestImportMovesSidecarsOfDifferentlyNamedFile(t *testing.T) {
+	im, dir, _ := newImporter(t)
+	ti := showTitle(8)
+	season := filepath.Join(dir, "tv", "The Show (2020)", "Season 01")
+	write(t, filepath.Join(season, "The Show - S01E05 - Pilot WEBDL-720p.mkv"), "sonarr")
+	write(t, filepath.Join(season, "The Show - S01E05 - Pilot WEBDL-720p.en.srt"), "hand")
+	src := filepath.Join(dir, "dl", "The.Show.S01E05.1080p.BluRay.mkv")
+	write(t, src, "new")
+	pl := Placement{Video: SourceFile{Rel: filepath.Base(src), Path: src}, Season: 1, Episodes: []int{5}}
+	res, err := im.Import(context.Background(), Request{Title: ti, Placement: pl, Release: "The.Show.S01E05.1080p.BluRay"})
+	if err != nil || res.Skipped || len(res.Replaced) != 1 {
+		t.Fatalf("upgrade: %+v %v", res, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(season, "The Show - S01E05.en.srt")); string(b) != "hand" {
+		t.Fatalf("sidecar not moved to the new name: %q", b)
+	}
+}
+
+func TestAddSubtitlesLater(t *testing.T) {
+	im, dir, _ := newImporter(t)
+	ti := showTitle(8)
+	src := filepath.Join(dir, "dl", "The.Show.S01E02.1080p.WEB-DL.mkv")
+	write(t, src, "v")
+	sub1 := filepath.Join(dir, "dl", "a.en.srt")
+	write(t, sub1, "first")
+	pl := Placement{Video: SourceFile{Rel: filepath.Base(src), Path: src}, Season: 1, Episodes: []int{2},
+		Subtitles: []SubtitleRef{{File: SourceFile{Rel: "a.en.srt", Path: sub1}, Info: SubtitleInfo{Lang: "en"}}}}
+	res, err := im.Import(context.Background(), Request{Title: ti, Placement: pl})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second English subtitle arrives later: it must not overwrite the first.
+	sub2 := filepath.Join(dir, "dl", "b.en.srt")
+	write(t, sub2, "second")
+	placed, errs, err := im.AddSubtitles(res.Path, []SubtitleRef{{File: SourceFile{Rel: "b.en.srt", Path: sub2}, Info: SubtitleInfo{Lang: "en"}}})
+	if err != nil || len(errs) != 0 || len(placed) != 1 || !strings.HasSuffix(placed[0], ".en.2.srt") {
+		t.Fatalf("placed %v errs %v err %v", placed, errs, err)
+	}
+	base := strings.TrimSuffix(res.Path, ".mkv")
+	if b, _ := os.ReadFile(base + ".en.srt"); string(b) != "first" {
+		t.Fatalf("first subtitle overwritten: %q", b)
+	}
+	if f := im.Store().Files(ti.Key()); len(f) != 1 || len(f[0].Subtitles) != 2 {
+		t.Fatalf("record %+v", f)
+	}
+}
+
+func TestPlanTVKeepsExplicitEpisodesMissingFromMetadata(t *testing.T) {
+	ps, _ := PlanTV(rels("The.Show.S01E01E02.1080p.mkv"), "The.Show.S01E01E02.1080p", showTitle(1))
+	if len(ps) != 1 || !reflect.DeepEqual(ps[0].Episodes, []int{1, 2}) || !ps[0].Unverified {
+		t.Fatalf("got %+v", ps)
+	}
+	ps, _ = PlanTV(rels("The.Show.S01E01E02.1080p.mkv"), "x", showTitle(2))
+	if len(ps) != 1 || !reflect.DeepEqual(ps[0].Episodes, []int{1, 2}) || ps[0].Unverified {
+		t.Fatalf("all known: %+v", ps)
+	}
+}
+
+func TestPartialMetadataDisablesAbsoluteMatching(t *testing.T) {
+	// Season 1 failed to load: only season 2 is known.
+	ti := Title{Kind: "tv", Title: "The Show", Anime: true, Partial: true}
+	for e := 1; e <= 12; e++ {
+		ti.Episodes = append(ti.Episodes, Episode{Season: 2, Number: e})
+	}
+	for _, e := range ti.Show().Episodes {
+		if e.Absolute != 0 {
+			t.Fatalf("absolute number derived from partial metadata: %+v", e)
+		}
+	}
+	ps, skips := PlanTV(rels("[Grp] The Show - 01 (1080p).mkv"), "[Grp] The Show - 01 (1080p)", ti)
+	if len(ps) != 0 || len(skips) != 1 {
+		t.Fatalf("absolute file matched against partial metadata: %+v", ps)
+	}
+	// Explicit SxxEyy still works.
+	if ps, _ := PlanTV(rels("The.Show.S02E03.mkv"), "x", ti); len(ps) != 1 || ps[0].Season != 2 {
+		t.Fatalf("explicit: %+v", ps)
 	}
 }
 

@@ -31,9 +31,10 @@ type Native struct {
 	path  string
 	store *importer.Store
 
-	mu   sync.Mutex
-	jobs map[string]*NativeJob // by info-hash
-	kick chan struct{}
+	mu     sync.Mutex
+	jobs   map[string]*NativeJob // by info-hash
+	kick   chan struct{}
+	saveMu sync.Mutex // one snapshot+write+rename of native.json at a time
 
 	refreshMu      sync.Mutex
 	refreshAt      map[string]time.Time
@@ -84,6 +85,35 @@ type NativeFile struct {
 	Note       string             `json:"note,omitempty"`
 	Error      string             `json:"error,omitempty"`
 	Attempts   int                `json:"attempts,omitempty"`
+	// SubsPlaced lists the subtitles (by path in the torrent) already next
+	// to the imported video. Subtitles that finish after their video, or
+	// whose transfer failed, are placed on later passes.
+	SubsPlaced  []string `json:"subsPlaced,omitempty"`
+	SubAttempts int      `json:"subAttempts,omitempty"`
+	SubError    string   `json:"subError,omitempty"`
+}
+
+// maxSubAttempts bounds retries of failed subtitle transfers (one per pass).
+const maxSubAttempts = 30
+
+// pendingSubs returns the indexes into Placement.Subtitles not placed yet.
+func (f NativeFile) pendingSubs() []int {
+	done := map[string]bool{}
+	for _, r := range f.SubsPlaced {
+		done[r] = true
+	}
+	var out []int
+	for k, s := range f.Placement.Subtitles {
+		if !done[s.File.Rel] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// waitingForSubs reports whether an imported video still expects subtitles.
+func (f NativeFile) waitingForSubs() bool {
+	return f.Imported && f.Dest != "" && f.SubAttempts < maxSubAttempts && len(f.pendingSubs()) > 0
 }
 
 func newNative(a *App, dir string) *Native {
@@ -274,6 +304,8 @@ func (n *Native) Remove(hash string) {
 }
 
 func (n *Native) save() {
+	n.saveMu.Lock()
+	defer n.saveMu.Unlock()
 	n.mu.Lock()
 	jobs := make([]*NativeJob, 0, len(n.jobs))
 	for _, j := range n.jobs {
@@ -285,10 +317,13 @@ func (n *Native) save() {
 		return
 	}
 	tmp := n.path + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
+	if writeJobs(tmp, b, 0o600) == nil {
 		_ = os.Rename(tmp, n.path)
 	}
 }
+
+// writeJobs is os.WriteFile; tests slow it down to widen race windows.
+var writeJobs = os.WriteFile
 
 func (n *Native) loop(ctx context.Context) {
 	t := time.NewTicker(2 * time.Second)
@@ -383,9 +418,12 @@ func (n *Native) step(ctx context.Context, c *Clients, j *NativeJob) bool {
 	if t.Progress >= 1 && j.CompletedAt.IsZero() {
 		j.CompletedAt = time.Now()
 	}
-	pending, failed, imported := 0, 0, 0
+	pending, failed, imported, subsWaiting := 0, 0, 0, 0
 	var lastErr string
 	for _, f := range j.Files {
+		if f.waitingForSubs() {
+			subsWaiting++
+		}
 		switch {
 		case f.Error != "":
 			failed++
@@ -400,6 +438,9 @@ func (n *Native) step(ctx context.Context, c *Clients, j *NativeJob) bool {
 	case !j.Planned:
 	case pending == 0 && failed > 0:
 		j.State, j.Message = "failed", fmt.Sprintf("%d of %d file(s) could not be imported: %s", failed, failed+imported, lastErr)
+	case pending == 0 && subsWaiting > 0 && (j.CompletedAt.IsZero() || time.Since(j.CompletedAt) < 10*time.Minute):
+		// Videos are in; subtitles are still downloading or being retried.
+		j.State = "importing"
 	case pending == 0:
 		j.State, j.Message = "done", ""
 	case !j.CompletedAt.IsZero() && time.Since(j.CompletedAt) > 30*time.Minute:
@@ -610,7 +651,8 @@ func fileExists(p string) bool {
 	return err == nil && st.Mode().IsRegular()
 }
 
-// importReady imports every finished, not yet imported file.
+// importReady imports every finished, not yet imported file, and places
+// subtitles that finished after their video.
 func (n *Native) importReady(ctx context.Context, j *NativeJob, t qbit.Torrent, files []qbit.File) {
 	title, ok := n.store.Title(j.TitleKey)
 	if !ok {
@@ -621,33 +663,54 @@ func (n *Native) importReady(ctx context.Context, j *NativeJob, t qbit.Torrent, 
 		progress[f.Index] = f.Progress
 	}
 	n.mu.Lock()
-	var ready []int
+	var ready, subsDue []int
 	for i, f := range j.Files {
-		if !f.Skipped && !f.Imported && f.Error == "" && f.Progress >= 1 {
+		switch {
+		case !f.Skipped && !f.Imported && f.Error == "" && f.Progress >= 1:
 			ready = append(ready, i)
+		case f.waitingForSubs():
+			subsDue = append(subsDue, i)
 		}
 	}
 	n.mu.Unlock()
-	if len(ready) == 0 {
+	if len(ready) == 0 && len(subsDue) == 0 {
 		return
 	}
+	// finishedSubs are the pending subtitles of f whose download is complete.
+	finishedSubs := func(f NativeFile) []importer.SubtitleRef {
+		var out []importer.SubtitleRef
+		for _, k := range f.pendingSubs() {
+			if k < len(f.SubIndexes) && progress[f.SubIndexes[k]] < 1 {
+				continue
+			}
+			s := f.Placement.Subtitles[k]
+			s.File.Path = n.resolve(t, s.File.Rel)
+			out = append(out, s)
+		}
+		return out
+	}
+	// placedSubs records which of subs made it, and counts a failed pass.
+	placedSubs := func(ff *NativeFile, subs []importer.SubtitleRef, errs map[string]string) {
+		for _, s := range subs {
+			if _, failed := errs[s.File.Rel]; !failed {
+				ff.SubsPlaced = append(ff.SubsPlaced, s.File.Rel)
+			}
+		}
+		for rel, e := range errs {
+			ff.SubAttempts++
+			ff.SubError = rel + ": " + e
+			break
+		}
+	}
 	im := n.Importer()
-	imported := 0
+	changed := 0
 	for _, i := range ready {
 		n.mu.Lock()
 		f := j.Files[i]
 		n.mu.Unlock()
 		p := f.Placement
 		p.Video.Path = n.resolve(t, p.Video.Rel)
-		var subs []importer.SubtitleRef
-		for k, s := range p.Subtitles {
-			if k < len(f.SubIndexes) && progress[f.SubIndexes[k]] < 1 {
-				continue
-			}
-			s.File.Path = n.resolve(t, s.File.Rel)
-			subs = append(subs, s)
-		}
-		p.Subtitles = subs
+		p.Subtitles = finishedSubs(f)
 		replace := j.Kind == "movie" || n.wanted(j, p)
 		res, err := im.Import(ctx, importer.Request{Title: title, Placement: p, Release: j.Release, Hash: j.Hash, Replace: replace})
 		n.mu.Lock()
@@ -668,10 +731,11 @@ func (n *Native) importReady(ctx context.Context, j *NativeJob, t qbit.Torrent, 
 		default:
 			ff.Imported, ff.Dest, ff.Note = true, res.Path, ""
 			ff.ImportedAt = time.Now().Format(time.RFC3339)
+			placedSubs(ff, p.Subtitles, res.SubtitleErrors)
 			if j.FirstReady.IsZero() {
 				j.FirstReady = time.Now()
 			}
-			imported++
+			changed++
 		}
 		n.mu.Unlock()
 		if err == nil && !res.Skipped {
@@ -680,7 +744,30 @@ func (n *Native) importReady(ctx context.Context, j *NativeJob, t qbit.Torrent, 
 			slog.Warn("native: import failed", "title", title.Title, "file", p.Video.Rel, "err", err)
 		}
 	}
-	if imported > 0 {
+	for _, i := range subsDue {
+		n.mu.Lock()
+		f := j.Files[i]
+		n.mu.Unlock()
+		subs := finishedSubs(f)
+		if len(subs) == 0 {
+			continue
+		}
+		placed, errs, err := im.AddSubtitles(f.Dest, subs)
+		n.mu.Lock()
+		ff := &j.Files[i]
+		if err != nil {
+			ff.SubAttempts++
+			ff.SubError = err.Error()
+		} else {
+			placedSubs(ff, subs, errs)
+		}
+		n.mu.Unlock()
+		if len(placed) > 0 {
+			changed++
+			slog.Info("native: placed late subtitles", "title", title.Title, "video", f.Dest, "subtitles", len(placed))
+		}
+	}
+	if changed > 0 {
 		n.refresh(j, title)
 		n.forgetShows()
 	}

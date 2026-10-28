@@ -41,6 +41,9 @@ type Result struct {
 	Replaced  []string `json:"replaced,omitempty"`
 	Skipped   bool     `json:"skipped,omitempty"`
 	Reason    string   `json:"reason,omitempty"`
+	// SubtitleErrors lists subtitles that could not be placed, by their
+	// path in the torrent. The video is imported regardless.
+	SubtitleErrors map[string]string `json:"subtitleErrors,omitempty"`
 }
 
 // Importer places download files into the library.
@@ -224,8 +227,10 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	// Move what is being replaced out of the way first (it may have the
-	// very name the new file needs), and put it back if placing fails.
+	// Move the videos being replaced out of the way first (one may have
+	// the very name the new file needs), and put them back if placing
+	// fails. Their sidecars (subtitles someone may have added by hand)
+	// are not touched until the new video is in place.
 	type moved struct{ from, to string }
 	var aside []moved
 	restore := func() {
@@ -234,14 +239,12 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	for _, old := range replace {
-		for _, f := range append([]string{old}, sidecars(old)...) {
-			bak := filepath.Join(filepath.Dir(f), ".roarr-replaced-"+filepath.Base(f))
-			if err := os.Rename(f, bak); err != nil {
-				restore()
-				return Result{}, fmt.Errorf("moving %s aside: %w", f, err)
-			}
-			aside = append(aside, moved{f, bak})
+		bak := filepath.Join(filepath.Dir(old), ".roarr-replaced-"+filepath.Base(old))
+		if err := os.Rename(old, bak); err != nil {
+			restore()
+			return Result{}, fmt.Errorf("moving %s aside: %w", old, err)
 		}
+		aside = append(aside, moved{old, bak})
 	}
 	method, err := Transfer(src, dest, im.cfg.Mode)
 	if err != nil {
@@ -256,21 +259,10 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 	res := Result{Path: dest, Method: method, Replaced: replace}
 
 	destBase := strings.TrimSuffix(dest, filepath.Ext(dest))
-	for _, s := range p.Subtitles {
-		ext := filepath.Ext(s.File.Rel)
-		name := SubtitleName(destBase, s.Info, ext)
-		for n := 2; ; n++ {
-			if _, err := os.Stat(name); errors.Is(err, os.ErrNotExist) {
-				break
-			}
-			name = SubtitleName(destBase, s.Info, "."+fmt.Sprint(n)+ext)
-		}
-		if _, err := Transfer(s.File.Path, name, im.cfg.Mode); err != nil {
-			slog.Warn("import: subtitle not placed", "file", s.File.Rel, "err", err)
-			continue
-		}
-		res.Subtitles = append(res.Subtitles, name)
+	for _, old := range replace {
+		keepSidecars(old, destBase)
 	}
+	res.Subtitles, res.SubtitleErrors = im.placeSubtitles(destBase, p.Subtitles, map[string]bool{})
 
 	_ = im.store.Forget(replace...)
 	rec := FileRecord{TitleKey: t.Key(), Season: p.Season, Episodes: p.Episodes, Path: dest, Subtitles: res.Subtitles, Size: si.Size(),
@@ -283,6 +275,91 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 	}
 	im.hooks.runAfter(ctx, Event{Candidate: cand, Path: dest, Subtitles: res.Subtitles, Method: method, Replaced: replace, At: rec.ImportedAt})
 	return res, nil
+}
+
+// AddSubtitles places subtitles next to a video roarr already imported:
+// subtitles whose download finished after the video, or whose first
+// transfer failed. It returns the placed paths and, by subtitle path in
+// the torrent, the ones that failed.
+func (im *Importer) AddSubtitles(video string, subs []SubtitleRef) ([]string, map[string]string, error) {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	if _, err := os.Stat(video); err != nil {
+		return nil, nil, err
+	}
+	im.store.mu.RLock()
+	var rec FileRecord
+	if r, ok := im.store.d.Files[video]; ok {
+		rec = *r
+	}
+	im.store.mu.RUnlock()
+	ours := map[string]bool{}
+	for _, p := range rec.Subtitles {
+		ours[p] = true
+	}
+	placed, errs := im.placeSubtitles(strings.TrimSuffix(video, filepath.Ext(video)), subs, ours)
+	if len(placed) > 0 && rec.Path != "" {
+		rec.Subtitles = append(rec.Subtitles, placed...)
+		if err := im.store.Put(rec); err != nil {
+			slog.Warn("import: could not save library.json", "err", err)
+		}
+	}
+	return placed, errs, nil
+}
+
+// placeSubtitles puts subtitles next to the video at destBase. ours holds
+// subtitles this import already placed: a second English subtitle gets
+// "<base>.en.2.srt" instead of overwriting the first. An older subtitle
+// with the same name is replaced only once the new one is fully in place.
+func (im *Importer) placeSubtitles(destBase string, subs []SubtitleRef, ours map[string]bool) ([]string, map[string]string) {
+	var placed []string
+	errs := map[string]string{}
+	for _, s := range subs {
+		ext := filepath.Ext(s.File.Rel)
+		name := SubtitleName(destBase, s.Info, ext)
+		for n := 2; ours[name]; n++ {
+			name = SubtitleName(destBase, s.Info, "."+fmt.Sprint(n)+ext)
+		}
+		var err error
+		if _, statErr := os.Stat(name); statErr == nil {
+			tmp := filepath.Join(filepath.Dir(name), ".roarr-new-"+filepath.Base(name))
+			_ = os.Remove(tmp)
+			if _, err = Transfer(s.File.Path, tmp, im.cfg.Mode); err == nil {
+				if err = os.Rename(tmp, name); err != nil {
+					_ = os.Remove(tmp)
+				}
+			}
+		} else {
+			_, err = Transfer(s.File.Path, name, im.cfg.Mode)
+		}
+		if err != nil {
+			slog.Warn("import: subtitle not placed", "file", s.File.Rel, "err", err)
+			errs[s.File.Rel] = err.Error()
+			continue
+		}
+		ours[name] = true
+		placed = append(placed, name)
+	}
+	return placed, errs
+}
+
+// keepSidecars moves the sidecars of a replaced video (subtitles added by
+// hand, for example) to the new video's name, so they stay with it. A
+// sidecar whose new name is taken stays where it is.
+func keepSidecars(oldVideo, newBase string) {
+	oldStem := strings.TrimSuffix(filepath.Base(oldVideo), filepath.Ext(oldVideo))
+	for _, sc := range sidecars(oldVideo) {
+		to := newBase + strings.TrimPrefix(filepath.Base(sc), oldStem)
+		if to == sc {
+			continue
+		}
+		if _, err := os.Stat(to); err == nil {
+			continue
+		}
+		if err := os.Rename(sc, to); err != nil {
+			slog.Warn("import: could not move sidecar to the new video", "path", sc, "err", err)
+		}
+	}
 }
 
 // rankOf is the quality rank of a library file: what roarr recorded when
