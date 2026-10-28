@@ -90,6 +90,9 @@ type Manager struct {
 	saved    int64
 	seq      int
 	kick     chan struct{}
+
+	saveMu                  sync.Mutex // serializes save()
+	beforeSwap, afterBackup func()     // test hooks
 }
 
 // New builds a manager; state is kept in dir/transcode.json.
@@ -372,14 +375,9 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 		m.finish(j, Skipped, fmt.Sprintf("only %.0f%% smaller (need %d%%), original kept", savedPercent(src.Size, out.Size), opts.MinSavings))
 		return
 	}
-	// The *arr may have replaced the file while we worked.
-	if now, err := os.Stat(path); err != nil || now.Size() != st.Size() || !now.ModTime().Equal(st.ModTime()) {
-		m.finish(j, Failed, "the original changed during conversion, result discarded")
-		return
-	}
 	_ = os.Chmod(tmp, st.Mode().Perm())
-	if err := os.Rename(tmp, path); err != nil {
-		m.finish(j, Failed, "cannot replace the original: "+err.Error())
+	if err := m.swap(path, tmp, st); err != nil {
+		m.finish(j, Failed, err.Error())
 		return
 	}
 	saved := src.Size - out.Size
@@ -392,6 +390,56 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 	if m.onDone != nil {
 		m.onDone(*j)
 	}
+}
+
+func sameFile(a, b os.FileInfo) bool {
+	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+}
+
+// swap puts the verified file tmp in place of path. Sonarr/Radarr may
+// replace path at any time, so the original is first moved aside and checked
+// to be the very file that was encoded (same inode, size and mtime as orig).
+// A newer file is put back untouched. The new file is linked in without
+// overwriting, so a file that appears in the gap is never clobbered. The
+// backup is deleted only after the new file is in place.
+func (m *Manager) swap(path, tmp string, orig os.FileInfo) error {
+	if now, err := os.Stat(path); err != nil || !sameFile(orig, now) {
+		return errors.New("the original changed during conversion, result discarded")
+	}
+	if m.beforeSwap != nil {
+		m.beforeSwap()
+	}
+	bak := backupPath(path)
+	_ = os.Remove(bak)
+	if err := os.Rename(path, bak); err != nil {
+		return fmt.Errorf("cannot replace the original: %w", err)
+	}
+	if m.afterBackup != nil {
+		m.afterBackup()
+	}
+	moved, err := os.Stat(bak)
+	if err != nil || !sameFile(orig, moved) {
+		return restore(bak, path, "the original changed during conversion, result discarded")
+	}
+	if err := os.Link(tmp, path); err != nil {
+		return restore(bak, path, "cannot replace the original: "+err.Error())
+	}
+	_ = os.Remove(tmp)
+	_ = os.Remove(bak)
+	return nil
+}
+
+// restore puts the backup back without overwriting anything at path.
+func restore(bak, path, reason string) error {
+	if err := os.Link(bak, path); err != nil {
+		return fmt.Errorf("%s; a newer file is already in place, the previous one was kept as %s", reason, bak)
+	}
+	_ = os.Remove(bak)
+	return errors.New(reason)
+}
+
+func backupPath(path string) string {
+	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".roarr-orig.bak")
 }
 
 func tempPath(path string) string {
@@ -422,6 +470,8 @@ func (m *Manager) load() {
 }
 
 func (m *Manager) save() {
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
 	m.mu.Lock()
 	finished := 0
 	for i := len(m.jobs) - 1; i >= 0; i-- {

@@ -15,9 +15,9 @@ type Import struct {
 	Path     string // file in the library, as the *arr sees it
 }
 
-// RecentImports lists the newest import events, newest first. Event type 3
-// is downloadFolderImported in both Sonarr and Radarr.
-func (c *Client) RecentImports(ctx context.Context, pageSize int) ([]Import, error) {
+// RecentImports lists one page (1-based) of import events, newest first.
+// Event type 3 is downloadFolderImported in both Sonarr and Radarr.
+func (c *Client) RecentImports(ctx context.Context, page, pageSize int) ([]Import, error) {
 	var res struct {
 		Records []struct {
 			ID       int `json:"id"`
@@ -28,7 +28,7 @@ func (c *Client) RecentImports(ctx context.Context, pageSize int) ([]Import, err
 			} `json:"data"`
 		} `json:"records"`
 	}
-	q := url.Values{"page": {"1"}, "pageSize": {strconv.Itoa(pageSize)}, "sortKey": {"date"}, "sortDirection": {"descending"}, "eventType": {"3"}}
+	q := url.Values{"page": {strconv.Itoa(page)}, "pageSize": {strconv.Itoa(pageSize)}, "sortKey": {"date"}, "sortDirection": {"descending"}, "eventType": {"3"}}
 	if err := c.get(ctx, "/history", q, &res); err != nil {
 		return nil, err
 	}

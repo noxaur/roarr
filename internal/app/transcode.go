@@ -56,9 +56,8 @@ func (a *App) afterTranscode(j transcode.Job) {
 func (a *App) transcodeImports(ctx context.Context) {
 	cursorPath := filepath.Join(a.DataDir, "transcode-cursor.json")
 	cursor := map[string]int{}
-	firstRun := true
-	if b, err := os.ReadFile(cursorPath); err == nil && json.Unmarshal(b, &cursor) == nil {
-		firstRun = false
+	if b, err := os.ReadFile(cursorPath); err == nil {
+		_ = json.Unmarshal(b, &cursor)
 	}
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
@@ -72,42 +71,30 @@ func (a *App) transcodeImports(ctx context.Context) {
 			if src.cl == nil {
 				continue
 			}
-			imports, err := src.cl.RecentImports(ctx, 200)
+			last, seen := cursor[src.name]
+			cl := src.cl
+			fresh, next, err := newImports(func(page int) ([]arr.Import, error) {
+				return cl.RecentImports(ctx, page, importPageSize)
+			}, last, seen)
 			if err != nil {
 				slog.Debug("transcode: history", "service", src.name, "err", err)
-				continue
+				continue // cursor stays; the next poll retries everything
 			}
-			last, seen := cursor[src.name]
-			var fresh []arr.Import
-			maxID := last
-			for _, im := range imports {
-				maxID = max(maxID, im.ID)
-				if seen && im.ID > last && im.Path != "" {
-					fresh = append(fresh, im)
-				}
-			}
-			if !seen && len(imports) == 0 {
-				continue // nothing to anchor on yet
-			}
-			// Oldest first, so episodes convert in the order they arrived.
-			sort.Slice(fresh, func(i, k int) bool { return fresh[i].ID < fresh[k].ID })
 			on := a.Settings.Get().Transcode
 			for _, im := range fresh {
 				if on.Enabled {
 					a.queueTranscode(src.name, im, on.PathMap)
 				}
 			}
-			// First run (no cursor): start from now, never the whole backlog.
-			if maxID != last || !seen {
-				cursor[src.name] = maxID
+			if next != last || !seen {
+				cursor[src.name] = next
 				changed = true
 			}
 		}
-		if changed || firstRun {
+		if changed {
 			if b, err := json.Marshal(cursor); err == nil {
 				_ = os.WriteFile(cursorPath, b, 0o600)
 			}
-			firstRun = false
 		}
 		select {
 		case <-ctx.Done():
@@ -115,6 +102,45 @@ func (a *App) transcodeImports(ctx context.Context) {
 		case <-t.C:
 		}
 	}
+}
+
+const (
+	importPageSize = 200
+	importMaxPages = 50 // 10 000 imports between two polls is the most we follow
+)
+
+// newImports returns the imports newer than the cursor, oldest first, and
+// the cursor to store. Without a cursor (first run) nothing is returned: the
+// newest id, or 0 for an empty history, becomes the cursor so only later
+// imports are converted. With one, history is read page by page until it
+// reaches records at or below the cursor, so a backlog is never skipped. An
+// error anywhere returns no imports and leaves the cursor alone.
+func newImports(fetch func(page int) ([]arr.Import, error), last int, seen bool) ([]arr.Import, int, error) {
+	next := last
+	var fresh []arr.Import
+	got := map[int]bool{}
+	for page := 1; page <= importMaxPages; page++ {
+		recs, err := fetch(page)
+		if err != nil {
+			return nil, last, err
+		}
+		reached := false
+		for _, im := range recs {
+			next = max(next, im.ID)
+			if im.ID <= last {
+				reached = true
+			} else if seen && im.Path != "" && !got[im.ID] {
+				got[im.ID] = true
+				fresh = append(fresh, im)
+			}
+		}
+		if !seen || reached || len(recs) < importPageSize {
+			break
+		}
+	}
+	// Oldest first, so episodes convert in the order they arrived.
+	sort.Slice(fresh, func(i, k int) bool { return fresh[i].ID < fresh[k].ID })
+	return fresh, next, nil
 }
 
 func sonarrClient(c *Clients) *arr.Client {

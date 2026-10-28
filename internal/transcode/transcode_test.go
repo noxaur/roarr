@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -348,5 +349,83 @@ func TestQueueRunsWithConcurrencyLimitAndPersists(t *testing.T) {
 	again := New(f, dir)
 	if st := again.Status(); st.Counts.Done != 2 || st.BytesSaved != 1800 {
 		t.Errorf("state not restored: %+v", st)
+	}
+}
+
+// replaceFile swaps in a different file at path (new inode), like a *arr
+// importing an upgrade.
+func replaceFile(t *testing.T, path string, content int) {
+	t.Helper()
+	nf := path + ".new"
+	if err := os.WriteFile(nf, make([]byte, content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(nf, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSwapKeepsNewerFileReplacedBeforeBackup(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	// Same size and mtime, different inode: only an identity check sees it.
+	m.beforeSwap = func() {
+		st, _ := os.Stat(path)
+		replaceFile(t, path, 1000)
+		_ = os.Chtimes(path, st.ModTime(), st.ModTime())
+	}
+	m.process(context.Background(), j, m.opts, EncSVT)
+	if j.State != Failed || size(t, path) != 1000 {
+		t.Fatalf("state %s (%s), size %d", j.State, j.Message, size(t, path))
+	}
+	for _, p := range []string{tempPath(path), backupPath(path)} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s left behind", p)
+		}
+	}
+}
+
+func TestSwapDoesNotClobberFileAppearingInGap(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	m.afterBackup = func() { _ = os.WriteFile(path, make([]byte, 777), 0o644) } // *arr imports into the gap
+	m.process(context.Background(), j, m.opts, EncSVT)
+	if j.State != Failed || size(t, path) != 777 {
+		t.Fatalf("state %s (%s), size %d", j.State, j.Message, size(t, path))
+	}
+	if size(t, backupPath(path)) != 1000 {
+		t.Error("previous file not kept as backup")
+	}
+}
+
+func TestSwapLeavesNoBackupOnSuccess(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	m.process(context.Background(), j, m.opts, EncSVT)
+	if j.State != Done || size(t, path) != 300 {
+		t.Fatalf("state %s (%s)", j.State, j.Message)
+	}
+	if _, err := os.Stat(backupPath(path)); !os.IsNotExist(err) {
+		t.Error("backup left behind")
+	}
+}
+
+func TestConcurrentSavesStayValid(t *testing.T) {
+	dir := t.TempDir()
+	m := New(&fakeRunner{}, dir)
+	m.SetOptions(Options{Enabled: true, Concurrency: 1})
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			m.Submit(Item{Path: fmt.Sprintf("/a/%d.mkv", i)})
+			m.save()
+		}(i)
+	}
+	wg.Wait()
+	m.save()
+	if st := New(&fakeRunner{}, dir).Status(); st.Counts.Queued != 40 {
+		t.Errorf("reloaded %d queued jobs, want 40", st.Counts.Queued)
 	}
 }
