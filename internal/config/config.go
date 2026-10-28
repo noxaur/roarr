@@ -76,6 +76,10 @@ type Import struct {
 	// Category and SavePath are used for torrents roarr adds in native mode.
 	Category string `json:"category,omitempty"`
 	SavePath string `json:"savePath,omitempty"`
+	// MissingSearchHours is how often roarr searches for monitored episodes
+	// and movies that aired but are not on disk (native library only).
+	// 0 turns the search off.
+	MissingSearchHours int `json:"missingSearchHours,omitempty"`
 }
 
 // Native reports whether roarr imports by itself.
@@ -180,6 +184,7 @@ var envSpec = []struct {
 	{"QBIT_PATH_MAP", func(s *Settings, v string) { s.Import.PathMap = v }},
 	{"QBIT_CATEGORY", func(s *Settings, v string) { s.Import.Category = v }},
 	{"QBIT_SAVE_PATH", func(s *Settings, v string) { s.Import.SavePath = v }},
+	{"MISSING_SEARCH_HOURS", func(s *Settings, v string) { s.Import.MissingSearchHours = atoiNonNeg(v, 0) }},
 }
 
 func truthy(v string) bool {

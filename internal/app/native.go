@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -39,6 +40,12 @@ type Native struct {
 	refreshMu      sync.Mutex
 	refreshAt      map[string]time.Time
 	refreshPending map[string]bool
+
+	// libMu keeps imports and deletes of library files apart.
+	libMu sync.Mutex
+
+	searchMu  sync.Mutex
+	searching map[string]bool // title keys with a missing search running
 }
 
 // NativeJob is one torrent roarr downloads and imports itself.
@@ -68,6 +75,12 @@ type NativeJob struct {
 	Size        int64        `json:"size"`
 	Files       []NativeFile `json:"files"`
 	Skipped     []string     `json:"skipped,omitempty"` // files left out, with reasons
+	// Archives are the ZIP files of a release that holds no video. roarr
+	// unpacks them into UnpackDirs when the download is complete, then
+	// imports the videos inside.
+	Archives   []string `json:"archives,omitempty"`
+	Unpacked   bool     `json:"unpacked,omitempty"`
+	UnpackDirs []string `json:"unpackDirs,omitempty"`
 }
 
 // NativeFile is one video in a native job and its import state.
@@ -118,7 +131,7 @@ func (f NativeFile) waitingForSubs() bool {
 
 func newNative(a *App, dir string) *Native {
 	n := &Native{app: a, path: filepath.Join(dir, "native.json"), jobs: map[string]*NativeJob{}, kick: make(chan struct{}, 1),
-		refreshAt: map[string]time.Time{}, refreshPending: map[string]bool{}}
+		refreshAt: map[string]time.Time{}, refreshPending: map[string]bool{}, searching: map[string]bool{}}
 	st, err := importer.OpenStore(filepath.Join(dir, "library.json"))
 	if err != nil {
 		// Never overwrite a file we could not read: run from memory.
@@ -165,22 +178,7 @@ func (n *Native) markOnDisk(d *SeriesDetail) {
 	if _, ok := n.store.Title(key); !ok {
 		return
 	}
-	queued := map[[2]int]bool{}
-	for _, j := range n.Jobs() {
-		if j.TitleKey != key || j.State == "done" || j.State == "failed" {
-			continue
-		}
-		for _, w := range j.Wanted {
-			queued[w] = true
-		}
-		for _, f := range j.Files {
-			if !f.Skipped && !f.Imported {
-				for _, e := range f.Placement.Episodes {
-					queued[[2]int{f.Placement.Season, e}] = true
-				}
-			}
-		}
-	}
+	queued := n.queued(key)
 	for si := range d.Seasons {
 		for ei := range d.Seasons[si].Episodes {
 			e := &d.Seasons[si].Episodes[ei]
@@ -232,7 +230,21 @@ func (n *Native) grab(ctx context.Context, g GrabRequest) (GrabResult, error) {
 	if err != nil {
 		return GrabResult{}, err
 	}
+	if tg.Title.Poster == "" {
+		tg.Title.Poster = tg.Poster
+	}
 	if err := n.store.PutTitle(tg.Title); err != nil {
+		slog.Warn("native import: could not save library.json", "err", err)
+	}
+	// What you get is monitored, as in Sonarr/Radarr: the title, and the
+	// episodes you asked for.
+	if _, err := n.store.UpdateTitle(tg.Title.Key(), func(t *importer.Title) {
+		t.Unmonitored = false
+		for _, w := range tg.Wanted {
+			id := importer.EpisodeID(w[0], w[1])
+			t.Monitor, t.Ignore = addInt(t.Monitor, id), removeInt(t.Ignore, id)
+		}
+	}); err != nil {
 		slog.Warn("native import: could not save library.json", "err", err)
 	}
 	st := a.Settings.Get()
@@ -253,10 +265,14 @@ func (n *Native) grab(ctx context.Context, g GrabRequest) (GrabResult, error) {
 		Href: tg.Href, Poster: tg.Poster, ArrID: tg.ArrID, Wanted: tg.Wanted, Watch: watch, AddedPaused: watch})
 	n.forgetShows()
 	res := GrabResult{OK: true, Via: "roarr", Hash: hash, WatchFirst: watch, Message: "Sent to qBittorrent; roarr imports it into the library when it finishes."}
+	libID := tg.ArrID
+	if a.nativeLib(tg.Title.Kind) {
+		libID = NativeID(tg.Title) // the title is in roarr's library now
+	}
 	if g.Kind == "movie" {
-		res.MovieID = tg.ArrID
+		res.MovieID = libID
 	} else {
-		res.SeriesID = tg.ArrID
+		res.SeriesID = libID
 	}
 	if watch {
 		res.Message = "Sent to qBittorrent; episodes are imported one by one, in order, as they finish."
@@ -411,6 +427,9 @@ func (n *Native) step(ctx context.Context, c *Clients, j *NativeJob) bool {
 			n.set(j, func() { j.Resumed = true })
 		}
 	}
+	if len(j.Archives) > 0 && !j.Unpacked && t.Progress >= 1 && j.State != "failed" {
+		n.unpack(j, t)
+	}
 	n.importReady(ctx, j, t, files)
 
 	n.mu.Lock()
@@ -435,7 +454,9 @@ func (n *Native) step(ctx context.Context, c *Clients, j *NativeJob) bool {
 		}
 	}
 	switch {
-	case !j.Planned:
+	case !j.Planned || j.State == "failed":
+	case len(j.Archives) > 0 && !j.Unpacked:
+		j.State = "downloading"
 	case pending == 0 && failed > 0:
 		j.State, j.Message = "failed", fmt.Sprintf("%d of %d file(s) could not be imported: %s", failed, failed+imported, lastErr)
 	case pending == 0 && subsWaiting > 0 && (j.CompletedAt.IsZero() || time.Since(j.CompletedAt) < 10*time.Minute):
@@ -443,6 +464,11 @@ func (n *Native) step(ctx context.Context, c *Clients, j *NativeJob) bool {
 		j.State = "importing"
 	case pending == 0:
 		j.State, j.Message = "done", ""
+		if len(j.UnpackDirs) > 0 {
+			dirs := j.UnpackDirs
+			j.UnpackDirs = nil
+			go removeUnpacked(dirs)
+		}
 	case !j.CompletedAt.IsZero() && time.Since(j.CompletedAt) > 30*time.Minute:
 		j.State, j.Message = "failed", fmt.Sprintf("%d file(s) were never imported", pending)
 	case t.Progress >= 1:
@@ -472,7 +498,8 @@ func (n *Native) failAfter(j *NativeJob, d time.Duration, msg string) bool {
 }
 
 // plan maps the torrent's files to placements, decides what to skip and
-// sets file priorities accordingly.
+// sets file priorities accordingly. A release that holds no video but ZIP
+// archives is unpacked when it is complete (see unpack).
 func (n *Native) plan(ctx context.Context, c *Clients, j *NativeJob, files []qbit.File) {
 	title, ok := n.store.Title(j.TitleKey)
 	if !ok {
@@ -482,39 +509,16 @@ func (n *Native) plan(ctx context.Context, c *Clients, j *NativeJob, files []qbi
 		return
 	}
 	src := make([]importer.SourceFile, 0, len(files))
-	byRel := map[string]qbit.File{}
+	index := map[string]int{}
 	for _, f := range files {
 		rel := strings.TrimSuffix(f.Name, ".!qB")
 		src = append(src, importer.SourceFile{Rel: rel, Size: f.Size})
-		byRel[rel] = f
+		index[rel] = f.Index
 	}
-	var ps []importer.Placement
-	var skips []importer.Skip
-	if j.Kind == "movie" {
-		ps, skips = importer.PlanMovie(src, j.Release, title)
-	} else {
-		ps, skips = importer.PlanTV(src, j.Release, title)
-	}
-	im := n.Importer()
+	nf, skips := n.placements(j, title, src, index)
 	keep := map[int]bool{}
 	var subs []int
-	var nf []NativeFile
-	for _, p := range ps {
-		f := NativeFile{Placement: p, Index: byRel[p.Video.Rel].Index, Size: p.Video.Size}
-		for _, s := range p.Subtitles {
-			f.SubIndexes = append(f.SubIndexes, byRel[s.File.Rel].Index)
-		}
-		if j.Kind == "tv" && !n.wanted(j, p) {
-			need := false
-			for _, e := range p.Episodes {
-				if len(im.Existing(title, p.Season, []int{e})) == 0 {
-					need = true
-				}
-			}
-			if !need {
-				f.Skipped, f.Note = true, "already in the library"
-			}
-		}
+	for _, f := range nf {
 		if !f.Skipped {
 			keep[f.Index] = true
 			for _, s := range f.SubIndexes {
@@ -522,7 +526,15 @@ func (n *Native) plan(ctx context.Context, c *Clients, j *NativeJob, files []qbi
 				subs = append(subs, s)
 			}
 		}
-		nf = append(nf, f)
+	}
+	var archives []string
+	if len(nf) == 0 {
+		for _, f := range files {
+			if rel := strings.TrimSuffix(f.Name, ".!qB"); importer.IsArchive(rel) {
+				archives = append(archives, rel)
+				keep[f.Index] = true
+			}
+		}
 	}
 	var skipIdx []int
 	for _, f := range files {
@@ -538,23 +550,138 @@ func (n *Native) plan(ctx context.Context, c *Clients, j *NativeJob, files []qbi
 	if len(subs) > 0 {
 		_ = c.QBit.SetFilePriority(ctx, j.Hash, subs, qbit.PrioMax) // tiny; ready before their video
 	}
-	if j.Watch {
+	if j.Watch && len(archives) == 0 {
 		if err := c.QBit.SetSequential(ctx, j.Hash, watchSequential); err != nil {
 			slog.Warn("native: sequential toggle failed", "err", err)
 		}
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	j.Files, j.Skipped, j.Planned, j.Message = nf, skips, true, ""
+	if j.Files == nil {
+		j.Files = []NativeFile{}
+	}
+	switch {
+	case len(archives) > 0:
+		j.Archives, j.Watch = archives, false
+		j.Message = "the release is packed in ZIP archives; roarr unpacks them when the download is complete"
+	case len(nf) == 0:
+		j.State, j.Message = "failed", "nothing in this download matches "+title.Title
+		for _, f := range files {
+			if importer.IsUnsupportedArchive(f.Name) {
+				j.Message += " (roarr cannot unpack RAR or 7-Zip archives)"
+				break
+			}
+		}
+	}
+}
+
+// placements plans source files against a title. index gives the
+// torrent file index of a path; files missing from it (unpacked from an
+// archive) get index -1.
+func (n *Native) placements(j *NativeJob, title importer.Title, src []importer.SourceFile, index map[string]int) ([]NativeFile, []string) {
+	idx := func(rel string) int {
+		if i, ok := index[rel]; ok {
+			return i
+		}
+		return -1
+	}
+	var ps []importer.Placement
+	var skips []importer.Skip
+	if j.Kind == "movie" {
+		ps, skips = importer.PlanMovie(src, j.Release, title)
+	} else {
+		ps, skips = importer.PlanTV(src, j.Release, title)
+	}
+	im := n.Importer()
+	var nf []NativeFile
+	for _, p := range ps {
+		f := NativeFile{Placement: p, Index: idx(p.Video.Rel), Size: p.Video.Size}
+		for _, s := range p.Subtitles {
+			f.SubIndexes = append(f.SubIndexes, idx(s.File.Rel))
+		}
+		if j.Kind == "tv" && !n.wanted(j, p) {
+			need := false
+			for _, e := range p.Episodes {
+				if len(im.Existing(title, p.Season, []int{e})) == 0 {
+					need = true
+				}
+			}
+			if !need {
+				f.Skipped, f.Note = true, "already in the library"
+			}
+		}
+		nf = append(nf, f)
 	}
 	var skipped []string
 	for _, s := range skips {
 		skipped = append(skipped, s.File.Rel+": "+s.Reason)
 	}
+	return nf, skipped
+}
+
+// unpack unpacks the ZIP archives of a complete download next to them
+// (importer.UnpackDir) and plans the videos inside. The unpacked files have
+// no torrent index (-1) and count as complete.
+func (n *Native) unpack(j *NativeJob, t qbit.Torrent) bool {
+	title, ok := n.store.Title(j.TitleKey)
+	if !ok {
+		return false
+	}
+	n.mu.Lock()
+	archives := append([]string(nil), j.Archives...)
+	n.mu.Unlock()
+	var src []importer.SourceFile
+	var dirs []string
+	for _, rel := range archives {
+		p := n.resolve(t, rel)
+		st, err := os.Stat(p)
+		if err != nil {
+			return n.fail(j, "the archive is not readable from roarr (check QBIT_PATH_MAP): "+err.Error())
+		}
+		dir := filepath.Join(filepath.Dir(p), importer.UnpackDir(j.Hash))
+		dirs = append(dirs, dir)
+		names, err := importer.Unzip(p, dir, importer.UnpackLimit(st.Size()))
+		if err != nil {
+			n.set(j, func() { j.UnpackDirs = dirs })
+			return n.fail(j, "could not unpack "+path.Base(rel)+": "+err.Error())
+		}
+		base := path.Join(path.Dir(rel), importer.UnpackDir(j.Hash))
+		for _, name := range names {
+			fp := filepath.Join(dir, filepath.FromSlash(name))
+			fi, err := os.Stat(fp)
+			if err != nil {
+				continue
+			}
+			src = append(src, importer.SourceFile{Rel: path.Join(base, name), Path: fp, Size: fi.Size()})
+		}
+	}
+	nf, skips := n.placements(j, title, src, nil)
+	for i := range nf {
+		nf[i].Progress = 1
+	}
+	slog.Info("native: unpacked", "release", j.Release, "archives", len(archives), "videos", len(nf))
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	j.Files, j.Skipped, j.Planned, j.Message = nf, skipped, true, ""
+	j.Unpacked, j.UnpackDirs, j.Files, j.Skipped, j.Message = true, dirs, nf, append(j.Skipped, skips...), ""
 	if j.Files == nil {
 		j.Files = []NativeFile{}
 	}
-	if len(ps) == 0 {
-		j.State, j.Message = "failed", "nothing in this download matches "+title.Title
+	if len(nf) == 0 {
+		j.State, j.Message = "failed", "nothing in the archives matches "+title.Title
+	}
+	return true
+}
+
+// removeUnpacked removes the folders a job unpacked archives into. The
+// library keeps its own links or copies of the files.
+func removeUnpacked(dirs []string) {
+	for _, d := range dirs {
+		if strings.HasPrefix(filepath.Base(d), ".roarr-unpacked-") {
+			if err := os.RemoveAll(d); err != nil {
+				slog.Warn("native: could not remove unpacked files", "dir", d, "err", err)
+			}
+		}
 	}
 }
 
@@ -658,7 +785,7 @@ func (n *Native) importReady(ctx context.Context, j *NativeJob, t qbit.Torrent, 
 	if !ok {
 		return
 	}
-	progress := map[int]float64{}
+	progress := map[int]float64{-1: 1} // -1: unpacked from an archive
 	for _, f := range files {
 		progress[f.Index] = f.Progress
 	}
@@ -702,6 +829,8 @@ func (n *Native) importReady(ctx context.Context, j *NativeJob, t qbit.Torrent, 
 			break
 		}
 	}
+	n.libMu.Lock()
+	defer n.libMu.Unlock()
 	im := n.Importer()
 	changed := 0
 	for _, i := range ready {
@@ -789,12 +918,20 @@ func (n *Native) forgetShows() {
 }
 
 // refresh asks Jellyfin (and Sonarr/Radarr, when they know the title) to
-// pick up new files. Refreshes are coalesced per title, at most one every
-// 15 s, and one always runs after the latest import.
+// pick up new files of a job.
 func (n *Native) refresh(j *NativeJob, t importer.Title) {
-	key := j.TitleKey
+	n.refreshTitle(t, j.ArrID, false)
+}
+
+// refreshTitle asks Jellyfin (and Sonarr/Radarr, for an arrID) to rescan a
+// title. full asks for a scan of the whole library: the title's folder is
+// gone, so Jellyfin cannot refresh the item. Refreshes are coalesced per
+// title, at most one every 15 s, and one always runs after the latest
+// change.
+func (n *Native) refreshTitle(t importer.Title, arrID int, full bool) {
+	key, kind := t.Key(), t.Kind
 	n.refreshMu.Lock()
-	if n.refreshPending[key] {
+	if n.refreshPending[key] && !full {
 		n.refreshMu.Unlock()
 		return
 	}
@@ -804,7 +941,6 @@ func (n *Native) refresh(j *NativeJob, t importer.Title) {
 	}
 	n.refreshPending[key] = true
 	n.refreshMu.Unlock()
-	kind, arrID := j.Kind, j.ArrID
 	go func() {
 		time.Sleep(wait)
 		n.refreshMu.Lock()
@@ -827,6 +963,12 @@ func (n *Native) refresh(j *NativeJob, t importer.Title) {
 			}
 		}
 		if c.Jellyfin == nil || n.app.Settings.Get().Jellyfin.APIKey == "" {
+			return
+		}
+		if full {
+			if err := c.Jellyfin.RefreshLibrary(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Warn("jellyfin refresh failed", "err", err)
+			}
 			return
 		}
 		jkind, provider, id := "Series", "Tmdb", strconv.Itoa(t.TmdbID)

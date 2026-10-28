@@ -71,6 +71,7 @@ func New(ctx context.Context, store *config.Store, dataDir string) *App {
 	go a.Watch.loop(ctx)
 	go a.Verify.loop(ctx)
 	go a.Native.loop(ctx)
+	go a.Native.missingLoop(ctx)
 	go a.sweepLoop(ctx)
 	go a.seerrLoop(ctx)
 	a.startTranscode(ctx)

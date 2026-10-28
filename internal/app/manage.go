@@ -19,6 +19,9 @@ import (
 type EpisodeAction struct {
 	Action     string `json:"action"` // delete | monitor | unmonitor | search
 	EpisodeIDs []int  `json:"episodeIds"`
+	// RemoveTorrent, with delete in the native library, also removes the
+	// torrents the deleted files came from.
+	RemoveTorrent bool `json:"removeTorrent,omitempty"`
 }
 
 // ActionResult says what an action did, for the toast.
@@ -30,6 +33,9 @@ type ActionResult struct {
 
 // SeriesEpisodes applies an action to episodes of a library show.
 func (a *App) SeriesEpisodes(ctx context.Context, seriesID int, act EpisodeAction) (ActionResult, error) {
+	if a.nativeLib("tv") {
+		return a.nativeEpisodes(ctx, seriesID, act)
+	}
 	c := a.C()
 	if c.Sonarr == nil {
 		return ActionResult{}, fmt.Errorf("sonarr %w", ErrNotConfigured)
@@ -103,6 +109,9 @@ type TitlePatch struct {
 
 // PatchSeries changes a library show.
 func (a *App) PatchSeries(ctx context.Context, id int, p TitlePatch) error {
+	if a.nativeLib("tv") {
+		return a.nativePatch("tv", id, p)
+	}
 	c := a.C()
 	if c.Sonarr == nil {
 		return fmt.Errorf("sonarr %w", ErrNotConfigured)
@@ -127,6 +136,9 @@ func (a *App) PatchSeries(ctx context.Context, id int, p TitlePatch) error {
 
 // PatchMovie changes a library movie.
 func (a *App) PatchMovie(ctx context.Context, id int, p TitlePatch) error {
+	if a.nativeLib("movie") {
+		return a.nativePatch("movie", id, p)
+	}
 	c := a.C()
 	if c.Radarr == nil {
 		return fmt.Errorf("radarr %w", ErrNotConfigured)
@@ -147,6 +159,9 @@ func (a *App) PatchMovie(ctx context.Context, id int, p TitlePatch) error {
 // "refresh" (metadata + rescan disk) or "search" (its own search for what
 // is missing).
 func (a *App) TitleCommand(ctx context.Context, kind string, id int, name string) (ActionResult, error) {
+	if a.nativeLib(kind) {
+		return a.nativeCommand(ctx, kind, id, name)
+	}
 	c := a.C()
 	defer a.touched(ctx, kind, id)
 	if kind == "movie" {
@@ -174,8 +189,12 @@ func (a *App) TitleCommand(ctx context.Context, kind string, id int, name string
 	return ActionResult{}, fmt.Errorf("unknown command %q", name)
 }
 
-// DeleteMovieFile removes a movie's file from disk.
-func (a *App) DeleteMovieFile(ctx context.Context, id int) (ActionResult, error) {
+// DeleteMovieFile removes a movie's file from disk. removeTorrent (native
+// library only) also removes the torrent the file came from.
+func (a *App) DeleteMovieFile(ctx context.Context, id int, removeTorrent bool) (ActionResult, error) {
+	if a.nativeLib("movie") {
+		return a.nativeDeleteMovieFile(ctx, id, removeTorrent)
+	}
 	c := a.C()
 	if c.Radarr == nil {
 		return ActionResult{}, fmt.Errorf("radarr %w", ErrNotConfigured)
@@ -195,8 +214,12 @@ func (a *App) DeleteMovieFile(ctx context.Context, id int) (ActionResult, error)
 }
 
 // RemoveTitle deletes a show or movie from Sonarr/Radarr, optionally with
-// everything on disk.
-func (a *App) RemoveTitle(ctx context.Context, kind string, id int, deleteFiles bool) error {
+// everything on disk. In the native library, removeTorrent also removes
+// the title's finished torrents.
+func (a *App) RemoveTitle(ctx context.Context, kind string, id int, deleteFiles, removeTorrent bool) error {
+	if a.nativeLib(kind) {
+		return a.nativeRemoveTitle(ctx, kind, id, deleteFiles, removeTorrent)
+	}
 	c := a.C()
 	var err error
 	if kind == "movie" {

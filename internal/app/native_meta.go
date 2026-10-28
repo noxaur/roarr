@@ -60,6 +60,9 @@ func (a *App) nativeShow(ctx context.Context, g GrabRequest) (*nativeTarget, err
 	}
 	if !d.Synthetic {
 		t.Episodes = episodesOf(d)
+		if old, ok := a.Native.store.Title(t.Key()); ok && a.nativeLib("tv") {
+			t.Partial = old.Partial // the native page lists the stored episodes
+		}
 	} else if c.Seerr != nil && t.TmdbID != 0 {
 		var seasons []int
 		for _, s := range d.Seasons {
@@ -84,9 +87,12 @@ func (a *App) nativeShow(ctx context.Context, g GrabRequest) (*nativeTarget, err
 	a.Native.keepName(&t)
 
 	tg := &nativeTarget{Title: t, Poster: d.Poster}
-	if d.InLibrary {
+	switch {
+	case a.nativeLib("tv") && NativeID(t) != 0:
+		tg.Href = fmt.Sprintf("/tv/%d", NativeID(t))
+	case d.InLibrary:
 		tg.ArrID, tg.Href = d.ID, fmt.Sprintf("/tv/%d", d.ID)
-	} else {
+	default:
 		tg.Href = fmt.Sprintf("/tv/tvdb/%d?tmdb=%d", t.TvdbID, t.TmdbID)
 	}
 	byID := map[int][2]int{}
@@ -175,9 +181,12 @@ func (a *App) nativeMovie(ctx context.Context, g GrabRequest) (*nativeTarget, er
 	}
 	a.Native.keepName(&t)
 	tg := &nativeTarget{Title: t, Poster: d.Poster}
-	if d.InLibrary {
+	switch {
+	case a.nativeLib("movie") && NativeID(t) != 0:
+		tg.Href = fmt.Sprintf("/movie/%d", NativeID(t))
+	case d.InLibrary:
 		tg.ArrID, tg.Href = d.ID, fmt.Sprintf("/movie/%d", d.ID)
-	} else {
+	default:
 		tg.Href = fmt.Sprintf("/movie/tmdb/%d", t.TmdbID)
 	}
 	return tg, nil

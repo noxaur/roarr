@@ -81,12 +81,60 @@ func (s *Store) saveLocked() error {
 	return os.Rename(tmp, s.path)
 }
 
-// PutTitle remembers (or refreshes) a tracked title.
+// PutTitle remembers (or refreshes) a tracked title. The management
+// fields (Added, monitoring) of a title already stored stay; an empty
+// Poster or MetaAt keeps the stored one.
 func (s *Store) PutTitle(t Title) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if old, ok := s.d.Titles[t.Key()]; ok {
+		t.Added, t.Unmonitored, t.Monitor, t.Ignore = old.Added, old.Unmonitored, old.Monitor, old.Ignore
+		if t.Poster == "" {
+			t.Poster = old.Poster
+		}
+		if t.MetaAt == "" {
+			t.MetaAt = old.MetaAt
+		}
+	}
+	if t.Added == "" {
+		t.Added = time.Now().UTC().Format(time.DateOnly)
+	}
 	s.d.Titles[t.Key()] = t
 	return s.saveLocked()
+}
+
+// UpdateTitle changes a stored title in place. It returns false when the
+// title is not tracked.
+func (s *Store) UpdateTitle(key string, fn func(*Title)) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.d.Titles[key]
+	if !ok {
+		return false, nil
+	}
+	fn(&t)
+	s.d.Titles[key] = t
+	return true, s.saveLocked()
+}
+
+// RemoveTitle stops tracking a title. Its file records stay until the
+// files are deleted or forgotten.
+func (s *Store) RemoveTitle(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.d.Titles, key)
+	return s.saveLocked()
+}
+
+// Record returns the record of a library path.
+func (s *Store) Record(path string) (FileRecord, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r, ok := s.d.Files[path]
+	if !ok {
+		return FileRecord{}, false
+	}
+	return *r, true
 }
 
 // Title returns a tracked title by key.

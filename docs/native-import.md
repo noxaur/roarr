@@ -23,11 +23,14 @@ Get ─► Prowlarr link ─► qBittorrent (category QBIT_CATEGORY)
 The code is in two places:
 
 - `internal/importer`: naming, file classes, matching, transfer, path
-  mapping, the `library.json` store and the hooks. It makes no network
+  mapping, the `library.json` store, the hooks, the guarded delete
+  (`delete.go`) and ZIP unpacking (`archive.go`). It makes no network
   calls.
 - `internal/app/native.go`: the backend. It adds torrents, runs the loop,
   connects the activity feed and refreshes Jellyfin. The metadata code is
-  in `internal/app/native_meta.go`.
+  in `internal/app/native_meta.go`. The library list, the title pages,
+  delete, monitoring and the missing search are in
+  `internal/app/native_library.go`.
 
 `app.Backend` is the switch. It has two implementations: `arrBackend`
 (the old path, not changed) and `*Native`.
@@ -59,6 +62,115 @@ When Sonarr is not configured, show pages come from TMDB through Seerr.
 When Radarr is not configured, movie pages come from TMDB through Seerr.
 Episodes that roarr imported show as on disk. Episodes that roarr is
 downloading show as queued.
+
+## Native library (no Sonarr/Radarr)
+
+When `IMPORT_MODE=native` and Sonarr is not configured, roarr keeps the
+show library itself. When Radarr is not configured, it keeps the movie
+library itself. The source is `library.json`. The API shapes do not change,
+so the UI works as in arr mode. With Sonarr or Radarr configured, that
+kind stays in Sonarr or Radarr. Arr mode does not change.
+
+| Item | Native library |
+|---|---|
+| Library id | The TMDB id of the title. A title with no TMDB id gets 1073741824 + its TVDB id. `/tv/{id}` and `/movie/{id}` use this id. |
+| Episode id | `season × 10000 + episode` (S01E02 is 10002). |
+| Library list | Every title that roarr tracks: titles you got, with their files. |
+| On disk | Videos that roarr imported, and other videos in the title folder (`Season NN/` for shows). |
+| Downloading | Episodes of roarr jobs that are not finished. |
+| Metadata | TMDB through Seerr. The episode list loads again after 6 hours, or on **Refresh**. If Seerr is not available, roarr uses the stored list. |
+
+### Monitoring
+
+A title is monitored until you turn it off. These episodes of a monitored
+show are monitored:
+
+- The episodes that you got (the grab monitors them).
+- The episodes that you monitor yourself (episode, season).
+- Episodes that air after roarr started to track the show. Specials
+  (season 0) only when you monitor them.
+
+"Missing" is a monitored episode that aired, is not on disk and is not
+downloading. Episodes without an air date are not aired. A movie is
+missing when it is monitored and not on disk.
+
+### Delete
+
+| Action | Endpoint | Result |
+|---|---|---|
+| Episodes, season | `POST /api/tv/{id}/episodes` `{"action":"delete","episodeIds":[...],"removeTorrent":false}` | Deletes the videos of these episodes and the subtitles that roarr placed with them. |
+| Movie file | `DELETE /api/movie/{id}/file[?removeTorrent=1]` | Deletes the movie video and its subtitles. |
+| Title | `DELETE /api/{kind}/{id}[?deleteFiles=1][&removeTorrent=1]` | Stops tracking the title. Removes its unfinished torrents from qBittorrent, with their data. `deleteFiles=1` deletes all its files. `removeTorrent=1` also removes its finished torrents. |
+
+Safety rules:
+
+- roarr deletes a file only when `library.json` has a record of it.
+  Videos placed by hand, by Sonarr or by Radarr stay. The result tells you
+  how many stayed.
+- The path must be inside `TV_ROOT` (shows) or `MOVIES_ROOT` (movies).
+  roarr resolves symbolic links in the folders first. A path with `..`, a
+  path outside the folder, a path through a link to another folder, and a
+  folder are refused.
+- Sidecar files that roarr did not place (for example, subtitles you
+  added) stay.
+- Folders that are empty after the delete are removed, up to the library
+  folder. The library folder itself stays.
+- `removeTorrent` removes a torrent only when no other library file came
+  from it and it is not downloading.
+- A file that holds more than one episode (`S01E01-E02`) is deleted when
+  you delete one of its episodes.
+- There is no recycle bin. A deleted file is gone.
+
+After a delete, Jellyfin refreshes the title. When the title folder is
+gone, Jellyfin scans the whole library. The UI asks to stop monitoring
+deleted episodes; if you keep them monitored, the missing search gets them
+again.
+
+### Missing search
+
+- **Manual:** **Search** on a title (`POST /api/{kind}/{id}/command/search`)
+  searches for its missing items. A movie is searched also when it is not
+  monitored. **Search** for selected episodes
+  (`POST /api/tv/{id}/episodes` with `"action":"search"`) searches for
+  those episodes.
+- **Periodic:** `MISSING_SEARCH_HOURS=N` (settings: `import.missingSearchHours`)
+  searches all monitored titles every N hours. The first pass starts 10
+  minutes after roarr starts. `0` (the default) turns it off.
+
+A search uses the same planner as **Get**: Prowlarr, the release scores,
+the pack/episode plan. It grabs the best plan. It runs in the background,
+one title at a time, with a 5-second pause between titles. One title has at
+most one search at a time. Grabs show in the activity feed. The result is
+in the log.
+
+## Archives
+
+A release with no video but with ZIP files is unpacked:
+
+1. roarr downloads the ZIP files only. Other files (`.nfo`, `.sfv`) are
+   skipped.
+2. When the torrent is complete, roarr unpacks each ZIP file into
+   `.roarr-unpacked-<hash>/` next to it.
+3. roarr matches and imports the unpacked files as usual.
+4. When the job is done, roarr removes the unpack folder. The library keeps
+   its own hardlink or copy.
+
+Limits:
+
+- roarr unpacks only videos and subtitles.
+- Entries with absolute names, `..`, drive letters, and links are skipped.
+  Every file is written inside the unpack folder.
+- The unpacked size can be at most 2 × the archive size + 64 MiB. A larger
+  archive (for example, a ZIP bomb) fails the job, and roarr removes what
+  it unpacked. roarr counts the bytes it writes; it does not trust the
+  size in the archive.
+- At most 5000 entries per archive.
+- The unpack runs in the import loop. Other imports wait until it is done.
+- **RAR, 7-Zip and split ZIP (`.z01`) are not supported.** roarr has no
+  dependency outside the Go standard library, which has no RAR reader. Such
+  a job fails with "nothing in this download matches ... (roarr cannot
+  unpack RAR or 7-Zip archives)". Use a release without archives, or arr
+  mode with an unpacker.
 
 ## Matching rules
 
@@ -171,27 +283,36 @@ a.Hooks.AfterImport(func(ctx context.Context, e importer.Event) {
 | `GET /api/status` | Adds `importMode`. |
 | `GET /api/tv/tvdb/{tvdb}?tmdb=`, `GET /api/movie/tmdb/{tmdb}` | When Sonarr/Radarr are not configured, these use TMDB through Seerr. Before, they returned an error. |
 | `PUT /api/settings` | When the request has no `import` object, the stored import settings stay. The current UI does not know these settings yet. |
+| `GET /api/library`, `GET /api/tv/{id}`, `GET /api/movie/{id}` | Without Sonarr/Radarr: titles from `library.json` (see [Native library](#native-library-no-sonarrradarr)). An unknown id gives 404. |
+| `POST /api/tv/{id}/episodes`, `PATCH /api/{kind}/{id}`, `POST /api/{kind}/{id}/command/{refresh\|search}`, `DELETE /api/movie/{id}/file`, `DELETE /api/{kind}/{id}` | Without Sonarr/Radarr: delete, monitor, search and remove in the native library. New option `removeTorrent`. A quality profile change gives an error. |
+| `POST /api/grab` | In the native library, `seriesId`/`movieId` in the result is the library id of the title. |
 
 ## Limitations
 
 Native mode does not do these things yet:
 
-- **Library list and title management.** `/api/library`, `/api/tv/{id}`,
-  the episode/season menus (delete, monitor, replace) and **Manage** still
-  need Sonarr/Radarr. If you do not have them, you can open and get titles
-  from search, but they do not show in the library list. To delete a
-  file, delete it on disk.
+- **Quality profiles.** The native library has no quality profiles.
+  Release choice uses the release preferences in Settings. A profile change
+  gives an error.
+- **Mixed setups.** In native mode with Sonarr (or Radarr) configured, that
+  kind of title stays in Sonarr (or Radarr). Titles that roarr imported but
+  that Sonarr/Radarr do not know are not in the library list.
+- **UI text.** The UI still names Sonarr/Radarr in some menus and dialogs
+  (for example, "Remove from Sonarr", "recycle bin"). In the native
+  library these actions go to roarr. The UI has no `removeTorrent` option
+  yet; use the API.
 - **Usenet.** Native mode handles torrents only. Use `arr` mode for usenet.
 - **Seerr requests.** **Approve** still makes Seerr send the request to
   its Sonarr/Radarr. `SEERR_AUTO_FETCH` grabs through roarr (native),
   but Seerr does not see the result as available until Jellyfin has it.
-- **Monitoring.** roarr does not search for new episodes or upgrades by
-  itself. It does not have an RSS sync, a calendar or a schedule.
+- **Monitoring.** The missing search is periodic or manual. roarr has no
+  RSS sync, no calendar and no upgrade search (cutoff). When a grabbed
+  release fails, the next pass can grab the same release again.
 - **Seeding.** roarr does not remove torrents after seeding. Set ratio
   and time limits in qBittorrent. With `IMPORT_TRANSFER=move`, the torrent
   cannot seed the files that roarr moved.
-- **Archives.** roarr does not extract RAR or ZIP releases. They match
-  nothing, and the job fails with "nothing in this download matches".
+- **Archives.** roarr unpacks ZIP only. RAR and 7-Zip releases fail (see
+  [Archives](#archives)).
 - **Multi-part movies** (`CD1`/`CD2`): roarr imports only the largest
   part.
 - **Numbering differences.** TMDB episode order can be different from
