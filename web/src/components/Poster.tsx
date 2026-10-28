@@ -60,7 +60,7 @@ export function PosterCard({
         {corner && <div className="absolute top-2 right-2 rounded-full shadow-[0_0_0_1px_rgb(26_28_28/0.22)]">{corner}</div>}
         {progress !== undefined && progress > 0 && progress < 1 && (
           <div className="absolute inset-x-2 bottom-2 h-1 overflow-hidden rounded-full bg-ink/25">
-            <i className="block h-full rounded-full bg-lime" style={{ width: `${progress * 100}%` }} />
+            <i className="block h-full rounded-full bg-live" style={{ width: `${progress * 100}%` }} />
           </div>
         )}
       </div>

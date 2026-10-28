@@ -24,15 +24,15 @@ import {
 import { Kbd } from "@/components/ui/kbd";
 import { useConfirm } from "./Confirm";
 
-/** "WEBDL-1080p · x265 · HDR10 · 1.4 GB · NTb" */
+/** "WEBDL-1080p  x265  HDR10  1.4 GB  NTb" */
 export function fileBits(f: FileInfo, withSize = true): string[] {
   return [f.quality, f.codec, f.hdr, withSize && bytes(f.size), f.group].filter((x): x is string => !!x);
 }
 
 export function FileLine({ file, className }: { file: FileInfo; className?: string }) {
   return (
-    <span className={cn("block truncate font-mono text-[10.5px] tracking-wide text-muted-foreground", className)} title={file.path}>
-      {fileBits(file).join(" · ")}
+    <span className={cn("block truncate font-mono text-[11px] text-muted-foreground", className)} title={file.path}>
+      {fileBits(file).join("  ")}
     </span>
   );
 }
@@ -42,7 +42,7 @@ export function FileFacts({ file }: { file: FileInfo }) {
   const rows: [string, string | undefined][] = [
     ["Quality", file.quality],
     ["Size", bytes(file.size)],
-    ["Video", [file.codec, file.hdr].filter(Boolean).join(" · ") || undefined],
+    ["Video", [file.codec, file.hdr].filter(Boolean).join(", ") || undefined],
     ["Audio", file.audio],
     ["Languages", file.languages],
     ["Subtitles", file.subtitles],
@@ -50,17 +50,17 @@ export function FileFacts({ file }: { file: FileInfo }) {
   ];
   return (
     <div>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1.5 text-sm">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1 text-[13.5px]">
         {rows
           .filter(([, v]) => v)
           .map(([k, v]) => (
             <div key={k} className="contents">
-              <dt className="font-mono text-[11px] tracking-wide text-muted-foreground uppercase">{k}</dt>
+              <dt className="meta">{k}</dt>
               <dd className="min-w-0 truncate">{v}</dd>
             </div>
           ))}
       </dl>
-      <div className="mt-3 font-mono text-[11px] leading-snug break-all text-muted-foreground">{file.path}</div>
+      <div className="mt-2.5 font-mono text-[11px] leading-snug break-all text-muted-foreground">{file.path}</div>
     </div>
   );
 }
@@ -111,7 +111,7 @@ export function ManageMenu({
   const remove = async () => {
     const a = await confirm({
       title: `Remove ${title}?`,
-      body: <p>{app} forgets about it. roarr can add it back any time you get something.</p>,
+      body: <p>{app} forgets about it. Getting something later adds it back.</p>,
       options: [{ id: "files", label: "Delete the files from disk too", hint: path }],
       confirm: `Remove from ${app}`,
       danger: true,
@@ -131,12 +131,12 @@ export function ManageMenu({
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="rounded-full">
+        <Button variant="outline" size="sm">
           <Settings2 /> Manage
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
-        <DropdownMenuCheckboxItem checked={monitored} onCheckedChange={(v) => patch({ monitored: v }, v ? `${app} is watching for new releases` : `${app} stopped watching`)}>
+        <DropdownMenuCheckboxItem checked={monitored} onCheckedChange={(v) => patch({ monitored: v }, v ? "Monitored" : "Not monitored")}>
           Monitored
         </DropdownMenuCheckboxItem>
         <DropdownMenuSub>
@@ -165,13 +165,13 @@ export function ManageMenu({
           <FolderSync /> Rescan disk
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => run(`Asking ${app}…`, () => api.titleCommand(kind, id, "search"))}>
-          <Radar /> Let {app} search
+          <Radar /> {app} search
         </DropdownMenuItem>
         {children && <DropdownMenuSeparator />}
         {children}
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onSelect={remove}>
-          <Trash2 /> Remove from {app}…
+          <Trash2 /> Remove from {app}
         </DropdownMenuItem>
         {path && (
           <DropdownMenuLabel className="truncate pt-2 font-mono text-[10.5px] font-normal text-muted-foreground" title={path}>
@@ -213,7 +213,7 @@ export function MonitorToggle({ on, onToggle, disabled, label }: { on: boolean; 
       disabled={disabled}
       aria-pressed={on}
       aria-label={`${on ? "Stop monitoring" : "Monitor"} ${label}`}
-      title={on ? "Monitored · click to stop" : "Not monitored · click to monitor"}
+      title={on ? "Monitored" : "Not monitored"}
       onClick={(e) => {
         e.stopPropagation();
         onToggle();
@@ -241,10 +241,10 @@ export function SelectionBar({ count, summary, onClear, children }: { count: num
   if (!count) return null;
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 flex justify-center px-4 sm:bottom-5">
-      <div className="pointer-events-auto flex max-w-full animate-in items-center gap-1 overflow-x-auto rounded-2xl border bg-popover/95 p-1.5 pl-4 text-popover-foreground shadow-xl backdrop-blur fade-in-0 slide-in-from-bottom-3">
+      <div className="pointer-events-auto flex max-w-full animate-in items-center gap-1 overflow-x-auto rounded-lg border bg-popover/95 p-1.5 pl-4 text-popover-foreground shadow-xl backdrop-blur fade-in-0 slide-in-from-bottom-3">
         <span className="shrink-0 pr-2 text-sm whitespace-nowrap">
-          <b className="font-semibold tabular">{count}</b> selected
-          {summary && <span className="ml-2 font-mono text-[11px] text-muted-foreground">{summary}</span>}
+          <b className="font-mono font-medium tabular">{count}</b> ticked
+          {summary && <span className="meta ml-2 font-mono">{summary}</span>}
         </span>
         <span className="mx-1 h-5 w-px shrink-0 bg-border" />
         {children}

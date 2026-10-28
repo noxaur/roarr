@@ -19,7 +19,7 @@ export async function autoGet(body: AutoBody, what: string): Promise<AutoResult 
         {grabs.map((g) => (
           <div key={g.release} className="truncate font-mono text-[11px] opacity-75">
             {g.result.ok ? "✓" : "✕"} {g.release}
-            {!g.result.ok && ` · ${g.error || g.result.rejections?.join(", ") || g.result.message}`}
+            {!g.result.ok && `: ${g.error || g.result.rejections?.join(", ") || g.result.message}`}
           </div>
         ))}
         <div className="font-mono text-[10.5px] opacity-60">decided after {(res.waitedMs / 1000).toFixed(1)} s</div>

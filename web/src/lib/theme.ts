@@ -22,7 +22,7 @@ export function currentTheme(): Theme {
 export function applyTheme() {
   const dark = currentTheme() === "dark";
   document.documentElement.classList.toggle("dark", dark);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0a0a0b" : "#fafaf8");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#1b1e24" : "#f3f2ee");
 }
 
 export function toggleTheme() {

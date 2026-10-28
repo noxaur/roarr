@@ -1,100 +1,113 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "@fontsource-variable/geist";
-@import "@fontsource-variable/geist-mono";
+@import "@fontsource-variable/familjen-grotesk";
+@import "@fontsource-variable/spline-sans-mono";
 
 @custom-variant dark (&:is(.dark *));
 
-/* Official shadcn neutral theme. App status accents carry meaning:
-   lime = go / done, pink = needs you, ice = in flight. */
-/* roarr: near-black / warm-white monochrome with one lime accent.
-   lime = go / live, pink (now warm orange) = needs you, ice = in flight. */
+/*
+  roarr is an operator console: it shows the state of a media library and
+  lets you change it. Colour is reserved for state. Four tones, each with a
+  soft fill for backgrounds:
+
+    have  — on disk, done
+    miss  — wanted but not on disk
+    live  — moving: downloading, importing, searching
+    bad   — stuck, failed, rejected, destructive
+
+  Everything else is warm greys. The primary button is ink on paper (paper
+  on ink in the dark theme), never a brand colour.
+*/
 :root {
-  --radius: 0.625rem;
-  --background: #fafaf8;
-  --foreground: #111112;
-  --card: #ffffff;
-  --card-foreground: #111112;
+  --radius: 0.5rem;
+  --background: #f3f2ee;
+  --foreground: #1a1c20;
+  --card: #fbfaf8;
+  --card-foreground: #1a1c20;
   --popover: #ffffff;
-  --popover-foreground: #111112;
-  --primary: #111112;
-  --primary-foreground: #fafaf8;
-  --secondary: #efefeb;
-  --secondary-foreground: #111112;
-  --muted: #efefeb;
-  --muted-foreground: #66666e;
-  --accent: #ececE8;
-  --accent-foreground: #111112;
-  --destructive: #c2410c;
-  --border: #e5e5e0;
-  --input: #d4d4ce;
-  --ring: #8b8b94;
-  --dash: #e5e5e0;
-  --ok: #3f6212;
-  --lime: #c8f542;
-  --lime-strong: #4d7c0f;
-  --pink: #ffb48a;
-  --ice: #dde4e7;
-  --ink: #0a0a0b;
-  --paper: #fafaf8;
-  --chart-1: #4d7c0f;
-  --chart-2: #c2410c;
-  --chart-3: #3f3f46;
-  --chart-4: #a3a3a3;
-  --chart-5: #d4d4d4;
-  --sidebar: #f3f3f0;
-  --sidebar-foreground: #111112;
-  --sidebar-primary: #111112;
-  --sidebar-primary-foreground: #fafaf8;
-  --sidebar-accent: #ececE8;
-  --sidebar-accent-foreground: #111112;
-  --sidebar-border: #e5e5e0;
-  --sidebar-ring: #8b8b94;
+  --popover-foreground: #1a1c20;
+  --primary: #1a1c20;
+  --primary-foreground: #f3f2ee;
+  --secondary: #e9e8e3;
+  --secondary-foreground: #1a1c20;
+  --muted: #e9e8e3;
+  --muted-foreground: #686b73;
+  --accent: #e3e2dc;
+  --accent-foreground: #1a1c20;
+  --destructive: #b63d18;
+  --border: #d9d8d1;
+  --input: #c6c5be;
+  --ring: #6f727b;
+
+  --have: #1d7f55;
+  --have-soft: #d6ecde;
+  --miss: #a86f12;
+  --miss-soft: #f5e6c4;
+  --live: #2457d6;
+  --live-soft: #dbe4fa;
+  --bad: #b63d18;
+  --bad-soft: #f8ddd2;
+
+  --ink: #1a1c20;
+  --paper: #f3f2ee;
+
+  --sidebar: #e9e8e3;
+  --sidebar-foreground: #1a1c20;
+  --sidebar-primary: #1a1c20;
+  --sidebar-primary-foreground: #f3f2ee;
+  --sidebar-accent: #e3e2dc;
+  --sidebar-accent-foreground: #1a1c20;
+  --sidebar-border: #d9d8d1;
+  --sidebar-ring: #6f727b;
+  --chart-1: var(--have);
+  --chart-2: var(--miss);
+  --chart-3: var(--live);
+  --chart-4: var(--bad);
+  --chart-5: var(--muted-foreground);
 }
 
 .dark {
-  --background: #0a0a0b;
-  --foreground: #ededef;
-  --card: #111113;
-  --card-foreground: #ededef;
-  --popover: #141416;
-  --popover-foreground: #ededef;
-  --primary: #ededef;
-  --primary-foreground: #0a0a0b;
-  --secondary: #18181b;
-  --secondary-foreground: #ededef;
-  --muted: #18181b;
-  --muted-foreground: #8b8b94;
-  --accent: #1d1d21;
-  --accent-foreground: #ededef;
-  --destructive: #ff8a50;
-  --border: #222226;
-  --input: #2e2e34;
-  --ring: #8b8b94;
-  --dash: #222226;
-  --ok: #c8f542;
-  --lime-strong: #c8f542;
-  --pink: #ff8a50;
-  --ice: #b9c7cd;
-  --chart-1: #c8f542;
-  --chart-2: #ff8a50;
-  --chart-3: #a6a6ae;
-  --chart-4: #5c5c64;
-  --chart-5: #2e2e34;
-  --sidebar: #111113;
-  --sidebar-foreground: #ededef;
-  --sidebar-primary: #ededef;
-  --sidebar-primary-foreground: #0a0a0b;
-  --sidebar-accent: #1d1d21;
-  --sidebar-accent-foreground: #ededef;
-  --sidebar-border: #222226;
-  --sidebar-ring: #8b8b94;
+  --background: #1b1e24;
+  --foreground: #e8e6e1;
+  --card: #21252c;
+  --card-foreground: #e8e6e1;
+  --popover: #262a32;
+  --popover-foreground: #e8e6e1;
+  --primary: #e8e6e1;
+  --primary-foreground: #1b1e24;
+  --secondary: #2a2e36;
+  --secondary-foreground: #e8e6e1;
+  --muted: #2a2e36;
+  --muted-foreground: #9a9ea8;
+  --accent: #30353e;
+  --accent-foreground: #e8e6e1;
+  --destructive: #ff8a74;
+  --border: #30353e;
+  --input: #3b414b;
+  --ring: #8d929c;
+
+  --have: #7fd1a8;
+  --have-soft: #1f3a30;
+  --miss: #f0b64a;
+  --miss-soft: #3e3320;
+  --live: #7ab8ff;
+  --live-soft: #1f2f47;
+  --bad: #ff8a74;
+  --bad-soft: #45272a;
+
+  --sidebar: #21252c;
+  --sidebar-foreground: #e8e6e1;
+  --sidebar-primary: #e8e6e1;
+  --sidebar-primary-foreground: #1b1e24;
+  --sidebar-accent: #30353e;
+  --sidebar-accent-foreground: #e8e6e1;
+  --sidebar-border: #30353e;
+  --sidebar-ring: #8d929c;
 }
 
 @theme inline {
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: "Familjen Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Spline Sans Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -117,12 +130,14 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-dash: var(--dash);
-  --color-ok: var(--ok);
-  --color-lime: var(--lime);
-  --color-lime-strong: var(--lime-strong);
-  --color-pink: var(--pink);
-  --color-ice: var(--ice);
+  --color-have: var(--have);
+  --color-have-soft: var(--have-soft);
+  --color-miss: var(--miss);
+  --color-miss-soft: var(--miss-soft);
+  --color-live: var(--live);
+  --color-live-soft: var(--live-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
   --color-ink: var(--ink);
   --color-paper: var(--paper);
   --color-chart-1: var(--chart-1);
@@ -152,37 +167,64 @@
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    font-feature-settings: "ss01", "cv05";
   }
   ::selection {
-    background: var(--lime);
-    color: var(--ink);
+    background: var(--live-soft);
+    color: var(--foreground);
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.015em;
   }
 }
 
-@utility font-display {
-  font-family: var(--font-display);
-  font-weight: 600;
-  letter-spacing: -0.045em;
-  line-height: 1;
-}
-
-/* Small uppercase mono label used for section heads and metadata. */
-@utility label {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.25;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+/* Secondary text: 12.5px, muted, sentence case. No caps, no tracking. */
+@utility meta {
+  font-size: 12.5px;
+  line-height: 1.3;
   color: var(--muted-foreground);
 }
 
-@utility rule-dashed {
-  border-top: 1px solid var(--border);
-}
-
+/* Numbers that line up. */
 @utility tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* Compact mono spec tag: "1080p", "x265", "EN", "DDP 5.1". */
+@utility spec {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+/* Episode cell in a season strip. Fill encodes state; a ring marks "ticked". */
+@utility cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  min-width: 18px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  outline: none;
+  cursor: pointer;
+  transition: box-shadow 120ms;
 }
 
 /* Drag-to-select box. */
@@ -190,13 +232,15 @@
   position: fixed;
   z-index: 45;
   pointer-events: none;
-  border: 1px solid var(--lime-strong);
+  border: 1px solid var(--live);
   border-radius: 3px;
-  background: color-mix(in srgb, var(--lime) 14%, transparent);
+  background: color-mix(in srgb, var(--live) 12%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
