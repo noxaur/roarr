@@ -330,6 +330,156 @@ export interface Settings {
     cacheMinutes: number;
     seerrAutoFetch: boolean;
   };
+  transcode: TranscodeSettings;
+  verify: VerifySettings;
+  import: ImportSettings;
+}
+
+/** AV1 conversion of imported files (config.Transcode). */
+export interface TranscodeSettings {
+  enabled: boolean;
+  concurrency: number;
+  nice: number;
+  /** 0 = automatic, per resolution. */
+  crf: number;
+  /** SVT-AV1 speed, 1 slowest to 13 fastest. */
+  preset: number;
+  filmGrain: number;
+  minSavings: number;
+  pathMap?: string;
+}
+
+/** Checks on finished downloads (config.Verify). */
+export interface VerifySettings {
+  /** Unset (absent or null) means on when ffprobe is installed. */
+  enabled?: boolean | null;
+  autoRegrab: boolean;
+  pathMap?: string;
+}
+
+/** Who downloads and imports grabs (config.Import). */
+export interface ImportSettings {
+  mode?: "arr" | "native" | string;
+  tvRoot?: string;
+  movieRoot?: string;
+  transfer?: "hardlink" | "copy" | "move" | string;
+  pathMap?: string;
+  category?: string;
+  savePath?: string;
+}
+
+export type VerifyLevel = "pass" | "warn" | "fail" | "skip";
+
+export interface VerifyCheck {
+  /** payload | streams | duration | picture | resolution | codec | hdr | bitdepth | audio | subtitles */
+  name: string;
+  level: VerifyLevel;
+  reason: string;
+}
+
+export interface Verdict {
+  level: VerifyLevel;
+  summary: string;
+  file?: string;
+  checks: VerifyCheck[] | null;
+  media?: {
+    container?: string;
+    duration: number;
+    width?: number;
+    height?: number;
+    videoCodec?: string;
+    audio?: string[];
+    subtitles?: string[];
+  };
+  at: string;
+  tookMs: number;
+}
+
+/** One download followed by the verifier (app.VerifyRecord). */
+export interface VerifyRecord {
+  hash: string;
+  source: string;
+  kind: Kind;
+  seriesId?: number;
+  movieId?: number;
+  episodeIds?: number[];
+  title: string;
+  release: string;
+  added: string;
+  state: "pending" | "checking" | "done";
+  verdict?: Verdict;
+  dismissed?: boolean;
+  rejected?: boolean;
+  regrab?: { at: string; auto: boolean; message: string; note?: string; error?: string; result?: AutoResult };
+}
+
+export interface VerifyList {
+  enabled: boolean;
+  items: VerifyRecord[];
+  tools?: { ffprobe: string; ffmpeg: string };
+  autoRegrab?: boolean;
+}
+
+export type TranscodeState = "queued" | "running" | "done" | "skipped" | "failed";
+
+export interface TranscodeJob {
+  id: string;
+  path: string;
+  title?: string;
+  kind?: string;
+  titleId?: number;
+  state: TranscodeState;
+  percent: number;
+  speed?: string;
+  srcBytes?: number;
+  outBytes?: number;
+  savedBytes?: number;
+  crf?: number;
+  encoder?: string;
+  message?: string;
+  queuedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface TranscodeStatus {
+  enabled: boolean;
+  available: boolean;
+  encoder?: string;
+  error?: string;
+  concurrency: number;
+  counts: Record<TranscodeState, number>;
+  bytesSaved: number;
+  jobs: TranscodeJob[];
+}
+
+/** A torrent roarr downloads and imports itself (app.NativeJob). */
+export interface NativeJob {
+  hash: string;
+  release: string;
+  kind: Kind;
+  titleKey: string;
+  titleName: string;
+  href?: string;
+  created: string;
+  completedAt?: string;
+  state: "waiting" | "downloading" | "importing" | "done" | "failed" | string;
+  message?: string;
+  progress: number;
+  size: number;
+  files: unknown[] | null;
+  skipped?: string[];
+}
+
+export interface ImportsStatus {
+  mode: string;
+  tvRoot: string;
+  movieRoot: string;
+  transfer: string;
+  pathMap: string;
+  category: string;
+  jobs: NativeJob[];
+  files: { titleKey: string; path: string; size: number; release?: string; importedAt: string }[];
 }
 
 export interface Plan {
@@ -420,6 +570,12 @@ export const api = {
   deleteMovieFile: (id: number) => call<ActionResult>("DELETE", `/api/movie/${id}/file`),
   profiles: (kind: Kind) => call<{ profiles: { id: number; name: string }[] }>("GET", `/api/profiles/${kind}`),
   settings: () => call<{ settings: Settings; locked: Record<string, boolean> }>("GET", "/api/settings"),
+  verify: () => call<VerifyList>("GET", "/api/verify"),
+  verifyRecheck: (hash: string) => call<VerifyRecord>("POST", `/api/verify/${encodeURIComponent(hash)}/recheck`, {}),
+  verifyRegrab: (hash: string) => call<VerifyRecord>("POST", `/api/verify/${encodeURIComponent(hash)}/regrab`, {}),
+  verifyDismiss: (hash: string) => call<VerifyRecord>("POST", `/api/verify/${encodeURIComponent(hash)}/dismiss`, {}),
+  transcode: () => call<TranscodeStatus>("GET", "/api/transcode"),
+  imports: () => call<ImportsStatus>("GET", "/api/imports"),
   saveSettings: (s: Settings) => call<{ settings: Settings; locked: Record<string, boolean> }>("PUT", "/api/settings", s),
 };
 

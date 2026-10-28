@@ -1,15 +1,17 @@
 import { Ban, Copy, ExternalLink, ListChecks, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { api, type ActivityItem } from "@/lib/api";
+import { api, type ActivityItem, type VerifyRecord } from "@/lib/api";
 import { errText } from "@/lib/actions";
 import { bytes, pct, speed } from "@/lib/format";
 import { Link, useRouter } from "@/lib/router";
 import { needsYou, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { byHash, forActivity, headline, hrefOf, isBlocking, orphans } from "@/lib/verify";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Bar, Kbd } from "./kit";
 import { useConfirm } from "./Confirm";
+import { VerdictActions } from "./Verdict";
 
 /** Live download speed of everything in flight, for the nav and drawer. */
 export function totalSpeed(activity: ActivityItem[]): number {
@@ -20,12 +22,19 @@ const withPick = (href: string) => `${href}${href.includes("?") ? "&" : "?"}pick
 
 /** The quick downloads panel (D). Right-click a download for more. */
 export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { activity, reloadActivity } = useStore();
+  const { activity, reloadActivity, verify } = useStore();
   const { navigate } = useRouter();
   const confirm = useConfirm();
   const total = totalSpeed(activity);
-  const attention = activity.filter(needsYou);
-  const rest = activity.filter((a) => !needsYou(a));
+  const checks = byHash(verify);
+  const failedCheck = (a: ActivityItem) => {
+    const r = forActivity(checks, a);
+    return r && isBlocking(r) ? r : undefined;
+  };
+  const stuck = (a: ActivityItem) => needsYou(a) || !!failedCheck(a);
+  const attention = activity.filter(stuck);
+  const rest = activity.filter((a) => !stuck(a));
+  const done = orphans(verify, activity);
 
   const remove = async (a: ActivityItem, blocklist: boolean) => {
     const ok = await confirm({
@@ -49,8 +58,34 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
     navigate(href);
   };
 
+  const checkCard = (r: VerifyRecord) => {
+    const href = hrefOf(r);
+    return (
+      <div key={r.hash} className="rounded-md border border-l-2 border-l-bad bg-card p-3">
+        <div className="flex items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+            {href ? (
+              <button onClick={() => go(href)} className="cursor-pointer hover:underline">
+                {r.title}
+              </button>
+            ) : (
+              r.title
+            )}
+          </span>
+          <span className="font-mono text-[11px] text-bad">{r.rejected ? "re-grab failed" : "failed check"}</span>
+        </div>
+        <div className="mt-0.5 truncate font-mono text-[10.5px] text-muted-foreground" title={r.release}>
+          {r.release}
+        </div>
+        <div className="mt-1.5 text-[12.5px] leading-snug text-bad">{headline(r)}</div>
+        <VerdictActions r={r} size="xs" className="mt-2.5" />
+      </div>
+    );
+  };
+
   const row = (a: ActivityItem) => {
-    const bad = needsYou(a);
+    const rec = failedCheck(a);
+    const bad = needsYou(a) || !!rec;
     return (
       <ContextMenu key={a.id}>
         <ContextMenuTrigger asChild>
@@ -60,7 +95,9 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
                 {a.title}
                 {a.subtitle && <span className="font-mono text-[11.5px] font-normal text-muted-foreground"> {a.subtitle}</span>}
               </span>
-              <span className={cn("font-mono text-[11px]", bad ? "text-bad" : a.status === "downloading" ? "text-live" : "text-muted-foreground")}>{a.status === "warning" ? "stuck" : a.status}</span>
+              <span className={cn("font-mono text-[11px]", bad ? "text-bad" : a.status === "downloading" ? "text-live" : "text-muted-foreground")}>
+                {rec ? "failed check" : a.status === "warning" ? "stuck" : a.status}
+              </span>
             </div>
             <div className="mt-0.5 mb-2 truncate font-mono text-[10.5px] text-muted-foreground" title={a.release}>
               {a.release}
@@ -70,9 +107,15 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
               <span>
                 {pct(a.progress)} of {bytes(a.size)}
               </span>
-              <span className="truncate pl-3">{bad ? (a.messages?.[0] ?? "") : [speed(a.speed), a.eta].filter(Boolean).join(", ")}</span>
+              <span className="truncate pl-3">{rec ? "" : bad ? (a.messages?.[0] ?? "") : [speed(a.speed), a.eta].filter(Boolean).join(", ")}</span>
             </div>
-            {bad && a.href && (
+            {rec && (
+              <>
+                <div className="mt-1.5 text-[12.5px] leading-snug text-bad">{headline(rec)}</div>
+                <VerdictActions r={rec} size="xs" className="mt-2.5" />
+              </>
+            )}
+            {bad && !rec && a.href && (
               <button onClick={() => go(withPick(a.href!))} className="mt-2 inline-flex cursor-pointer items-center gap-1.5 text-[12.5px] font-medium underline-offset-4 hover:underline">
                 <ListChecks className="size-3.5" /> Choose another release
               </button>
@@ -112,14 +155,15 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
         <SheetHeader className="border-b px-4 py-3.5">
           <SheetTitle className="text-[15px] font-medium">Downloads</SheetTitle>
           <SheetDescription className="font-mono text-[11px]">
-            {total ? speed(total) : "idle"}, {activity.length} listed, <Kbd>D</Kbd> toggles
+            {total ? speed(total) : "idle"}, {activity.length + done.length} listed, <Kbd>D</Kbd> toggles
           </SheetDescription>
         </SheetHeader>
         <div className="flex-1 space-y-2 overflow-y-auto p-3">
-          {activity.length === 0 && <div className="px-3 py-16 text-center text-[13px] text-muted-foreground">Nothing in flight.</div>}
-          {attention.length > 0 && <div className="meta px-1 pt-1">Needs you</div>}
+          {activity.length === 0 && done.length === 0 && <div className="px-3 py-16 text-center text-[13px] text-muted-foreground">Nothing in flight.</div>}
+          {attention.length + done.length > 0 && <div className="meta px-1 pt-1">Needs you</div>}
           {attention.map(row)}
-          {attention.length > 0 && rest.length > 0 && <div className="meta px-1 pt-3">In flight</div>}
+          {done.map(checkCard)}
+          {attention.length + done.length > 0 && rest.length > 0 && <div className="meta px-1 pt-3">In flight</div>}
           {rest.map(row)}
         </div>
         <div className="flex items-center justify-between border-t px-4 py-3 text-[12.5px] text-muted-foreground">

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, type ActivityItem, type LibraryItem } from "./api";
+import { api, type ActivityItem, type LibraryItem, type VerifyRecord } from "./api";
+import { isBlocking, orphans } from "./verify";
 
 // App-wide data that many pages share: the library (shipped once, then
 // filtered locally), activity for the nav badge, and the request count.
@@ -12,6 +13,9 @@ interface Store {
   reloadLibrary: (hard?: boolean) => Promise<void>;
   activity: ActivityItem[];
   reloadActivity: () => void;
+  /** Download check records, newest first. Empty when checks are off. */
+  verify: VerifyRecord[];
+  reloadVerify: () => void;
   /** Pending Seerr requests; null when Seerr is not set up. */
   pendingRequests: number | null;
   reloadRequests: () => void;
@@ -24,6 +28,7 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
   const [libraryErrors, setLibraryErrors] = useState<Record<string, string>>({});
   const [libraryLoaded, setLoaded] = useState(false);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [verify, setVerify] = useState<VerifyRecord[]>([]);
   const [pendingRequests, setPending] = useState<number | null>(null);
   const etag = useRef<string | null>(null);
 
@@ -47,6 +52,13 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
       .catch(() => {});
   }, []);
 
+  const reloadVerify = useCallback(() => {
+    api
+      .verify()
+      .then((r) => setVerify(r.items ?? []))
+      .catch(() => {});
+  }, []);
+
   const reloadRequests = useCallback(() => {
     api
       .requests("pending")
@@ -57,10 +69,13 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
   useEffect(() => {
     reloadLibrary();
     reloadActivity();
+    reloadVerify();
     reloadRequests();
     const a = setInterval(() => reloadLibrary(), 60_000);
     const b = setInterval(() => {
-      if (!document.hidden) reloadActivity();
+      if (document.hidden) return;
+      reloadActivity();
+      reloadVerify();
     }, 5_000);
     const c = setInterval(() => {
       if (!document.hidden) reloadRequests();
@@ -70,10 +85,10 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
       clearInterval(b);
       clearInterval(c);
     };
-  }, [reloadLibrary, reloadActivity, reloadRequests]);
+  }, [reloadLibrary, reloadActivity, reloadVerify, reloadRequests]);
 
   return (
-    <Ctx.Provider value={{ user, library, libraryErrors, libraryLoaded, reloadLibrary, activity, reloadActivity, pendingRequests, reloadRequests }}>
+    <Ctx.Provider value={{ user, library, libraryErrors, libraryLoaded, reloadLibrary, activity, reloadActivity, verify, reloadVerify, pendingRequests, reloadRequests }}>
       {children}
     </Ctx.Provider>
   );
@@ -89,3 +104,10 @@ export function useStore(): Store {
 export const isActive = (a: ActivityItem) => a.status === "downloading" || a.status === "queued" || a.status === "importing";
 /** Downloads that need a human. */
 export const needsYou = (a: ActivityItem) => a.status === "warning" || a.status === "failed";
+
+/** How many things wait on a person: stuck downloads and failed checks. */
+export function problemCount(activity: ActivityItem[], verify: VerifyRecord[]): number {
+  const failing = new Set(verify.filter(isBlocking).map((r) => r.hash.toLowerCase()));
+  const queued = activity.filter((a) => needsYou(a) || (!!a.downloadId && failing.has(a.downloadId.toLowerCase()))).length;
+  return queued + orphans(verify, activity).length;
+}

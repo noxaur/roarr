@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import { speed } from "@/lib/format";
 import { Link, useRouter } from "@/lib/router";
 import { useShell } from "@/lib/shell";
-import { isActive, needsYou, useStore } from "@/lib/store";
+import { isActive, problemCount, useStore } from "@/lib/store";
 import { toggleTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -42,10 +42,10 @@ const iconBtn =
 
 export function Nav({ authMode }: { authMode: string }) {
   const { path } = useRouter();
-  const { activity, pendingRequests, user } = useStore();
+  const { activity, verify, pendingRequests, user } = useStore();
   const { openSearch, toggleDownloads, openShortcuts } = useShell();
   const active = activity.filter(isActive).length;
-  const problems = activity.filter(needsYou).length;
+  const problems = problemCount(activity, verify);
   const onLibrary = path === "/" || path.startsWith("/tv") || path.startsWith("/movie");
   const rate = totalSpeed(activity);
 

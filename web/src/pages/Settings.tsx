@@ -1,17 +1,19 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Lock, Plus, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, type ServiceStatus, type Settings } from "@/lib/api";
 import { errText } from "@/lib/actions";
+import { countChanges } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Notice, SectionHead, Spinner } from "@/components/kit";
+import { Field, FieldLabel, LockedInput, Num, Segmented, Sub, Toggle } from "@/components/AdminFields";
+import { ChecksTab, ImportTab, TranscodeTab } from "./AdminMedia";
 
 type ServiceKey = "prowlarr" | "sonarr" | "radarr" | "seerr" | "jellyfin" | "qbittorrent";
 const SERVICES: { key: ServiceKey; name: string; env: string; hint: string; user?: boolean; required?: boolean }[] = [
@@ -110,6 +112,9 @@ export function SettingsPage() {
             [
               ["picking", "Release rules", ""],
               ["behaviour", "Behaviour", ""],
+              ["import", "Import", s.import?.mode === "native" ? "roarr" : ""],
+              ["checks", "Checks", ""],
+              ["av1", "AV1", s.transcode?.enabled ? "on" : ""],
               ["connections", "Connections", Object.keys(status).length ? `${connected}/${SERVICES.length}` : ""],
               ["signin", "Sign-in", ""],
             ] as const
@@ -156,25 +161,7 @@ export function SettingsPage() {
             <Ranked value={p.audioCodecs ?? []} options={AUDIO_CODECS} label={(c) => c} onChange={(v) => update((x) => (x.prefs.audioCodecs = v))} />
           </Field>
           <Field label="File size" hint={SIZES.find(([k]) => k === (p.size || "balanced"))?.[2]}>
-            <div role="radiogroup" aria-label="File size" className="inline-flex max-w-full flex-wrap gap-0.5 rounded-md bg-muted p-[3px]">
-              {SIZES.map(([k, name]) => {
-                const on = (p.size || "balanced") === k;
-                return (
-                  <button
-                    key={k}
-                    role="radio"
-                    aria-checked={on}
-                    onClick={() => update((x) => (x.prefs.size = k))}
-                    className={cn(
-                      "h-8 cursor-pointer rounded-[4px] px-3 text-sm text-foreground/60 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",
-                      on && "bg-card text-foreground shadow-sm",
-                    )}
-                  >
-                    {name}
-                  </button>
-                );
-              })}
-            </div>
+            <Segmented label="File size" value={p.size || "balanced"} options={SIZES.map(([k, name]) => [k, name] as const)} onChange={(k) => update((x) => (x.prefs.size = k))} />
           </Field>
           <Field label="Audio language">
             <Input value={p.language} onChange={(e) => update((x) => (x.prefs.language = e.target.value))} placeholder="English" className="max-w-60" />
@@ -232,6 +219,18 @@ export function SettingsPage() {
           <Field label="Result cache" hint="How long indexer answers are reused.">
             <Num value={b.cacheMinutes} min={1} unit="minutes" disabled={locked.CACHE_MINUTES} onChange={(v) => update((x) => (x.behaviour.cacheMinutes = v))} />
           </Field>
+        </TabsContent>
+
+        <TabsContent value="import" className="space-y-1">
+          <ImportTab s={s} locked={locked} update={update} />
+        </TabsContent>
+
+        <TabsContent value="checks" className="space-y-1">
+          <ChecksTab s={s} locked={locked} update={update} />
+        </TabsContent>
+
+        <TabsContent value="av1" className="space-y-1">
+          <TranscodeTab s={s} locked={locked} update={update} />
         </TabsContent>
 
         <TabsContent value="signin" className="space-y-1">
@@ -380,55 +379,6 @@ function Ranked<T extends string | number>({ value, options, label, onChange }: 
   );
 }
 
-function FieldLabel({ children }: { children: ReactNode }) {
-  return <span className="meta">{children}</span>;
-}
-
-function LockedInput({ locked, type, value, placeholder, onChange }: { locked?: boolean; type?: string; value: string; placeholder?: string; onChange: (v: string) => void }) {
-  return (
-    <div className="relative">
-      <Input type={type} disabled={locked} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className={cn(locked && "pr-9")} />
-      {locked && <Lock aria-label="Set by environment" className="absolute top-1/2 right-3 size-3.5 -translate-y-1/2 text-muted-foreground" />}
-    </div>
-  );
-}
-
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <div className="grid gap-x-8 gap-y-2.5 border-t py-4 sm:grid-cols-[200px_minmax(0,1fr)]">
-      <div>
-        <div className="font-medium">{label}</div>
-        {hint && <p className="meta mt-1">{hint}</p>}
-      </div>
-      <div className="min-w-0 self-center">{children}</div>
-    </div>
-  );
-}
-
-function Toggle({ checked, disabled, onChange, children }: { checked: boolean; disabled?: boolean; onChange: (v: boolean) => void; children: ReactNode }) {
-  return (
-    <label className={cn("flex cursor-pointer items-center gap-3 text-[14px]", disabled && "cursor-not-allowed opacity-60")}>
-      <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
-      <span>{children}</span>
-      {disabled && <Lock className="size-3 text-muted-foreground" />}
-    </label>
-  );
-}
-
-function Sub({ children }: { children: ReactNode }) {
-  return <span className="ml-1 font-mono text-[11px] text-muted-foreground">{children}</span>;
-}
-
-function Num({ value, min, unit, disabled, onChange }: { value: number; min: number; unit: string; disabled?: boolean; onChange: (v: number) => void }) {
-  return (
-    <div className="flex items-center gap-2">
-      <Input type="number" min={min} value={value} disabled={disabled} onChange={(e) => onChange(+e.target.value)} className="w-24" />
-      <span className="font-mono text-xs text-muted-foreground">{unit}</span>
-      {disabled && <Lock className="size-3 text-muted-foreground" />}
-    </div>
-  );
-}
-
 /** Comma-separated list; parsed on blur so typing a comma isn't swallowed. */
 function ListInput({ value, placeholder, onChange }: { value: string[] | null; placeholder: string; onChange: (v: string[]) => void }) {
   const joined = (value ?? []).join(", ");
@@ -452,16 +402,4 @@ function splitList(v: string): string[] {
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
-}
-
-/** Number of leaf values that differ, for the save bar. */
-function countChanges(a: unknown, b: unknown): number {
-  if (Array.isArray(a) || Array.isArray(b)) return JSON.stringify(a ?? []) === JSON.stringify(b ?? []) ? 0 : 1;
-  if (a && b && typeof a === "object" && typeof b === "object") {
-    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-    let n = 0;
-    for (const k of keys) n += countChanges((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]);
-    return n;
-  }
-  return (a ?? "") === (b ?? "") ? 0 : 1;
 }

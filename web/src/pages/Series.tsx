@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bookmark, Check, ChevronRight, Download, ListChecks, Radar, RefreshCw, Trash2 } from "lucide-react";
-import { api, type EpisodeAction, type EpisodeDetail, type Release, type SeriesDetail } from "@/lib/api";
+import { Bookmark, Check, ChevronRight, Download, ListChecks, Radar, RefreshCw, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
+import { api, type EpisodeAction, type EpisodeDetail, type Release, type SeriesDetail, type VerifyRecord } from "@/lib/api";
 import { autoGet, run } from "@/lib/actions";
 import { bytes, epCode, pad } from "@/lib/format";
 import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
 import { useRouter } from "@/lib/router";
 import { usePointerSelect } from "@/lib/select";
 import { useStore } from "@/lib/store";
+import { baseName, jobTag, useConverting } from "@/lib/transcode";
+import { forEpisode, isBlocking, isFlagged } from "@/lib/verify";
 import { useSearch } from "@/lib/useSearch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { Dot, Figure, Notice, State } from "@/components/kit";
+import { Dot, Figure, Notice, Spec, State } from "@/components/kit";
 import { useConfirm } from "@/components/Confirm";
 import { FileLine, ManageMenu, MonitorToggle, RowMenu, SelectionBar } from "@/components/Manage";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
+import { VerdictBadge, useVerdictActions } from "@/components/Verdict";
 import { Crumbs, GetCard, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
 
 export function SeriesPage({ id, tvdb, tmdb }: { id?: number; tvdb?: number; tmdb?: number }) {
@@ -54,10 +57,22 @@ function epState(e: EpisodeDetail): "have" | "live" | "miss" | "unaired" {
 }
 
 function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void; prefs: { prefetch: boolean; watchFirst: boolean } }) {
-  const { reloadActivity, reloadLibrary } = useStore();
+  const { reloadActivity, reloadLibrary, verify } = useStore();
   const { navigate, search: params } = useRouter();
   const seasons = useMemo(() => d.seasons.filter((s) => s.episodes.length > 0 || d.synthetic), [d]);
   const allEps = useMemo(() => seasons.flatMap((s) => s.episodes), [seasons]);
+  // Check verdicts worth a badge, by episode id.
+  const checks = useMemo(() => {
+    const m = new Map<number, VerifyRecord>();
+    if (!d.inLibrary) return m;
+    for (const e of allEps) {
+      const r = forEpisode(verify, d.id, e.id);
+      if (r && isFlagged(r)) m.set(e.id, r);
+    }
+    return m;
+  }, [verify, allEps, d.id, d.inLibrary]);
+  const verdict = useVerdictActions();
+  const converting = useConverting("tv", d.inLibrary ? d.id : 0);
   const byId = useMemo(() => new Map(allEps.map((e) => [e.id, e])), [allEps]);
   const missing = useMemo(() => allEps.filter((e) => e.season > 0 && e.aired && !e.hasFile && !e.queued).map((e) => e.id), [allEps]);
   const everything = useMemo(() => allEps.filter((e) => e.season > 0 && e.aired).map((e) => e.id), [allEps]);
@@ -363,6 +378,20 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
           {code}
           {e.file && <span className="mt-0.5 block break-all text-muted-foreground">{e.file.path}</span>}
         </C.Label>
+        {checks.has(e.id) && (
+          <>
+            <C.Item onSelect={() => verdict.regrab(checks.get(e.id)!)}>
+              <RotateCcw /> Re-grab
+            </C.Item>
+            <C.Item onSelect={() => verdict.recheck(checks.get(e.id)!)}>
+              <RefreshCw /> Re-check
+            </C.Item>
+            <C.Item onSelect={() => verdict.keep(checks.get(e.id)!)}>
+              <ShieldCheck /> Keep anyway
+            </C.Item>
+            <C.Sep />
+          </>
+        )}
         {e.hasFile ? (
           <>
             <C.Item onSelect={() => replace([e.id])}>
@@ -561,6 +590,11 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
               <span className="inline-flex items-center gap-1.5">
                 <i className="size-2.5 rounded-[3px] ring-1 ring-border ring-inset" /> not aired
               </span>
+              {[...checks.values()].some(isBlocking) && (
+                <span className="inline-flex items-center gap-1.5">
+                  <i className="size-2.5 rounded-[3px] bg-bad" /> fails check
+                </span>
+              )}
               <span className="ml-auto hidden sm:inline">Click a cell to tick, shift-click for a run.</span>
             </div>
             {seasons.map((s) => {
@@ -651,6 +685,8 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                         const st = epState(e);
                         const on = sel.has(e.id);
                         const code = label(e.id);
+                        const rec = checks.get(e.id);
+                        const failed = !!rec && isBlocking(rec);
                         return (
                           <button
                             key={e.id}
@@ -658,7 +694,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                             data-sel={e.aired ? String(e.id) : undefined}
                             disabled={!e.aired}
                             aria-pressed={on}
-                            aria-label={`${code} ${e.title}: ${st === "have" ? "on disk" : st === "live" ? "downloading" : st === "miss" ? "missing" : "not aired"}`}
+                            aria-label={`${code} ${e.title}: ${st === "have" ? "on disk" : st === "live" ? "downloading" : st === "miss" ? "missing" : "not aired"}${failed ? ", fails check" : ""}`}
                             title={`${code} ${e.title}${e.file ? `\n${[e.file.quality, e.file.codec, bytes(e.file.size)].filter(Boolean).join(" ")}` : ""}`}
                             onClick={(ev) => {
                               if (pointer.swallowClick()) return;
@@ -670,6 +706,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                               st === "live" && "bg-live text-background",
                               st === "miss" && "bg-miss-soft text-miss ring-1 ring-miss/60 ring-inset",
                               st === "unaired" && "cursor-default bg-transparent text-muted-foreground/60 ring-1 ring-border ring-inset",
+                              failed && "bg-bad text-background ring-0",
                               on && "shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--foreground)]",
                             )}
                           >
@@ -709,6 +746,12 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                                   <span className="block truncate text-[13.5px]">{e.title}</span>
                                   {e.file && <FileLine file={e.file} className="hidden sm:block" />}
                                 </span>
+                                {checks.has(e.id) && <VerdictBadge r={checks.get(e.id)!} />}
+                                {e.file && converting.get(baseName(e.file.path)) && (
+                                  <Spec tone="live" className="hidden sm:inline-flex" title="Converting to AV1">
+                                    {jobTag(converting.get(baseName(e.file.path))!)}
+                                  </Spec>
+                                )}
                                 <span className="font-mono text-[11.5px] whitespace-nowrap text-muted-foreground tabular">
                                   {st === "have" ? (e.file ? bytes(e.file.size) : "on disk") : st === "live" ? <span className="text-live">downloading</span> : st === "miss" ? <span className="text-miss">missing</span> : (e.airDate ?? "TBA")}
                                 </span>
