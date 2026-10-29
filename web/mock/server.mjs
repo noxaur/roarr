@@ -112,7 +112,7 @@ const settings = {
     jellyfinAdminOnly: true,
     prefs: { resolutions: [1080, 2160, 720], videoCodecs: ["av1", "x265", "x264"], audioCodecs: ["Opus", "DDP", "AAC"], size: "balanced", allowRemux: false, allowHdr: true, maxGbPerHour: 12, minSeeders: 1, language: "English", preferDualAudio: false, preferredGroups: null, blockedTerms: null },
     behaviour: { watchFirst: true, prefetch: true, indexerTimeout: 30, cacheMinutes: 20, seerrAutoFetch: false },
-    transcode: { enabled: true, concurrency: 1, nice: 10, crf: 0, preset: 8, filmGrain: 0, minSavings: 15, pathMap: "/tv=/media/tv,/movies=/media/movies" },
+    transcode: { enabled: true, concurrency: 1, nice: 10, crf: 0, preset: 8, filmGrain: 0, minSavings: 15, pathMap: "/tv=/media/tv,/movies=/media/movies", schedule: [{ days: [1, 2, 3, 4, 5], from: "22:00", to: "07:00" }, { days: [6, 0], from: "00:00", to: "24:00" }] },
     verify: { autoRegrab: false, pathMap: "/downloads=/data/downloads" },
     import: { mode: "arr", transfer: "hardlink", category: "roarr" },
   },
@@ -177,11 +177,12 @@ const findRec = (h) => verifyRecs.find((r) => r.hash === h.toLowerCase());
 // ---- AV1 conversion -----------------------------------------------------------
 
 const t0 = Date.now();
+let transcodePaused = false;
 const epPath = (showId, season, n) => series.find((x) => x.id === showId).seasons[season - 1].episodes[n - 1].file.path;
 function transcodeStatus() {
   const running = Math.min(99, ((Date.now() - t0) / 1000) % 100);
   const jobs = [
-    { id: "t1", path: epPath(1, 1, 3), title: "Severance S01E03", kind: "tv", titleId: 1, state: "running", percent: running, speed: "1.8x", srcBytes: 1.36e9, crf: 30, encoder: "libsvtav1", queuedAt: ago(14), startedAt: ago(9) },
+    { id: "t1", path: epPath(1, 1, 3), title: "Severance S01E03", kind: "tv", titleId: 1, state: "running", paused: transcodePaused, percent: running, speed: "1.8x", srcBytes: 1.36e9, crf: 30, encoder: "libsvtav1", queuedAt: ago(14), startedAt: ago(9) },
     { id: "t2", path: epPath(1, 1, 4), title: "Severance S01E04", kind: "tv", titleId: 1, state: "queued", percent: 0, queuedAt: ago(14) },
     { id: "t3", path: movieDetails[2].file.path, title: "Blade Runner 2049", kind: "movie", titleId: 13, state: "queued", percent: 0, queuedAt: ago(10) },
     { id: "t4", path: epPath(2, 1, 1), title: "The Expanse S01E01", kind: "tv", titleId: 2, state: "done", percent: 100, srcBytes: 1.32e9, outBytes: 0.61e9, savedBytes: 0.71e9, crf: 30, encoder: "libsvtav1", queuedAt: ago(200), finishedAt: ago(150) },
@@ -190,7 +191,23 @@ function transcodeStatus() {
   ];
   const counts = { queued: 0, running: 0, done: 0, skipped: 0, failed: 0 };
   for (const j of jobs) counts[j.state]++;
-  return { enabled: settings.settings.transcode.enabled, available: true, encoder: "libsvtav1", concurrency: settings.settings.transcode.concurrency, counts, bytesSaved: 0.71e9 + 41.2e9, jobs };
+  const scheduled = (settings.settings.transcode.schedule ?? []).length > 0;
+  const nextChange = scheduled ? new Date(Math.ceil(Date.now() / 3.6e6) * 3.6e6 + 2 * 3.6e6).toISOString() : undefined;
+  return {
+    enabled: settings.settings.transcode.enabled,
+    available: true,
+    encoder: "libsvtav1",
+    concurrency: settings.settings.transcode.concurrency,
+    paused: transcodePaused,
+    held: transcodePaused,
+    scheduled,
+    nextChange,
+    zone: "CET",
+    zoneOffset: 3600,
+    counts,
+    bytesSaved: 0.71e9 + 41.2e9,
+    jobs,
+  };
 }
 
 // ---- Native import --------------------------------------------------------------
@@ -411,6 +428,10 @@ function handle(req, res) {
     return;
   }
   if (p === "/api/transcode") return json(res, transcodeStatus());
+  if (p === "/api/transcode/pause" || p === "/api/transcode/resume") {
+    transcodePaused = p.endsWith("pause");
+    return json(res, transcodeStatus());
+  }
   if (p === "/api/imports") return json(res, importsStatus());
   if (p === "/api/status") return json(res, { version: "mock", services: { prowlarr: { configured: true, ok: true, version: "2.0", ms: 12 }, sonarr: { configured: true, ok: true, version: "4.0", ms: 20 }, radarr: { configured: true, ok: true, version: "6.0", ms: 18 }, seerr: { configured: false, ok: false }, jellyfin: { configured: false, ok: false }, qbittorrent: { configured: true, ok: false, error: "connection refused" } } });
   if (p === "/api/requests") return json(res, { error: "seerr not configured" }, 400);

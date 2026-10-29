@@ -53,15 +53,21 @@ export function EnvLock({ className }: { className?: string }) {
   );
 }
 
-/** One setting. The hint is there on hover and for screen readers; the row shows only the label and the control. */
+/**
+ * One setting. The hint is there on hover and for screen readers; the row shows only the label and the control.
+ * The label sits beside the control only when the row itself is wide enough (container query, not the
+ * viewport): beside two nav columns a 200 px label would leave the control too little room.
+ */
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
-    <div className="grid gap-x-8 gap-y-2 border-t py-4 sm:grid-cols-[200px_minmax(0,1fr)]">
-      <div className="self-center" title={typeof hint === "string" ? hint : undefined}>
-        <div className="font-medium">{label}</div>
-        {hint && <p className="sr-only">{hint}</p>}
+    <div className="@container border-t">
+      <div className="grid gap-x-8 gap-y-2 py-4 @xl:grid-cols-[200px_minmax(0,1fr)]">
+        <div className="self-center" title={typeof hint === "string" ? hint : undefined}>
+          <div className="font-medium">{label}</div>
+          {hint && <p className="sr-only">{hint}</p>}
+        </div>
+        <div className="min-w-0 self-center">{children}</div>
       </div>
-      <div className="min-w-0 self-center">{children}</div>
     </div>
   );
 }

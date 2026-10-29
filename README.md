@@ -115,6 +115,19 @@ How it works:
 - Afterwards roarr asks Sonarr/Radarr to rescan and Jellyfin to refresh.
 - `GET /api/transcode` shows the queue, progress and bytes saved.
 
+Pause and schedule (Admin → AV1):
+- **Pause** holds the queue. A file that is being converted is suspended where
+  it is (ffmpeg is stopped, not killed) and continues on **Resume**, so no
+  work is lost. The pause stays on across restarts. On Windows, ffmpeg cannot
+  be suspended: the file goes back to the queue and starts again later.
+- **Schedule** limits conversion to weekly windows, for example Mon-Fri
+  22:00-07:00 and all of Saturday and Sunday. A window that ends at or before
+  its start time runs past midnight. Outside the windows, running files are
+  suspended the same way. Times are the server's local time: set `TZ` on the
+  container (for example `TZ: Europe/Oslo`). No windows means any time.
+- `POST /api/transcode/pause` and `POST /api/transcode/resume` do the same as
+  the buttons.
+
 roarr needs **read/write access to your media folders, at the same paths
 Sonarr/Radarr use** (mount them into the roarr container like you do for
 Sonarr; with `user:` set to a uid that may write to them). Without these

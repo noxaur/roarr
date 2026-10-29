@@ -51,6 +51,7 @@ type Job struct {
 	CRF        int       `json:"crf,omitempty"`
 	Encoder    string    `json:"encoder,omitempty"`
 	Message    string    `json:"message,omitempty"`
+	Paused     bool      `json:"paused,omitempty"` // running, but held in place
 	QueuedAt   time.Time `json:"queuedAt"`
 	StartedAt  time.Time `json:"startedAt,omitzero"`
 	FinishedAt time.Time `json:"finishedAt,omitzero"`
@@ -63,7 +64,18 @@ type Status struct {
 	Encoder     string `json:"encoder,omitempty"`
 	Error       string `json:"error,omitempty"`
 	Concurrency int    `json:"concurrency"`
-	Counts      struct {
+	// Paused is a hold set by hand. Held is true while nothing may run: paused,
+	// or outside the schedule. NextChange is when the schedule next opens or
+	// closes.
+	Paused     bool      `json:"paused"`
+	Held       bool      `json:"held"`
+	Scheduled  bool      `json:"scheduled"`
+	NextChange time.Time `json:"nextChange,omitzero"`
+	// Zone and ZoneOffset (seconds east of UTC) are the server's time zone,
+	// in which the schedule is read.
+	Zone       string `json:"zone"`
+	ZoneOffset int    `json:"zoneOffset"`
+	Counts     struct {
 		Queued  int `json:"queued"`
 		Running int `json:"running"`
 		Done    int `json:"done"`
@@ -91,6 +103,10 @@ type Manager struct {
 	saved    int64
 	seq      int
 	kick     chan struct{}
+	paused   bool
+	active   map[*Job]*active
+
+	now func() time.Time // test hook
 
 	saveMu                  sync.Mutex              // serializes save()
 	beforeSwap, afterBackup func()                  // test hooks
@@ -98,12 +114,19 @@ type Manager struct {
 	noReplaceFn             func(a, b string) error // test hook (nil = renameNoReplace)
 }
 
+// active is a job whose ffmpeg may be running.
+type active struct {
+	proc     Proc
+	cancel   context.CancelFunc
+	stopping bool // cancelled because it could not be suspended
+}
+
 // New builds a manager; state is kept in dir/transcode.json.
 func New(r Runner, dir string) *Manager {
 	if r == nil {
 		r = ExecRunner{}
 	}
-	m := &Manager{run: r, path: filepath.Join(dir, "transcode.json"), ffmpeg: "ffmpeg", ffprobe: "ffprobe", kick: make(chan struct{}, 1)}
+	m := &Manager{run: r, path: filepath.Join(dir, "transcode.json"), ffmpeg: "ffmpeg", ffprobe: "ffprobe", kick: make(chan struct{}, 1), active: map[*Job]*active{}, now: time.Now}
 	m.load()
 	return m
 }
@@ -115,8 +138,48 @@ func (m *Manager) OnDone(f func(Job)) { m.onDone = f }
 func (m *Manager) SetOptions(o Options) {
 	m.mu.Lock()
 	m.opts = o
+	m.applyHoldLocked()
 	m.mu.Unlock()
 	m.wake()
+}
+
+// SetPaused holds or releases the queue by hand. Running jobs are suspended
+// where they are and carry on when released. The hold survives a restart.
+func (m *Manager) SetPaused(p bool) {
+	m.mu.Lock()
+	m.paused = p
+	m.applyHoldLocked()
+	m.mu.Unlock()
+	m.save()
+	m.wake()
+}
+
+// heldLocked reports whether jobs must not run now.
+func (m *Manager) heldLocked() bool {
+	return m.paused || !Open(m.opts.Schedule, m.now())
+}
+
+// applyHoldLocked suspends or resumes running ffmpeg processes to match the
+// hold. Where a process cannot be suspended, it is stopped and its job is
+// queued again.
+func (m *Manager) applyHoldLocked() {
+	held := m.heldLocked()
+	for j, a := range m.active {
+		if a.proc == nil || a.stopping || j.Paused == held {
+			continue
+		}
+		if held {
+			if err := a.proc.Suspend(); err != nil {
+				a.stopping = true
+				a.cancel()
+				continue
+			}
+		} else if err := a.proc.Resume(); err != nil {
+			slog.Warn("transcode: cannot resume ffmpeg", "file", filepath.Base(j.Path), "err", err)
+			continue
+		}
+		j.Paused = held
+	}
 }
 
 func (m *Manager) wake() {
@@ -206,6 +269,10 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	st := Status{Enabled: m.opts.Enabled, Available: m.enc != "", Encoder: m.enc, Error: m.encErr, Concurrency: m.opts.Concurrency, BytesSaved: m.saved, Jobs: []Job{}}
+	st.Paused, st.Held, st.Scheduled = m.paused, m.heldLocked(), len(m.opts.Schedule) > 0
+	now := m.now()
+	st.NextChange = NextChange(m.opts.Schedule, now)
+	st.Zone, st.ZoneOffset = now.Zone()
 	rank := func(s string) int {
 		switch s {
 		case Running:
@@ -246,9 +313,12 @@ func (m *Manager) Status() Status {
 // Loop starts queued jobs while there is capacity. It returns when ctx ends.
 func (m *Manager) Loop(ctx context.Context) {
 	m.Detect(ctx)
-	t := time.NewTicker(time.Minute)
+	t := time.NewTicker(15 * time.Second) // the schedule is followed to the minute
 	defer t.Stop()
 	for {
+		m.mu.Lock()
+		m.applyHoldLocked()
+		m.mu.Unlock()
 		m.startReady(ctx)
 		select {
 		case <-ctx.Done():
@@ -262,7 +332,7 @@ func (m *Manager) Loop(ctx context.Context) {
 func (m *Manager) startReady(ctx context.Context) {
 	for {
 		m.mu.Lock()
-		if !m.opts.Enabled || m.enc == "" {
+		if !m.opts.Enabled || m.enc == "" || m.heldLocked() {
 			m.mu.Unlock()
 			return
 		}
@@ -333,7 +403,20 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 	m.update(j, func(j *Job) { j.SrcBytes, j.CRF, j.Encoder = src.Size, CRFFor(opts, src), enc })
 
 	args := BuildArgs(opts, enc, src, path, tmp)
-	err = m.run.Run(ctx, opts.Nice, m.ffmpeg, args, func(line string) {
+	jctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	m.mu.Lock()
+	m.active[j] = &active{cancel: cancel}
+	m.mu.Unlock()
+	started := func(p Proc) {
+		m.mu.Lock()
+		if a := m.active[j]; a != nil {
+			a.proc = p
+		}
+		m.applyHoldLocked() // a hold set while the file was probed
+		m.mu.Unlock()
+	}
+	err = m.run.Run(jctx, opts.Nice, m.ffmpeg, args, func(line string) {
 		k, v, ok := strings.Cut(line, "=")
 		if !ok {
 			return
@@ -347,11 +430,16 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 		case "speed":
 			m.update(j, func(j *Job) { j.Speed = strings.TrimSpace(v) })
 		}
-	})
+	}, started)
+	m.mu.Lock()
+	delete(m.active, j)
+	j.Paused = false
+	m.mu.Unlock()
 	if err != nil {
-		if ctx.Err() != nil {
-			// Shutting down: put the file back in the queue for next start.
-			m.update(j, func(j *Job) { j.State, j.Percent = Queued, 0 })
+		if jctx.Err() != nil {
+			// Shutting down, or held where ffmpeg cannot be suspended: put the
+			// file back in the queue.
+			m.update(j, func(j *Job) { j.State, j.Percent, j.Speed = Queued, 0, "" })
 			return
 		}
 		m.finish(j, Failed, "ffmpeg failed: "+err.Error())
@@ -488,6 +576,7 @@ func tempPath(path string) string {
 type state struct {
 	Jobs       []*Job `json:"jobs"`
 	BytesSaved int64  `json:"bytesSaved"`
+	Paused     bool   `json:"paused,omitempty"`
 }
 
 func (m *Manager) load() {
@@ -499,8 +588,9 @@ func (m *Manager) load() {
 	if json.Unmarshal(b, &s) != nil {
 		return
 	}
-	m.saved = s.BytesSaved
+	m.saved, m.paused = s.BytesSaved, s.Paused
 	for _, j := range s.Jobs {
+		j.Paused = false
 		if j.State == Running {
 			j.State, j.Percent = Queued, 0 // interrupted by a restart
 		}
@@ -520,7 +610,7 @@ func (m *Manager) save() {
 			}
 		}
 	}
-	b, err := json.Marshal(state{Jobs: m.jobs, BytesSaved: m.saved})
+	b, err := json.Marshal(state{Jobs: m.jobs, BytesSaved: m.saved, Paused: m.paused})
 	m.mu.Unlock()
 	if err != nil {
 		return

@@ -32,7 +32,8 @@ func TestSettingsRoundTrip(t *testing.T) {
 		s.QBit = config.Service{URL: "http://qbit:8080", Username: "admin", Password: "qbit-pass"}
 		s.AuthMode, s.AuthPassword = "password", "secret"
 		s.Behaviour.SeerrAutoFetch = true
-		s.Transcode = config.Transcode{Enabled: true, Concurrency: 3, Nice: 5, CRF: 28, Preset: 8, FilmGrain: 12, MinSavings: 20, PathMap: "/tv=/media/tv"}
+		s.Transcode = config.Transcode{Enabled: true, Concurrency: 3, Nice: 5, CRF: 28, Preset: 8, FilmGrain: 12, MinSavings: 20, PathMap: "/tv=/media/tv",
+			Schedule: []config.Window{{Days: []int{1, 2, 3, 4, 5}, From: "22:00", To: "07:00"}, {From: "00:00", To: "24:00"}}}
 		s.Verify = config.Verify{Enabled: &off, AutoRegrab: true, PathMap: "/downloads=/data/downloads"}
 		s.Import = config.Import{Mode: "native", TVRoot: "/media/tv", MovieRoot: "/media/movies", Transfer: "copy", PathMap: "/dl=/data/dl", Category: "films", SavePath: "/dl/roarr"}
 	})
