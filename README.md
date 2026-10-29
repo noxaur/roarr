@@ -94,7 +94,7 @@ if the ffmpeg has no SVT-AV1), in a low-priority background queue.
 | `TRANSCODE_CONCURRENCY` | `1` | Files converted at once (1-8). |
 | `TRANSCODE_NICE` | `10` | CPU niceness of ffmpeg (0-19). |
 | `TRANSCODE_CRF` | auto | Quality (lower is better, 0-63). Auto: 26 for SD, 28 for 720p, 30 for 1080p, 32 for 1440p, 34 for 4K. |
-| `TRANSCODE_PRESET` | `6` | Speed (SVT-AV1 0-13; higher is faster and larger). 6-8 is a good range. |
+| `TRANSCODE_PRESET` | `8` | Speed (SVT-AV1 0-13; higher is faster, with a little less quality per byte). 8 is about 1.5x faster than 6 for about 0.3 less VMAF at the same size; use 6 on a fast CPU, 10 only on a very slow one. |
 | `TRANSCODE_FILM_GRAIN` | `0` | Film-grain synthesis level (0 = off, 1-50). Try 8-12 for grainy film sources. |
 | `TRANSCODE_MIN_SAVINGS` | `15` | Keep the original unless the result is at least this many percent smaller. |
 | `TRANSCODE_PATH_MAP` | — | Only if roarr sees the media under other paths than Sonarr/Radarr: `/tv=/media/tv,/movies=/media/movies`. |
@@ -117,9 +117,12 @@ How it works:
 
 roarr needs **read/write access to your media folders, at the same paths
 Sonarr/Radarr use** (mount them into the roarr container like you do for
-Sonarr; with `user:` set to a uid that may write to them). The torrent's own
-hard-linked copy is not touched, so seeding goes on, but the old data stays on
-disk until that torrent is removed.
+Sonarr; with `user:` set to a uid that may write to them). Without these
+mounts every job fails with "cannot read file". If you add `user:` to an
+existing install, give the config volume to that uid once:
+`docker run --rm -v <project>_roarr-config:/c alpine chown -R 1000:1000 /c`.
+The torrent's own hard-linked copy is not touched, so seeding goes on, but the
+old data stays on disk until that torrent is removed.
 
 The image includes a static ffmpeg, which adds roughly 100-150 MB (estimate).
 Leave it out with `docker build --build-arg FFMPEG=false .`; the converter

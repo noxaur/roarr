@@ -112,7 +112,7 @@ const settings = {
     jellyfinAdminOnly: true,
     prefs: { resolutions: [1080, 2160, 720], videoCodecs: ["av1", "x265", "x264"], audioCodecs: ["Opus", "DDP", "AAC"], size: "balanced", allowRemux: false, allowHdr: true, maxGbPerHour: 12, minSeeders: 1, language: "English", preferDualAudio: false, preferredGroups: null, blockedTerms: null },
     behaviour: { watchFirst: true, prefetch: true, indexerTimeout: 30, cacheMinutes: 20, seerrAutoFetch: false },
-    transcode: { enabled: true, concurrency: 1, nice: 10, crf: 0, preset: 6, filmGrain: 0, minSavings: 15, pathMap: "/tv=/media/tv,/movies=/media/movies" },
+    transcode: { enabled: true, concurrency: 1, nice: 10, crf: 0, preset: 8, filmGrain: 0, minSavings: 15, pathMap: "/tv=/media/tv,/movies=/media/movies" },
     verify: { autoRegrab: false, pathMap: "/downloads=/data/downloads" },
     import: { mode: "arr", transfer: "hardlink", category: "roarr" },
   },

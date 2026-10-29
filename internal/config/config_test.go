@@ -23,7 +23,7 @@ func TestTranscodeDefaultsAndEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	tc := st.Get().Transcode
-	if tc.Enabled || tc.Concurrency != 1 || tc.Preset != 6 || tc.MinSavings != 15 {
+	if tc.Enabled || tc.Concurrency != 1 || tc.Preset != 8 || tc.MinSavings != 15 {
 		t.Errorf("defaults wrong: %+v", tc)
 	}
 	t.Setenv("TRANSCODE", "true")
