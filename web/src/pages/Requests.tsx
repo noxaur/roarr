@@ -25,7 +25,7 @@ function href(r: RequestItem) {
 }
 
 export function RequestsPage() {
-  const { pendingRequests, reloadRequests, reloadActivity, reloadLibrary } = useStore();
+  const { reloadRequests, reloadActivity, reloadLibrary } = useStore();
   const [filter, setFilter] = useState<Filter>("pending");
   const [items, setItems] = useState<RequestItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,13 +86,12 @@ export function RequestsPage() {
 
   return (
     <div className="space-y-10">
-      <PageHeader title="Requests" sub="From Seerr">
+      <PageHeader title="Requests">
         <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
           <TabsList>
             {FILTERS.map(([v, name]) => (
               <TabsTrigger key={v} value={v} className="flex-none">
                 {name}
-                {v === "pending" && pendingRequests ? <span className="font-mono text-[11px] text-muted-foreground">{pendingRequests}</span> : null}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -117,11 +116,11 @@ export function RequestsPage() {
             const canGet = r.kind === "movie" || !!r.tvdbId || !!r.libraryId;
             const b = busy[r.id];
             return (
-              <div key={r.id} className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-x-3.5 gap-y-2.5 border-t py-3 sm:grid-cols-[44px_minmax(0,1fr)_auto] sm:gap-x-5">
+              <div key={r.id} className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-x-4 gap-y-3 border-t py-3 sm:grid-cols-[44px_minmax(0,1fr)_auto] sm:gap-x-5">
                 <Thumb src={r.poster} title={r.title} className="w-10 sm:w-11" />
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                    <Link to={href(r)} className="text-[15px] font-medium hover:underline">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <Link to={href(r)} className="text-[14px] font-medium hover:underline">
                       {r.title}
                     </Link>
                     <span className="meta">{[r.kind === "tv" ? "Show" : "Movie", r.year, r.seasons?.length ? `Season ${r.seasons.join(", ")}` : null].filter(Boolean).join(", ")}</span>
@@ -129,7 +128,7 @@ export function RequestsPage() {
                     {r.available === "available" && <State tone="have">Available</State>}
                     {r.available === "partial" && <State tone="live">Partly available</State>}
                   </div>
-                  <div className="meta mt-0.5">
+                  <div className="meta mt-1">
                     {r.requestedBy}, {ago(r.createdAt)}
                   </div>
                 </div>

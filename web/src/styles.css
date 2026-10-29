@@ -1,64 +1,71 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "@fontsource-variable/familjen-grotesk";
-@import "@fontsource-variable/spline-sans-mono";
+@import "@fontsource-variable/inter";
+@import "@fontsource/dm-mono/400.css";
+@import "@fontsource/dm-mono/500.css";
+@import "@fontsource-variable/bricolage-grotesque/opsz.css";
 
 @custom-variant dark (&:is(.dark *));
 
 /*
-  roarr is an operator console: it shows the state of a media library and
-  lets you change it. Colour is reserved for state. Four tones, each with a
-  soft fill for backgrounds:
+  roarr is equipment for the operator: the Night console direction.
+  Dark only. 60 % black, 30 % near-black, 10 % white.
+
+  White is the brand colour, and it is defined by a shape: one solid white
+  object per screen (the primary action, the nav marker, focus). Text is grey.
+
+  The only hues are state, each with a soft fill for backgrounds:
 
     have  — on disk, done
-    miss  — wanted but not on disk
+    miss  — wanted but not on disk (the brightest cell)
     live  — moving: downloading, importing, searching
     bad   — stuck, failed, rejected, destructive
 
-  Everything else is warm greys. The primary button is ink on paper (paper
-  on ink in the dark theme), never a brand colour.
+  Corners are 2 px. Spacing and sizes are multiples of 4.
 */
 :root {
-  --radius: 0.5rem;
-  --background: #f3f2ee;
-  --foreground: #1a1c20;
-  --card: #fbfaf8;
-  --card-foreground: #1a1c20;
-  --popover: #ffffff;
-  --popover-foreground: #1a1c20;
-  --primary: #1a1c20;
-  --primary-foreground: #f3f2ee;
-  --secondary: #e9e8e3;
-  --secondary-foreground: #1a1c20;
-  --muted: #e9e8e3;
-  --muted-foreground: #686b73;
-  --accent: #e3e2dc;
-  --accent-foreground: #1a1c20;
-  --destructive: #b63d18;
-  --border: #d9d8d1;
-  --input: #c6c5be;
-  --ring: #6f727b;
+  --radius: 2px;
+  --background: #0a0a0b;
+  --foreground: #e4e4e2;
+  --card: #151517;
+  --card-foreground: #e4e4e2;
+  --popover: #151517;
+  --popover-foreground: #e4e4e2;
+  --primary: #ffffff;
+  --primary-foreground: #0a0a0b;
+  --secondary: #1e1e21;
+  --secondary-foreground: #e4e4e2;
+  --muted: #1e1e21;
+  --muted-foreground: #9c9ca3;
+  --accent: #232326;
+  --accent-foreground: #e4e4e2;
+  --destructive: #ff8a74;
+  --border: #232326;
+  --input: #2e2e33;
+  --ring: #ffffff;
 
-  --have: #1d7f55;
-  --have-soft: #d6ecde;
-  --miss: #a86f12;
-  --miss-soft: #f5e6c4;
-  --live: #2457d6;
-  --live-soft: #dbe4fa;
-  --bad: #b63d18;
-  --bad-soft: #f8ddd2;
+  --have: #4e9775;
+  --have-soft: #15251d;
+  --miss: #f2b84b;
+  --miss-soft: #2e2411;
+  --live: #7ab8ff;
+  --live-soft: #142033;
+  --bad: #ff8a74;
+  --bad-soft: #33191a;
+  /* Not aired: an unlit cell. */
+  --unlit: #26262a;
 
-  --ink: #1a1c20;
-  --paper: #f3f2ee;
+  --ink: #0a0a0b;
+  --paper: #ffffff;
 
-  --sidebar: #e9e8e3;
-  --sidebar-foreground: #1a1c20;
-  --sidebar-primary: #1a1c20;
-  --sidebar-primary-foreground: #f3f2ee;
-  --sidebar-accent: #e3e2dc;
-  --sidebar-accent-foreground: #1a1c20;
-  --sidebar-border: #d9d8d1;
-  --sidebar-ring: #6f727b;
+  --sidebar: #151517;
+  --sidebar-foreground: #e4e4e2;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #0a0a0b;
+  --sidebar-accent: #232326;
+  --sidebar-accent-foreground: #e4e4e2;
+  --sidebar-border: #232326;
+  --sidebar-ring: #ffffff;
   --chart-1: var(--have);
   --chart-2: var(--miss);
   --chart-3: var(--live);
@@ -66,52 +73,16 @@
   --chart-5: var(--muted-foreground);
 }
 
-.dark {
-  --background: #1b1e24;
-  --foreground: #e8e6e1;
-  --card: #21252c;
-  --card-foreground: #e8e6e1;
-  --popover: #262a32;
-  --popover-foreground: #e8e6e1;
-  --primary: #e8e6e1;
-  --primary-foreground: #1b1e24;
-  --secondary: #2a2e36;
-  --secondary-foreground: #e8e6e1;
-  --muted: #2a2e36;
-  --muted-foreground: #9a9ea8;
-  --accent: #30353e;
-  --accent-foreground: #e8e6e1;
-  --destructive: #ff8a74;
-  --border: #30353e;
-  --input: #3b414b;
-  --ring: #8d929c;
-
-  --have: #7fd1a8;
-  --have-soft: #1f3a30;
-  --miss: #f0b64a;
-  --miss-soft: #3e3320;
-  --live: #7ab8ff;
-  --live-soft: #1f2f47;
-  --bad: #ff8a74;
-  --bad-soft: #45272a;
-
-  --sidebar: #21252c;
-  --sidebar-foreground: #e8e6e1;
-  --sidebar-primary: #e8e6e1;
-  --sidebar-primary-foreground: #1b1e24;
-  --sidebar-accent: #30353e;
-  --sidebar-accent-foreground: #e8e6e1;
-  --sidebar-border: #30353e;
-  --sidebar-ring: #8d929c;
-}
-
 @theme inline {
-  --font-sans: "Familjen Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Spline Sans Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: "Bricolage Grotesque Variable", "Inter Variable", sans-serif;
+  --radius-xs: var(--radius);
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: var(--radius);
+  --radius-2xl: var(--radius);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -138,6 +109,7 @@
   --color-live-soft: var(--live-soft);
   --color-bad: var(--bad);
   --color-bad-soft: var(--bad-soft);
+  --color-unlit: var(--unlit);
   --color-ink: var(--ink);
   --color-paper: var(--paper);
   --color-chart-1: var(--chart-1);
@@ -160,15 +132,13 @@
     @apply border-border outline-ring/50;
   }
   html {
-    color-scheme: light;
-  }
-  html.dark {
     color-scheme: dark;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-size: 14px;
-    font-feature-settings: "ss01", "cv05";
+    /* cv05, cv08: l and I with tails, so I, l and 1 differ. */
+    font-feature-settings: "cv05", "cv08", "tnum", "zero";
   }
   ::selection {
     background: var(--live-soft);
@@ -177,14 +147,33 @@
   h1,
   h2,
   h3 {
-    letter-spacing: -0.015em;
+    letter-spacing: -0.02em;
   }
 }
 
-/* Secondary text: 12.5px, muted, sentence case. No caps, no tracking. */
+/* The display face: the mark and the sign-in screen only. Lowercase. */
+@utility display {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-variation-settings: "opsz" 96;
+  text-transform: lowercase;
+  letter-spacing: -0.02em;
+}
+
+/* Silkscreen label, like the print on a mixer panel. One per panel at most. */
+@utility label-caps {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* Secondary text: 12px, muted, sentence case. */
 @utility meta {
-  font-size: 12.5px;
-  line-height: 1.3;
+  font-size: 12px;
+  line-height: 16px;
   color: var(--muted-foreground);
 }
 
@@ -197,9 +186,9 @@
 @utility spec {
   display: inline-flex;
   align-items: center;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 4px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: var(--radius);
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1;
@@ -208,23 +197,24 @@
   color: var(--foreground);
 }
 
-/* Episode cell in a season strip. Fill encodes state; a ring marks "ticked". */
+/*
+  Episode cell: the atom. A solid fill shows state, with no stroke. A
+  selected cell has a 2 px white underline, 4 px below it.
+*/
 @utility cell {
   position: relative;
   display: grid;
   place-items: center;
-  width: 100%;
-  aspect-ratio: 1;
-  min-width: 18px;
-  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
   font-family: var(--font-mono);
   font-size: 10px;
   line-height: 1;
   color: var(--muted-foreground);
-  background: var(--muted);
+  background: var(--unlit);
   outline: none;
   cursor: pointer;
-  transition: box-shadow 120ms;
 }
 
 /* Drag-to-select box. */
@@ -233,7 +223,7 @@
   z-index: 45;
   pointer-events: none;
   border: 1px solid var(--live);
-  border-radius: 3px;
+  border-radius: var(--radius);
   background: color-mix(in srgb, var(--live) 12%, transparent);
 }
 

@@ -10,7 +10,6 @@ import { Nav, isAdminPath, isDownloadsPath } from "./components/Nav";
 import { SearchPalette, type Command } from "./components/SearchPalette";
 import { ShortcutsDialog } from "./components/Shortcuts";
 import { ShellCtx, keyIsBusy } from "./lib/shell";
-import { toggleTheme } from "./lib/theme";
 import { undoLast } from "./lib/undo";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
@@ -85,7 +84,6 @@ function Shell({ authMode }: { authMode: string }) {
       if (e.key === "/") setSearching(true);
       else if (e.key === "?") setShortcuts(true);
       else if (k === "d") setDownloads((d) => !d);
-      else if (k === "t") toggleTheme();
       else return;
       e.preventDefault();
     };
@@ -100,12 +98,13 @@ function Shell({ authMode }: { authMode: string }) {
 
   const commands: Command[] = [
     { id: "library", label: "Library", run: () => navigate("/") },
+    { id: "shows", label: "Shows", run: () => navigate("/shows") },
+    { id: "movies", label: "Movies", run: () => navigate("/movies") },
     { id: "activity", label: "Downloads", run: () => navigate("/downloads") },
     { id: "requests", label: "Requests", run: () => navigate("/requests") },
     { id: "settings", label: "Admin", run: () => navigate("/admin") },
     { id: "downloads", label: downloads ? "Hide downloads panel" : "Downloads panel", kbd: "D", run: () => setDownloads((d) => !d) },
     { id: "missing", label: "Library: missing only", run: () => navigate("/?filter=missing") },
-    { id: "theme", label: "Switch light / dark", kbd: "T", run: toggleTheme },
     { id: "undo", label: "Undo last change", kbd: "⌘Z", run: undoLast },
     { id: "shortcuts", label: "Keyboard shortcuts", kbd: "?", run: () => setShortcuts(true) },
   ];
@@ -117,14 +116,19 @@ function Shell({ authMode }: { authMode: string }) {
   else if ((m = match("/movie/tmdb/:tmdb", path))) page = <MoviePage key={path} tmdb={+m.tmdb} />;
   else if ((m = match("/movie/:id", path))) page = <MoviePage key={path} id={+m.id} />;
   else if (isDownloadsPath(path)) page = <ActivityPage />;
+  else if (path === "/shows") page = <Home kind="tv" />;
+  else if (path === "/movies") page = <Home kind="movie" />;
   else if (path === "/requests") page = <RequestsPage />;
   else if (isAdminPath(path)) page = <SettingsPage />;
 
   return (
     <ShellCtx.Provider value={shell}>
       <Nav authMode={authMode} />
-      <main className="mx-auto max-w-[1280px] px-4 pt-6 pb-28 sm:px-6 lg:pt-8">
-        <Suspense fallback={null}>{page}</Suspense>
+      {/* One padding on every side: 16 px on phones, 48 px next to the sidebar. Wide screens centre the content. */}
+      <main className="px-4 pt-4 pb-28 md:ml-[240px] md:p-12">
+        <div className="mx-auto max-w-[1104px]">
+          <Suspense fallback={null}>{page}</Suspense>
+        </div>
       </main>
       <SearchPalette open={searching} onOpenChange={setSearching} commands={commands} />
       <DownloadsDrawer open={downloads} onOpenChange={setDownloads} />

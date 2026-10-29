@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Notice, SectionHead, Spinner } from "@/components/kit";
+import { SectionHead, Spinner } from "@/components/kit";
 import { Field, FieldLabel, LockedInput, Num, Segmented, Sub, Toggle } from "@/components/AdminFields";
 import { ChecksTab, ImportTab, TranscodeTab } from "./AdminMedia";
 
@@ -66,7 +66,7 @@ export function SettingsPage() {
     loadStatus();
   }, []);
 
-  if (!s || !saved) return <Skeleton className="h-[480px] rounded-2xl" />;
+  if (!s || !saved) return <Skeleton className="h-[480px]" />;
 
   const changes = countChanges(saved, s);
   const update = (f: (x: Settings) => void) => {
@@ -92,7 +92,6 @@ export function SettingsPage() {
 
   const p = s.prefs;
   const b = s.behaviour;
-  const connected = SERVICES.filter((x) => status[x.key]?.ok).length;
 
   return (
     <Tabs
@@ -105,40 +104,33 @@ export function SettingsPage() {
       className="grid gap-8 md:grid-cols-[220px_minmax(0,1fr)] md:gap-12"
     >
       <div>
-        <h1 className="text-[26px] leading-none font-medium">Admin</h1>
-        <p className="meta mt-2 font-mono">roarr {version}</p>
-        <TabsList className="mt-5 h-auto! w-full flex-row flex-wrap items-stretch rounded-none bg-transparent p-0 md:flex-col">
+        <h1 className="text-[24px] leading-8 font-semibold">Admin</h1>
+        <p className="meta mt-1 font-mono">roarr {version}</p>
+        <TabsList className="mt-6 h-auto! w-full flex-row flex-wrap items-stretch gap-1 rounded-none bg-transparent p-0 md:flex-col">
           {(
             [
               ["picking", "Release rules", ""],
               ["behaviour", "Behaviour", ""],
-              ["import", "Import", s.import?.mode === "native" ? "roarr" : ""],
+              ["import", "Import", ""],
               ["checks", "Checks", ""],
-              ["av1", "AV1", s.transcode?.enabled ? "on" : ""],
-              ["connections", "Connections", Object.keys(status).length ? `${connected}/${SERVICES.length}` : ""],
+              ["av1", "AV1", ""],
+              ["connections", "Connections", ""],
               ["signin", "Sign-in", ""],
             ] as const
-          ).map(([v, name, extra]) => (
+          ).map(([v, name]) => (
             <TabsTrigger
               key={v}
               value={v}
-              className="h-9 flex-none justify-between rounded-md px-3 text-[14px] data-[state=active]:bg-card! data-[state=active]:shadow-none md:w-full"
+              className="h-9 flex-none justify-between rounded-[2px] border-0 px-3 text-[14px] font-normal text-muted-foreground data-[state=active]:bg-card! data-[state=active]:text-foreground data-[state=active]:shadow-none md:w-full"
             >
               {name}
-              {extra && <span className="font-mono text-[11px] opacity-70">{extra}</span>}
             </TabsTrigger>
           ))}
         </TabsList>
-        <p className="meta mt-5 hidden md:block">
-          <Lock className="inline size-3 -translate-y-px" /> = set by environment variable.
-        </p>
       </div>
 
       <div className="min-w-0 pt-1">
         <TabsContent value="connections">
-          <Notice tone="none" className="mb-4">
-            Connection settings and keys. Everyday use does not need this page.
-          </Notice>
           <SectionHead title="Connections" className="mb-3">
             <Button variant="outline" size="xs" className="ml-auto" disabled={checking} onClick={() => loadStatus(true)}>
               {checking ? <Spinner className="size-3" /> : <RefreshCw />} Check again
@@ -264,7 +256,7 @@ export function SettingsPage() {
 
       {changes > 0 && (
         <div className="fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
-          <div className="flex items-center gap-3 rounded-lg border bg-popover py-1.5 pr-1.5 pl-4 shadow-xl">
+          <div className="flex items-center gap-3 rounded-[2px] border bg-popover py-2 pr-2 pl-4">
             <span className="text-sm">
               {changes} unsaved change{changes > 1 ? "s" : ""}
             </span>
@@ -304,11 +296,11 @@ function ServiceRow({
   const line = status?.ok ? [`v${status.version}`, `${status.ms} ms`, svc.hint].join(", ") : status?.configured ? status.error : svc.hint;
 
   return (
-    <div className={cn("border-t", open && "my-2 rounded-lg border-transparent bg-card px-4 md:-mx-4")}>
-      <div className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-x-3.5 gap-y-1 py-3.5 sm:grid-cols-[10px_140px_minmax(0,1fr)_auto]">
-        <i className={cn("size-2 rounded-full", status?.ok ? "bg-have" : broken ? "bg-bad" : "bg-muted-foreground/40")} />
-        <b className="text-[15px] font-medium">{svc.name}</b>
-        <span className={cn("col-start-2 row-start-2 truncate font-mono text-[11.5px] sm:col-start-3 sm:row-start-1", broken ? "text-bad" : "text-muted-foreground")} title={line}>
+    <div className={cn("border-t", open && "my-2 rounded-[2px] border-transparent bg-card px-4 md:-mx-4")}>
+      <div className="grid grid-cols-[8px_minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 py-4 sm:grid-cols-[8px_140px_minmax(0,1fr)_auto]">
+        <i className={cn("size-2 rounded-[1px]", status?.ok ? "bg-have" : broken ? "bg-bad" : "bg-unlit")} />
+        <b className="text-[14px] font-medium">{svc.name}</b>
+        <span className={cn("col-start-2 row-start-2 truncate font-mono text-[12px] sm:col-start-3 sm:row-start-1", broken ? "text-bad" : "text-muted-foreground")} title={line}>
           {line ?? "…"}
         </span>
         <div className="col-start-3 row-start-1 sm:col-start-4">
@@ -324,7 +316,7 @@ function ServiceRow({
         </div>
       </div>
       {open && !allLocked && (
-        <div className="grid gap-x-4 gap-y-2.5 pb-4 sm:grid-cols-[110px_minmax(0,1fr)] sm:items-center sm:pl-6">
+        <div className="grid gap-x-4 gap-y-3 pb-4 sm:grid-cols-[110px_minmax(0,1fr)] sm:items-center sm:pl-6">
           <FieldLabel>URL</FieldLabel>
           <LockedInput
             locked={lockedUrl}
@@ -354,14 +346,14 @@ function ServiceRow({
 /** Ordered preference list: chips in rank order (× removes), then the unused options (+ appends last). */
 function Ranked<T extends string | number>({ value, options, label, onChange }: { value: T[]; options: readonly T[]; label: (v: T) => string; onChange: (v: T[]) => void }) {
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-2">
       {value.map((v, i) => (
-        <span key={v} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground pr-1 pl-3 text-[13px] font-medium text-background">
-          <span className="font-mono text-[11px] opacity-60">{i + 1}</span>
+        <span key={v} className="inline-flex h-8 items-center gap-2 rounded-[2px] bg-accent pr-1 pl-3 text-[13px] font-medium text-foreground">
+          <span className="font-mono text-[11px] text-muted-foreground">{i + 1}</span>
           {label(v)}
           <button
             aria-label={`Remove ${label(v)}`}
-            className="grid size-6 cursor-pointer place-items-center rounded-full hover:bg-background/20"
+            className="grid size-6 cursor-pointer place-items-center rounded-[2px] text-muted-foreground hover:bg-background/40 hover:text-foreground"
             onClick={() => onChange(value.filter((y) => y !== v))}
           >
             <X className="size-3" />

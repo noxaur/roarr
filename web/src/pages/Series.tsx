@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bookmark, Check, ChevronRight, Download, ListChecks, Radar, RefreshCw, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
+import type { CSSProperties } from "react";
 import { api, type EpisodeAction, type EpisodeDetail, type Release, type SeriesDetail, type VerifyRecord } from "@/lib/api";
 import { autoGet, run } from "@/lib/actions";
-import { bytes, epCode, pad } from "@/lib/format";
+import { bytes, epCode, pad, pct } from "@/lib/format";
 import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
 import { useRouter } from "@/lib/router";
 import { usePointerSelect } from "@/lib/select";
@@ -14,9 +15,10 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { Dot, Figure, Notice, Spec, State } from "@/components/kit";
+import { Bar, Notice, Spec, State } from "@/components/kit";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useConfirm } from "@/components/Confirm";
-import { FileLine, ManageMenu, MonitorToggle, RowMenu, SelectionBar } from "@/components/Manage";
+import { ManageMenu, MonitorToggle, RowMenu, SelectionBar } from "@/components/Manage";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
 import { VerdictBadge, useVerdictActions } from "@/components/Verdict";
 import { Crumbs, GetCard, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
@@ -57,7 +59,7 @@ function epState(e: EpisodeDetail): "have" | "live" | "miss" | "unaired" {
 }
 
 function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void; prefs: { prefetch: boolean; watchFirst: boolean } }) {
-  const { reloadActivity, reloadLibrary, verify } = useStore();
+  const { reloadActivity, reloadLibrary, verify, activity } = useStore();
   const { navigate, search: params } = useRouter();
   const seasons = useMemo(() => d.seasons.filter((s) => s.episodes.length > 0 || d.synthetic), [d]);
   const allEps = useMemo(() => seasons.flatMap((s) => s.episodes), [seasons]);
@@ -104,10 +106,26 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
   const [ticked, setTicked] = useState<Set<number>>(new Set());
   const [openSeasons, setOpenSeasons] = useState<Set<number>>(() => new Set(seasons.length === 1 ? [seasons[0].number] : [focusSeason]));
   const [sheet, setSheet] = useState(params.get("pick") === "1");
-  const [watchFirst, setWatchFirst] = useState(prefs.watchFirst);
+  const watchFirst = prefs.watchFirst;
   const [busy, setBusy] = useState(false);
-  const [gotFor, setGotFor] = useState<string | null>(null);
-  useEffect(() => setWatchFirst(prefs.watchFirst), [prefs.watchFirst]);
+  // The "got it" moment: the grabbed cells turn live in one 300 ms sweep, and
+  // the button confirms for 2 s.
+  const [got, setGot] = useState<{ ids: number[]; label: string } | null>(null);
+  const gotTimer = useRef(0);
+  const markGot = (ids: number[], what: string) => {
+    setGot({ ids, label: `Got ${what}` });
+    clearTimeout(gotTimer.current);
+    gotTimer.current = window.setTimeout(() => setGot((g) => (g ? { ...g, label: "" } : g)), 2000);
+  };
+  useEffect(() => () => clearTimeout(gotTimer.current), []);
+  const gotSet = useMemo(() => new Set(got?.ids ?? []), [got]);
+  // Live progress per episode code, from the download queue.
+  const liveOf = useMemo(() => {
+    const m = new Map<string, { progress: number; eta?: string }>();
+    if (!d.inLibrary) return m;
+    for (const a of activity) if (a.href === `/tv/${d.id}` && a.subtitle) m.set(a.subtitle, { progress: a.progress, eta: a.eta });
+    return m;
+  }, [activity, d.id, d.inLibrary]);
   const confirm = useConfirm();
   const lib = d.inLibrary;
   // Monitoring flips show at once; the reload that follows confirms them.
@@ -222,11 +240,11 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
           plan.picks.map((x) => x.release),
           { watchFirst },
         );
-        if (ok) setGotFor(selKey);
+        if (ok) markGot(selArr, ctaWhat);
       } else {
         const res = await autoGet({ kind: "tv", seriesId: d.inLibrary ? d.id : 0, tvdbId: d.tvdbId, tmdbId: d.tmdbId, episodeIds: selArr }, scopeTitle);
         if (res) {
-          setGotFor(selKey);
+          markGot(selArr, ctaWhat);
           afterGrab(res.grabs?.find((g) => g.result.ok)?.result.seriesId);
         }
       }
@@ -338,7 +356,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     const a = await confirm({
       title: `Replace ${describe(eps)}?`,
       body: <p>Deletes the current {eps.length === 1 ? "file" : "files"} ({bytes(sizeOf(eps))}) and downloads again.</p>,
-      options: [{ id: "pick", label: "Choose the release myself", checked: pick }],
+      options: [{ id: "pick", label: "Pick the release manually", checked: pick }],
       confirm: "Replace",
       danger: true,
     });
@@ -376,7 +394,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
       <>
         <C.Label className="font-mono text-[11px] font-normal">
           {code}
-          {e.file && <span className="mt-0.5 block break-all text-muted-foreground">{e.file.path}</span>}
+          {e.file && <span className="mt-1 block break-all text-muted-foreground">{e.file.path}</span>}
         </C.Label>
         {checks.has(e.id) && (
           <>
@@ -398,7 +416,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
               <RefreshCw /> Replace
             </C.Item>
             <C.Item onSelect={() => replace([e.id], true)}>
-              <ListChecks /> Replace, choose release
+              <ListChecks /> Replace, pick release manually
             </C.Item>
           </>
         ) : (
@@ -407,7 +425,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
               <Download /> Get
             </C.Item>
             <C.Item onSelect={() => choose([e.id])}>
-              <ListChecks /> Choose release
+              <ListChecks /> Pick release manually
             </C.Item>
           </>
         )}
@@ -418,7 +436,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
         )}
         <C.Sep />
         <C.Item onSelect={() => toggle(e)}>
-          <Check /> {sel.has(e.id) && scope === "custom" ? "Untick" : "Tick"}
+          <Check /> {sel.has(e.id) && scope === "custom" ? "Deselect" : "Select"}
         </C.Item>
         {lib && (
           <C.Item onSelect={() => setMonitored([e.id], !isMon(e))}>
@@ -440,14 +458,14 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
   // Actions for every ticked episode, when one of several is right-clicked.
   const bulkMenu = (C: MenuParts) => (
     <>
-      <C.Label className="text-xs font-normal text-muted-foreground">{plural(tickedArr.length, "episode")} ticked</C.Label>
+      <C.Label className="text-xs font-normal text-muted-foreground">{plural(tickedArr.length, "episode")} selected</C.Label>
       {tickedMissing.length > 0 && (
         <C.Item onSelect={() => getNow(tickedMissing)}>
           <Download /> Get {plural(tickedMissing.length, "missing episode")}
         </C.Item>
       )}
       <C.Item onSelect={() => setSheet(true)}>
-        <ListChecks /> Choose releases
+        <ListChecks /> Pick releases manually
       </C.Item>
       {lib && tickedOnDisk.length > 0 && (
         <C.Item onSelect={() => replace(tickedOnDisk.map((e) => e.id))}>
@@ -460,7 +478,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
         </C.Item>
       )}
       <C.Item onSelect={clearTicks}>
-        <Check /> Untick all
+        <Check /> Deselect all
       </C.Item>
       {lib && tickedOnDisk.length > 0 && (
         <>
@@ -493,31 +511,43 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
   const pointer = usePointerSelect({ selected: tickedKeys, onChange: onPaint, paintOnDrag: true, clearOnBlankClick: false });
 
   const have = allEps.filter((e) => e.season > 0 && e.hasFile).length;
-  const queued = allEps.filter((e) => e.season > 0 && e.queued).length;
   const n = selArr.length;
   const scopeTitle =
     scope === "all" ? "the whole show" : scope === "missing" ? `${n} missing episode${n === 1 ? "" : "s"}` : n === 1 ? label(selArr[0]) : `${n} episodes of ${d.title}`;
   const sheetTitle = d.title;
   const sheetDetail = n === 1 ? label(selArr[0]) : scope === "season" ? `Season ${focusSeason}, ${n} episodes` : n <= 8 ? selArr.map(label).join(", ") : `${rangeLabel(selArr.map(label))}, ${n} episodes`;
-  const focusAired = seasons.find((s) => s.number === focusSeason)?.episodes.filter((e) => e.aired) ?? [];
-  const focusMissing = focusAired.filter((e) => !e.hasFile && !e.queued).length;
   const regularSeasons = seasons.filter((s) => s.number > 0).length;
+  // The release sheet's covers strip: every episode of the seasons the selection touches.
+  const sheetCells = useMemo(() => {
+    const nums = [...new Set(selArr.map((id) => byId.get(id)?.season).filter((x): x is number => x !== undefined))].sort((a, b) => a - b);
+    const tone = { have: "have", live: "live", miss: "miss", unaired: "none" } as const;
+    const cells = seasons.filter((s) => nums.includes(s.number)).flatMap((s) => s.episodes.map((e) => ({ id: e.id, tone: tone[epState(e)] })));
+    const label = nums.length === 0 ? "" : nums.length === 1 ? `S${pad(nums[0])}` : `S${pad(nums[0])}–S${pad(nums[nums.length - 1])}`;
+    return { cells, label };
+  }, [selArr, byId, seasons]);
+  // What the button names: "S02E08–E10", "Season 2", "the whole show".
+  const ctaWhat =
+    scope === "all"
+      ? "the whole show"
+      : scope === "season" && n === seasonWanted(focusSeason).length && n === (seasons.find((s) => s.number === focusSeason)?.episodes.filter((e) => e.aired).length ?? -1)
+        ? `Season ${focusSeason}`
+        : d.anime
+          ? n === 1
+            ? label(selArr[0])
+            : `${n} episodes`
+          : episodeRange(selArr.map((id) => byId.get(id)).filter((e): e is EpisodeDetail => !!e));
+  const cta = got?.label && got.ids.join(",") === selKey ? got.label : n === 0 ? "Select episodes" : `Get ${ctaWhat}`;
 
   const options: GetOption[] = [
-    ...(d.inLibrary ? [{ value: "missing", label: "Missing", sub: missing.length ? rangeLabel(missing.map(label)) : "nothing missing", count: missing.length, disabled: missing.length === 0 }] : []),
-    ...(regularSeasons > 1 || !d.inLibrary
-      ? [
-          {
-            value: "season",
-            label: `Season ${focusSeason}`,
-            sub: d.inLibrary && focusMissing ? `${focusMissing} missing of ${focusAired.length}` : `${focusAired.length} episodes`,
-            count: seasonWanted(focusSeason).length,
-          },
-        ]
-      : []),
-    { value: "all", label: "Whole show", sub: `${regularSeasons} season${regularSeasons === 1 ? "" : "s"}`, count: everything.length },
-    { value: "custom", label: "Ticked episodes", sub: "click cells below", count: scope === "custom" ? ticked.size || "–" : "–" },
+    ...(d.inLibrary ? [{ value: "missing", label: "Missing", disabled: missing.length === 0 }] : []),
+    ...(regularSeasons > 1 || !d.inLibrary ? [{ value: "season", label: `Season ${focusSeason}` }] : []),
+    { value: "all", label: "Whole show" },
+    { value: "custom", label: "Selected episodes" },
   ];
+
+  // "2022–present" for a running show, "2015–2022" for an ended one.
+  const lastAired = allEps.filter((e) => e.aired && e.airDate).at(-1)?.airDate?.slice(0, 4);
+  const years = d.year ? (d.status === "ended" ? (lastAired && lastAired !== String(d.year) ? `${d.year}–${lastAired}` : String(d.year)) : `${d.year}–present`) : undefined;
 
   return (
     <>
@@ -528,20 +558,8 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
             poster={d.poster}
             title={d.title}
             year={d.year}
-            meta={[d.year && `${d.year}–`, d.network, d.status, d.anime && "anime", d.runtime && `${d.runtime} min`]}
-            state={
-              d.inLibrary ? (
-                <>
-                  <Figure value={`${have}/${everything.length}`} label="on disk" tone="have" />
-                  {queued > 0 && <Figure value={queued} label="downloading" tone="live" />}
-                  {missing.length > 0 && <Figure value={missing.length} label="missing" tone="miss" />}
-                  {d.sizeOnDisk ? <Figure value={bytes(d.sizeOnDisk)} label="" /> : null}
-                  {!d.monitored && <State tone="none">Not monitored</State>}
-                </>
-              ) : (
-                <State tone="none">Not in Sonarr. Added when you get something.</State>
-              )
-            }
+            meta={[years, d.anime && "anime", d.runtime && `${d.runtime} min`, lib && d.sizeOnDisk ? bytes(d.sizeOnDisk) : null]}
+            state={!d.inLibrary ? <State tone="none">Not in Sonarr</State> : !d.monitored ? <State tone="none">Not monitored</State> : undefined}
             actions={
               lib && (
                 <ManageMenu kind="tv" id={d.id} title={d.title} monitored={d.monitored} profileId={d.qualityProfileId} path={d.path} onChanged={changed}>
@@ -561,57 +579,34 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
               if (v === "custom" && scope !== "custom") setTicked(new Set(sel));
               setScope(v as Scope);
             }}
-            cta={n === 0 ? "Tick episodes" : n === 1 ? `Get ${label(selArr[0])}` : `Get ${n} episodes`}
+            cta={cta}
             onGet={get}
             busy={busy}
-            done={gotFor === selKey}
             disabled={n === 0}
-            state={search}
             plan={plan}
             wantedCount={n}
             onChoose={() => setSheet(true)}
-            watchFirst={watchFirst}
-            onWatchFirst={setWatchFirst}
-            note={lib && onDisk(selArr).length > 0 ? `${plural(onDisk(selArr).length, "episode")} of these already on disk.` : undefined}
           />
         }
         body={
           <div className="select-none" onMouseDown={pointer.onMouseDown}>
-            <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
-              <span className="inline-flex items-center gap-1.5">
-                <i className="size-2.5 rounded-[3px] bg-have" /> on disk
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <i className="size-2.5 rounded-[3px] bg-live" /> downloading
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <i className="size-2.5 rounded-[3px] bg-miss-soft ring-1 ring-miss/60 ring-inset" /> missing
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <i className="size-2.5 rounded-[3px] ring-1 ring-border ring-inset" /> not aired
-              </span>
-              {[...checks.values()].some(isBlocking) && (
-                <span className="inline-flex items-center gap-1.5">
-                  <i className="size-2.5 rounded-[3px] bg-bad" /> fails check
-                </span>
-              )}
-              <span className="ml-auto hidden sm:inline">Click a cell to tick, shift-click for a run.</span>
-            </div>
             {seasons.map((s) => {
               const aired = s.episodes.filter((e) => e.aired);
               const haveS = aired.filter((e) => e.hasFile).length;
-              const queuedS = aired.filter((e) => !e.hasFile && e.queued).length;
               const isOpen = openSeasons.has(s.number);
               const allTicked = aired.length > 0 && aired.every((e) => sel.has(e.id));
               const seasonName = s.number === 0 ? "Specials" : `Season ${s.number}`;
               const seasonMon = s.episodes.length > 0 ? s.episodes.some(isMon) : s.monitored;
               const seasonMissing = aired.filter((e) => !e.hasFile && !e.queued).map((e) => e.id);
               const seasonSize = s.episodes.reduce((n, e) => n + (e.file?.size ?? 0), 0);
+              const format = seasonFormat(s.episodes);
+              // The sweep: each grabbed cell lights after its share of 300 ms.
+              const gotHere = s.episodes.filter((e) => gotSet.has(e.id));
               return (
-                <section key={s.number} className="border-t py-3">
-                  <div className="flex min-h-9 items-center gap-3">
+                <section key={s.number} className="border-t py-4">
+                  <div className="flex min-h-8 items-center gap-2">
                     <button
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 py-1 text-left outline-none focus-visible:underline"
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-none focus-visible:underline"
                       aria-expanded={isOpen}
                       onClick={() => {
                         const next = new Set(openSeasons);
@@ -621,33 +616,12 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                       }}
                     >
                       <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", isOpen && "rotate-90")} />
-                      <b className="text-[15px] font-medium whitespace-nowrap">{seasonName}</b>
-                      {!d.synthetic && aired.length > 0 ? (
-                        <span className="flex items-center gap-x-3 font-mono text-[12px] whitespace-nowrap text-muted-foreground tabular">
-                          <span className={cn(haveS === aired.length && "text-have")}>
-                            {haveS}/{aired.length}
-                          </span>
-                          {queuedS > 0 && (
-                            <span className="text-live">
-                              {queuedS}
-                              <span className="hidden sm:inline"> downloading</span>
-                            </span>
-                          )}
-                          {seasonMissing.length > 0 && (
-                            <span className="text-miss">
-                              {seasonMissing.length}
-                              <span className="hidden sm:inline"> missing</span>
-                            </span>
-                          )}
-                          {seasonSize > 0 && <span className="hidden md:inline">{bytes(seasonSize)}</span>}
-                        </span>
-                      ) : (
-                        <span className="font-mono text-[12px] text-muted-foreground">{s.episodes.length} eps</span>
-                      )}
+                      <b className="text-[16px] font-medium whitespace-nowrap">{seasonName}</b>
+                      {format && <span className="ml-1 truncate font-mono text-[12px] text-muted-foreground">{format}</span>}
                     </button>
                     {aired.length > 0 && (
-                      <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => tickSeason(s.number)}>
-                        {allTicked ? "Untick" : "Tick season"}
+                      <Button variant="ghost" size="xs" className="h-8 px-2 text-[13px] font-normal text-muted-foreground" onClick={() => tickSeason(s.number)}>
+                        {allTicked ? "Deselect" : "Select"}
                       </Button>
                     )}
                     {lib && (
@@ -655,13 +629,14 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                         <MonitorToggle on={seasonMon} label={seasonName} onToggle={() => setSeasonMonitored(s.number, !seasonMon)} />
                         <RowMenu label={`${seasonName} actions`}>
                           <DropdownMenuLabel className="font-mono text-[11px] font-normal text-muted-foreground">
-                            {seasonName}, {haveS}/{aired.length} on disk{seasonSize ? `, ${bytes(seasonSize)}` : ""}
+                            {seasonName}
+                            {seasonSize ? `, ${bytes(seasonSize)}` : ""}
                           </DropdownMenuLabel>
                           <DropdownMenuItem disabled={aired.length === 0} onSelect={() => tickOnly(aired.map((e) => e.id))}>
-                            <ListChecks /> Tick only this season
+                            <ListChecks /> Select only this season
                           </DropdownMenuItem>
                           <DropdownMenuItem disabled={seasonMissing.length === 0} onSelect={() => getNow(seasonMissing)}>
-                            <Download /> Get the {seasonMissing.length || ""} missing
+                            <Download /> Get the missing
                           </DropdownMenuItem>
                           <DropdownMenuItem disabled={haveS === 0} onSelect={() => replace(aired.map((e) => e.id))}>
                             <RefreshCw /> Replace the season
@@ -680,13 +655,15 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
 
                   {/* The strip: one cell per episode. */}
                   {s.episodes.length > 0 && (
-                    <div className="mt-1.5 grid gap-1 pl-[26px]" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(26px, 1fr))" }}>
+                    <div className="mt-4 flex flex-wrap gap-x-2 gap-y-3 pl-6">
                       {s.episodes.map((e) => {
-                        const st = epState(e);
-                        const on = sel.has(e.id);
+                        const swept = gotSet.has(e.id);
+                        const st = swept && e.aired && !e.hasFile ? "live" : epState(e);
+                        const on = sel.has(e.id) && !swept;
                         const code = label(e.id);
                         const rec = checks.get(e.id);
                         const failed = !!rec && isBlocking(rec);
+                        const delay = swept ? (gotHere.indexOf(e) / Math.max(1, gotHere.length)) * 300 : 0;
                         return (
                           <button
                             key={e.id}
@@ -700,14 +677,16 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                               if (pointer.swallowClick()) return;
                               toggle(e, ev.shiftKey);
                             }}
+                            style={{ "--sweep": `${delay}ms` } as CSSProperties}
                             className={cn(
-                              "cell focus-visible:ring-2 focus-visible:ring-ring",
-                              st === "have" && "bg-have text-background",
-                              st === "live" && "bg-live text-background",
-                              st === "miss" && "bg-miss-soft text-miss ring-1 ring-miss/60 ring-inset",
-                              st === "unaired" && "cursor-default bg-transparent text-muted-foreground/60 ring-1 ring-border ring-inset",
-                              failed && "bg-bad text-background ring-0",
-                              on && "shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--foreground)]",
+                              "cell transition-colors duration-0 [transition-delay:var(--sweep)] focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:[transition-delay:0ms]",
+                              "after:absolute after:inset-x-0 after:-bottom-[6px] after:h-[2px] after:bg-white after:opacity-0",
+                              st === "have" && "bg-have text-black/80",
+                              st === "live" && "bg-live text-black/80",
+                              st === "miss" && "bg-miss text-black/80",
+                              st === "unaired" && "cursor-default text-muted-foreground/60",
+                              failed && "bg-bad text-black/80",
+                              on && "after:opacity-100",
                             )}
                           >
                             {d.anime && e.absolute ? e.absolute : pad(e.number)}
@@ -718,11 +697,13 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                   )}
 
                   {isOpen && s.episodes.length > 0 && (
-                    <div className="mt-3 border-t">
+                    <div className="mt-4 border-t">
                       {s.episodes.map((e) => {
-                        const on = sel.has(e.id);
+                        const swept = gotSet.has(e.id) && e.aired && !e.hasFile;
+                        const on = sel.has(e.id) && !swept;
                         const code = label(e.id);
-                        const st = epState(e);
+                        const st = swept ? "live" : epState(e);
+                        const live = liveOf.get(epCode(e.season, e.number));
                         return (
                           <ContextMenu key={e.id}>
                             <ContextMenuTrigger asChild disabled={!e.aired}>
@@ -733,35 +714,51 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                                   if (e.aired) toggle(e, ev.shiftKey);
                                 }}
                                 className={cn(
-                                  "group flex min-h-10 cursor-pointer items-center gap-3 border-b px-1.5 py-1 select-none hover:bg-card",
-                                  on && "bg-live-soft/60 hover:bg-live-soft",
+                                  "group flex h-10 cursor-pointer items-center gap-4 border-b pr-1 pl-2 select-none hover:bg-card",
+                                  on && "bg-card",
                                   !e.aired && "cursor-default",
                                 )}
                               >
-                                <Dot tone={st === "have" ? "have" : st === "live" ? "live" : st === "miss" ? "miss" : "none"} />
-                                <span className={cn("w-9 shrink-0 font-mono text-[12px] text-muted-foreground tabular", !e.aired && "opacity-55")}>
+                                <Checkbox checked={on} disabled={!e.aired} tabIndex={-1} aria-label={`Select ${code}`} className="pointer-events-none" />
+                                <span className={cn("w-8 shrink-0 font-mono text-[12px] text-muted-foreground tabular", !e.aired && "opacity-60")}>
                                   {e.absolute && d.anime ? `#${e.absolute}` : `E${pad(e.number)}`}
                                 </span>
-                                <span className={cn("min-w-0 flex-1", !e.aired && "opacity-55")}>
-                                  <span className="block truncate text-[13.5px]">{e.title}</span>
-                                  {e.file && <FileLine file={e.file} className="hidden sm:block" />}
-                                </span>
+                                <span className={cn("min-w-0 flex-1 truncate text-[14px]", !e.aired && "text-muted-foreground")}>{e.title}</span>
                                 {checks.has(e.id) && <VerdictBadge r={checks.get(e.id)!} />}
                                 {e.file && converting.get(baseName(e.file.path)) && (
                                   <Spec tone="live" className="hidden sm:inline-flex" title="Converting to AV1">
                                     {jobTag(converting.get(baseName(e.file.path))!)}
                                   </Spec>
                                 )}
-                                <span className="font-mono text-[11.5px] whitespace-nowrap text-muted-foreground tabular">
-                                  {st === "have" ? (e.file ? bytes(e.file.size) : "on disk") : st === "live" ? <span className="text-live">downloading</span> : st === "miss" ? <span className="text-miss">missing</span> : (e.airDate ?? "TBA")}
+                                <span className="flex items-center gap-2 font-mono text-[12px] whitespace-nowrap text-muted-foreground tabular">
+                                  {st === "have" ? (
+                                    e.file ? bytes(e.file.size) : "on disk"
+                                  ) : st === "live" ? (
+                                    <span className="flex items-center gap-2 text-live">
+                                      {live ? (
+                                        <>
+                                          <Bar value={live.progress} segments={8} className="hidden sm:flex" />
+                                          {pct(live.progress)}
+                                          {live.eta && <span className="opacity-60">·</span>}
+                                          {live.eta}
+                                        </>
+                                      ) : (
+                                        "downloading"
+                                      )}
+                                    </span>
+                                  ) : st === "miss" ? (
+                                    <span className="text-miss">missing</span>
+                                  ) : (
+                                    (e.airDate ?? "TBA")
+                                  )}
                                 </span>
                                 {lib && <MonitorToggle on={isMon(e)} label={code} onToggle={() => setMonitored([e.id], !isMon(e))} />}
                                 {e.aired ? (
-                                  <RowMenu label={`${code} actions`} className="opacity-60 group-hover:opacity-100 focus-visible:opacity-100">
+                                  <RowMenu label={`${code} actions`} className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100">
                                     {epMenu(e, DM)}
                                   </RowMenu>
                                 ) : (
-                                  <span className="w-7 shrink-0" />
+                                  <span className="w-8 shrink-0" />
                                 )}
                               </div>
                             </ContextMenuTrigger>
@@ -789,6 +786,8 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
         grabber={grabber}
         watchFirst={watchFirst}
         epLabel={label}
+        cells={sheetCells.cells}
+        cellsLabel={sheetCells.label}
       />
       <SelectionBar count={tickedArr.length} onClear={clearTicks} summary={tickedOnDisk.length > 0 && `${tickedOnDisk.length} on disk, ${bytes(sizeOf(tickedOnDisk))}`}>
         {tickedMissing.length > 0 && (
@@ -797,7 +796,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
           </Button>
         )}
         <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setSheet(true)}>
-          <ListChecks /> Choose
+          <ListChecks /> Pick manually
         </Button>
         {lib && tickedOnDisk.length > 0 && (
           <Button variant="ghost" size="sm" className="shrink-0" onClick={() => replace(tickedOnDisk.map((e) => e.id))}>
@@ -820,6 +819,27 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** "S02E08", "S02E08–E10" for a run in one season, else "3 episodes". */
+function episodeRange(eps: EpisodeDetail[]): string {
+  if (eps.length === 0) return "";
+  const a = eps[0];
+  const b = eps[eps.length - 1];
+  if (eps.length === 1) return epCode(a.season, a.number);
+  const run = eps.every((e, i) => e.season === a.season && e.number === a.number + i);
+  return run ? `${epCode(a.season, a.number)}–E${pad(b.number)}` : `${eps.length} episodes`;
+}
+
+/** The season's usual file format: "WEBDL-1080p · x265". */
+function seasonFormat(eps: EpisodeDetail[]): string {
+  const n = new Map<string, number>();
+  for (const e of eps) {
+    if (!e.file) continue;
+    const k = [e.file.quality, e.file.codec].filter(Boolean).join(" · ");
+    if (k) n.set(k, (n.get(k) ?? 0) + 1);
+  }
+  return [...n].sort((x, y) => y[1] - x[1])[0]?.[0] ?? "";
+}
 
 /** "S02E08–S02E10" for a sorted list of episode codes. */
 function rangeLabel(codes: string[]): string {

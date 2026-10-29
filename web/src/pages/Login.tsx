@@ -26,10 +26,11 @@ export function Login({ mode, onDone }: { mode: string; onDone: () => void }) {
   };
   return (
     <div className="grid min-h-svh place-items-center p-6">
+      {/* The one screen where the mark roars. */}
       <form onSubmit={submit} className="flex w-full max-w-[360px] flex-col gap-3">
-        <Wordmark className="mb-4" />
-        <h1 className="text-[22px] font-medium">Sign in</h1>
-        <p className="meta -mt-1">{mode === "jellyfin" ? "Jellyfin account" : "roarr password"}</p>
+        <Wordmark className="mb-8 gap-4 text-[96px] leading-[0.8]" markClassName="size-24" />
+        <h1 className="sr-only">Sign in</h1>
+        <p className="label-caps mb-1">{mode === "jellyfin" ? "Jellyfin account" : "roarr password"}</p>
         {mode === "jellyfin" && (
           <Input autoFocus placeholder="Username" aria-label="Username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" className="h-10 bg-card" />
         )}
@@ -44,7 +45,7 @@ export function Login({ mode, onDone }: { mode: string; onDone: () => void }) {
           className="h-10 bg-card"
         />
         {error && <Notice tone="bad">{error}</Notice>}
-        <Button size="lg" disabled={busy} className="mt-1">
+        <Button size="lg" disabled={busy} className="mt-1 justify-between">
           {busy ? <Spinner /> : <>Sign in <ArrowRight /></>}
         </Button>
       </form>

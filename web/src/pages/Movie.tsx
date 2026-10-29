@@ -11,9 +11,8 @@ import { forMovie, isBlocking, isFlagged } from "@/lib/verify";
 import { useSearch } from "@/lib/useSearch";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { Dot, Figure, Notice, SectionHead, Spec, State } from "@/components/kit";
+import { Dot, Notice, SectionHead, Spec, State } from "@/components/kit";
 import { useConfirm } from "@/components/Confirm";
 import { FileFacts, ManageMenu } from "@/components/Manage";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
@@ -62,7 +61,16 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
   const [ticked, setTicked] = useState<Set<number>>(new Set());
   const [sheet, setSheet] = useState(params.get("pick") === "1");
   const [busy, setBusy] = useState(false);
-  const [gotFor, setGotFor] = useState<string | null>(null);
+  // The button confirms the grab for 2 s: "Got Dune: Part Two · 8.1 GB".
+  const [got, setGot] = useState<{ key: string; label: string } | null>(null);
+  const gotTimer = useRef(0);
+  const markGot = (key: string) => {
+    const what = key.split(",").length === 1 ? (titles.get(+key) ?? d.title) : `${key.split(",").length} movies`;
+    setGot({ key, label: `Got ${what}` });
+    clearTimeout(gotTimer.current);
+    gotTimer.current = window.setTimeout(() => setGot(null), 2000);
+  };
+  useEffect(() => () => clearTimeout(gotTimer.current), []);
 
   const selArr = useMemo(() => {
     const ids = scope === "this" ? [d.tmdbId!] : scope === "missing" ? missingParts : scope === "all" ? parts.map((p) => p.tmdbId) : [...ticked];
@@ -131,7 +139,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
     const a = await confirm({
       title: `Replace ${d.title}?`,
       body: <p>Deletes the current file ({bytes(fileSize)}) and downloads the movie again.</p>,
-      options: [{ id: "pick", label: "Choose the release myself", checked: pick }],
+      options: [{ id: "pick", label: "Pick the release manually", checked: pick }],
       confirm: "Replace",
       danger: true,
     });
@@ -150,7 +158,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
     if (!(await replace())) return;
     const res = await autoGet({ kind: "movie", movies: [d.tmdbId!] }, d.title);
     if (res) {
-      setGotFor(String(d.tmdbId));
+      markGot(String(d.tmdbId));
       after(d.id, d.tmdbId);
     }
   };
@@ -162,11 +170,11 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
     setBusy(true);
     try {
       if (search.done && plan.picks.length) {
-        if (await grabber.grabAll(plan.picks.map((x) => x.release))) setGotFor(selKey);
+        if (await grabber.grabAll(plan.picks.map((x) => x.release))) markGot(selKey);
       } else {
         const res = await autoGet({ kind: "movie", movies: selArr }, selArr.length === 1 ? (titles.get(selArr[0]) ?? d.title) : `${selArr.length} movies`);
         if (res) {
-          setGotFor(selKey);
+          markGot(selKey);
           after(res.grabs?.find((g) => g.result.ok)?.result.movieId, selArr[0]);
         }
       }
@@ -185,16 +193,25 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
 
   const n = selArr.length;
   const options: GetOption[] = [
-    { value: "this", label: d.title, sub: [d.year, d.hasFile ? "on disk" : d.queued ? "downloading" : "not on disk"].filter(Boolean).join(", "), count: 1 },
+    { value: "this", label: d.title },
     ...(inCollection
       ? [
-          { value: "missing", label: "Missing from collection", sub: d.collection?.title, count: missingParts.length, disabled: missingParts.length === 0 },
-          { value: "all", label: "Whole collection", sub: d.collection?.title, count: parts.length },
-          { value: "custom", label: "Ticked movies", sub: "in the list below", count: scope === "custom" ? ticked.size || "–" : "–" },
+          { value: "missing", label: "Missing from collection", disabled: missingParts.length === 0 },
+          { value: "all", label: "Whole collection" },
+          { value: "custom", label: "Selected movies" },
         ]
       : []),
   ];
-  const cta = n === 0 ? "Tick movies" : n === 1 ? (selArr[0] === d.tmdbId && d.hasFile ? "Replace" : `Get ${titles.get(selArr[0]) === d.title ? "it" : titles.get(selArr[0])}`) : `Get ${n} movies`;
+  const cta =
+    got?.key === selKey
+      ? got.label
+      : n === 0
+        ? "Select movies"
+        : n === 1
+          ? selArr[0] === d.tmdbId && d.hasFile
+            ? `Replace ${d.title}`
+            : `Get ${titles.get(selArr[0])}`
+          : `Get ${n} movies`;
   const sheetDetail = n > 1 ? selArr.map((t) => titles.get(t)).join(", ") : d.year ? String(d.year) : undefined;
 
   return (
@@ -206,13 +223,12 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
             poster={d.poster}
             title={d.title}
             year={d.year}
-            meta={[d.year, d.network, d.runtime && `${d.runtime} min`]}
+            meta={[d.year, d.runtime && `${d.runtime} min`, d.hasFile && d.sizeOnDisk ? bytes(d.sizeOnDisk) : null]}
             state={
               d.hasFile ? (
                 <>
                   <State tone="have">On disk</State>
                   {check && isBlocking(check) && <State tone="bad">Fails check</State>}
-                  {d.sizeOnDisk ? <Figure value={bytes(d.sizeOnDisk)} label="" /> : null}
                   {!d.monitored && <State tone="none">Not monitored</State>}
                 </>
               ) : d.queued ? (
@@ -223,34 +239,22 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
                   {!d.monitored && <State tone="none">Not monitored</State>}
                 </>
               ) : (
-                <State tone="none">Not in Radarr. Added when you get it.</State>
+                <State tone="none">Not in Radarr</State>
               )
             }
             actions={
               d.inLibrary && (
-                <>
-                  <ManageMenu kind="movie" id={d.id} title={d.title} monitored={d.monitored} profileId={d.qualityProfileId} path={d.path} onChanged={changed}>
+                <ManageMenu kind="movie" id={d.id} title={d.title} monitored={d.monitored} profileId={d.qualityProfileId} path={d.path} onChanged={changed}>
                     <DropdownMenuItem disabled={!d.hasFile} onSelect={() => replaceNow()}>
                       <RefreshCw /> Replace
                     </DropdownMenuItem>
                     <DropdownMenuItem disabled={!d.hasFile} onSelect={() => replace(true)}>
-                      <ListChecks /> Replace, choose release
+                      <ListChecks /> Replace, pick release manually
                     </DropdownMenuItem>
                     <DropdownMenuItem variant="destructive" disabled={!d.hasFile} onSelect={deleteFile}>
                       <Trash2 /> Delete file
                     </DropdownMenuItem>
                   </ManageMenu>
-                  {d.hasFile && (
-                    <>
-                      <Button variant="outline" size="sm" onClick={() => replaceNow()}>
-                        <RefreshCw /> Replace
-                      </Button>
-                      <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={deleteFile}>
-                        <Trash2 /> Delete
-                      </Button>
-                    </>
-                  )}
-                </>
               )
             }
           />
@@ -266,12 +270,11 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
             cta={cta}
             onGet={get}
             busy={busy}
-            done={gotFor === selKey}
             disabled={n === 0}
-            state={search}
             plan={plan}
             wantedCount={n}
             onChoose={() => setSheet(true)}
+            chooseLabel={n === 1 ? "Pick release manually" : "Pick releases manually"}
           />
         }
         body={
@@ -286,7 +289,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
                   )}
                 </SectionHead>
                 {check && (
-                  <div className={cn("mb-4 rounded-lg border-l-2 bg-card p-3.5", isBlocking(check) ? "border-l-bad" : "border-l-miss")}>
+                  <div className="mb-4 rounded-[2px] bg-card p-4">
                     <div className="mb-2 truncate font-mono text-[11px] text-muted-foreground" title={check.release}>
                       {check.release}
                     </div>
@@ -299,20 +302,16 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
             )}
             {inCollection && (
               <section className={cn("border-t pt-4", (d.file || check) && "mt-6")}>
-                <SectionHead title={d.collection?.title} className="mb-2">
-                  <span className="font-mono text-[12px] text-muted-foreground tabular">
-                    {parts.filter((p) => p.hasFile).length}/{parts.length} on disk
-                  </span>
-                </SectionHead>
+                <SectionHead title={d.collection?.title} className="mb-2" />
                 {parts.map((p) => {
                   const on = sel.has(p.tmdbId);
                   const tone = p.hasFile ? "have" : p.inLibrary ? "miss" : "none";
                   return (
-                    <label key={p.tmdbId} className={cn("flex min-h-10 cursor-pointer items-center gap-3 border-b px-1.5 hover:bg-card", on && "bg-live-soft/60 hover:bg-live-soft")}>
+                    <label key={p.tmdbId} className={cn("flex h-10 cursor-pointer items-center gap-4 border-b px-2 hover:bg-card", on && "bg-card")}>
                       <Checkbox checked={on} onCheckedChange={() => toggle(p.tmdbId)} aria-label={p.title} />
                       <span className="w-10 shrink-0 font-mono text-[12px] text-muted-foreground tabular">{p.year ?? ""}</span>
-                      <span className={cn("min-w-0 flex-1 truncate text-[13.5px]", p.tmdbId === d.tmdbId && "font-medium")}>{p.title}</span>
-                      <span className="inline-flex items-center gap-1.5 font-mono text-[11.5px] text-muted-foreground">
+                      <span className={cn("min-w-0 flex-1 truncate text-[14px]", p.tmdbId === d.tmdbId && "font-medium")}>{p.title}</span>
+                      <span className="inline-flex items-center gap-2 font-mono text-[12px] text-muted-foreground">
                         <Dot tone={tone} />
                         {p.hasFile ? "on disk" : p.inLibrary ? <span className="text-miss">missing</span> : "not added"}
                       </span>

@@ -38,7 +38,7 @@ function PathMap({ value, locked, placeholder, onChange }: { value?: string; loc
   return (
     <>
       <LockedInput mono locked={locked} value={value ?? ""} placeholder={placeholder} onChange={onChange} />
-      {bad.length > 0 && <p className="mt-1.5 font-mono text-[11.5px] text-bad">ignored: {bad.join(", ")}</p>}
+      {bad.length > 0 && <p className="mt-2 font-mono text-[12px] text-bad">ignored: {bad.join(", ")}</p>}
     </>
   );
 }
@@ -113,16 +113,16 @@ function ImportJobs({ st }: { st: ImportsStatus }) {
       </SectionHead>
       {jobs.length === 0 && <p className="meta border-t py-4">None yet.</p>}
       {jobs.slice(0, 12).map((j) => (
-        <div key={j.hash} className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-x-3 border-t py-2.5">
+        <div key={j.hash} className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-x-3 border-t py-3">
           <Dot tone={jobTone(j)} pulse={j.state === "downloading" || j.state === "importing"} />
           <div className="min-w-0">
-            <div className="truncate text-[13.5px]">{j.titleName}</div>
+            <div className="truncate text-[14px]">{j.titleName}</div>
             <div className="truncate font-mono text-[11px] text-muted-foreground" title={j.release}>
               {j.release}
             </div>
-            {j.message && <div className={cn("mt-0.5 text-[12.5px]", j.state === "failed" ? "text-bad" : "text-foreground/80")}>{j.message}</div>}
+            {j.message && <div className={cn("mt-1 text-[12px]", j.state === "failed" ? "text-bad" : "text-foreground/80")}>{j.message}</div>}
           </div>
-          <span className={cn("font-mono text-[11.5px] tabular", j.state === "failed" ? "text-bad" : "text-muted-foreground")}>
+          <span className={cn("font-mono text-[12px] tabular", j.state === "failed" ? "text-bad" : "text-muted-foreground")}>
             {j.state === "downloading" ? pct(j.progress) : j.state}
           </span>
         </div>
@@ -162,7 +162,7 @@ export function ChecksTab({ s, locked, update }: Edit) {
       <Field label="Check downloads" hint={verifyMode(v) === "auto" ? "On when ffprobe is found." : undefined}>
         <Segmented<VerifyMode> label="Check downloads" value={verifyMode(v)} options={VMODES} disabled={locked.VERIFY_MEDIA} onChange={(m) => set((x) => setVerifyMode(x, m))} />
         {tools && (
-          <div className="mt-2 grid grid-cols-[60px_minmax(0,1fr)] gap-y-0.5 font-mono text-[11.5px]">
+          <div className="mt-2 grid grid-cols-[60px_minmax(0,1fr)] gap-y-1 font-mono text-[12px]">
             <span className="text-muted-foreground">ffprobe</span>
             <span className={cn("truncate", !tools.ffprobe && "text-miss")}>{tools.ffprobe || "missing"}</span>
             <span className="text-muted-foreground">ffmpeg</span>
@@ -271,23 +271,23 @@ function TranscodeRow({ j }: { j: TranscodeJob }) {
   const tone: Tone = j.state === "failed" ? "bad" : j.state === "done" ? "have" : isPending(j) ? "live" : "none";
   const share = savedShare(j);
   return (
-    <div className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-x-3 border-t py-2.5 md:grid-cols-[10px_minmax(0,1fr)_200px]">
+    <div className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-x-3 border-t py-3 md:grid-cols-[10px_minmax(0,1fr)_200px]">
       <Dot tone={tone} pulse={j.state === "running"} />
       <div className="min-w-0">
-        <div className="truncate text-[13.5px]">{j.title || baseName(j.path)}</div>
+        <div className="truncate text-[14px]">{j.title || baseName(j.path)}</div>
         <div className="truncate font-mono text-[11px] text-muted-foreground" title={j.path}>
           {baseName(j.path)}
         </div>
-        {j.message && <div className={cn("mt-0.5 text-[12.5px]", j.state === "failed" ? "text-bad" : "text-foreground/80")}>{j.message}</div>}
+        {j.message && <div className={cn("mt-1 text-[12px]", j.state === "failed" ? "text-bad" : "text-foreground/80")}>{j.message}</div>}
       </div>
-      <div className="min-w-0 text-right font-mono text-[11.5px] tabular">
+      <div className="min-w-0 text-right font-mono text-[12px] tabular">
         {j.state === "running" ? (
           <>
             <div className="flex justify-between gap-3">
               <span className="text-muted-foreground">{j.speed ?? ""}</span>
               <span>{j.percent.toFixed(0)}%</span>
             </div>
-            <Bar value={j.percent / 100} className="mt-1.5" />
+            <Bar value={j.percent / 100} segments={32} stretch className="mt-2" />
           </>
         ) : j.state === "done" ? (
           <span className="text-have">
