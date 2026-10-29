@@ -11,7 +11,7 @@ import { totalSpeed } from "./Downloads";
 import { Bar, Kbd } from "./kit";
 import { Mark } from "./Mark";
 
-/** The mark, then the name in the display face. */
+/** The mark, then the name in Inter Black. */
 export function Wordmark({ className, markClassName }: { className?: string; markClassName?: string }) {
   return (
     <span className={cn("display inline-flex items-center gap-2 text-[22px] leading-none text-white", className)}>

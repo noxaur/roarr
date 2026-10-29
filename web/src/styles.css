@@ -1,9 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "@fontsource-variable/inter";
+@import "@fontsource-variable/inter/opsz.css";
 @import "@fontsource/dm-mono/400.css";
 @import "@fontsource/dm-mono/500.css";
-@import "@fontsource-variable/bricolage-grotesque/opsz.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -76,7 +75,6 @@
 @theme inline {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "DM Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --font-display: "Bricolage Grotesque Variable", "Inter Variable", sans-serif;
   --radius-xs: var(--radius);
   --radius-sm: var(--radius);
   --radius-md: var(--radius);
@@ -151,13 +149,17 @@
   }
 }
 
-/* The display face: the mark and the sign-in screen only. Lowercase. */
+/*
+  The wordmark: Inter Black at the display optical size, lowercase. Two
+  text faces only (Inter and DM Mono); the mark uses Inter. The weight
+  matches the bands of the mark. At -0.05em the two r's touch.
+*/
 @utility display {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-variation-settings: "opsz" 96;
+  font-family: var(--font-sans);
+  font-weight: 900;
+  font-variation-settings: "opsz" 32;
   text-transform: lowercase;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 
 /* Silkscreen label, like the print on a mixer panel. One per panel at most. */
