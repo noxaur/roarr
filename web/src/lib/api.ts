@@ -347,6 +347,17 @@ export interface TranscodeSettings {
   filmGrain: number;
   minSavings: number;
   pathMap?: string;
+  /** Weekly windows in which conversion may run; empty or absent = any time. */
+  schedule?: ScheduleWindow[];
+}
+
+/** A weekly span of server time (config.Window). */
+export interface ScheduleWindow {
+  /** Days the window starts on, 0 = Sunday to 6 = Saturday; empty = every day. */
+  days?: number[];
+  /** "HH:MM". A `to` at or before `from` ends the next day; "24:00" is the end of the day. */
+  from: string;
+  to: string;
 }
 
 /** Checks on finished downloads (config.Verify). */
@@ -437,6 +448,8 @@ export interface TranscodeJob {
   crf?: number;
   encoder?: string;
   message?: string;
+  /** Running, but held in place by a pause or the schedule. */
+  paused?: boolean;
   queuedAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -448,6 +461,16 @@ export interface TranscodeStatus {
   encoder?: string;
   error?: string;
   concurrency: number;
+  /** Held by hand. */
+  paused?: boolean;
+  /** Nothing may run now: paused, or outside the schedule. */
+  held?: boolean;
+  scheduled?: boolean;
+  /** When the schedule next opens or closes. */
+  nextChange?: string;
+  /** The server's time zone, in which the schedule is read; offset in seconds east of UTC. */
+  zone?: string;
+  zoneOffset?: number;
   counts: Record<TranscodeState, number>;
   bytesSaved: number;
   jobs: TranscodeJob[];
@@ -575,6 +598,7 @@ export const api = {
   verifyRegrab: (hash: string) => call<VerifyRecord>("POST", `/api/verify/${encodeURIComponent(hash)}/regrab`, {}),
   verifyDismiss: (hash: string) => call<VerifyRecord>("POST", `/api/verify/${encodeURIComponent(hash)}/dismiss`, {}),
   transcode: () => call<TranscodeStatus>("GET", "/api/transcode"),
+  transcodePause: (paused: boolean) => call<TranscodeStatus>("POST", `/api/transcode/${paused ? "pause" : "resume"}`, {}),
   imports: () => call<ImportsStatus>("GET", "/api/imports"),
   saveSettings: (s: Settings) => call<{ settings: Settings; locked: Record<string, boolean> }>("PUT", "/api/settings", s),
 };

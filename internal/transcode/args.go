@@ -20,8 +20,9 @@ type Options struct {
 	Nice        int
 	CRF         int // 0 = automatic from the resolution
 	Preset      int
-	FilmGrain   int // 0 = off
-	MinSavings  int // percent
+	FilmGrain   int      // 0 = off
+	MinSavings  int      // percent
+	Schedule    []Window // when conversion may run; empty = any time
 }
 
 // AutoCRF picks a quality level for a picture size. SVT-AV1's CRF scale is

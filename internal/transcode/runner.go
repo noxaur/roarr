@@ -14,8 +14,15 @@ type Runner interface {
 	// Output runs a program and returns its stdout.
 	Output(ctx context.Context, name string, args ...string) ([]byte, error)
 	// Run runs a program, calling line for each stdout line, at the given
-	// niceness (0 = unchanged).
-	Run(ctx context.Context, nice int, name string, args []string, line func(string)) error
+	// niceness (0 = unchanged). started, if set, gets the program once it
+	// runs.
+	Run(ctx context.Context, nice int, name string, args []string, line func(string), started func(Proc)) error
+}
+
+// Proc is a running program that can be held in place and let go again.
+type Proc interface {
+	Suspend() error
+	Resume() error
 }
 
 // ExecRunner runs real programs.
@@ -34,7 +41,7 @@ func (ExecRunner) Output(ctx context.Context, name string, args ...string) ([]by
 }
 
 // Run implements Runner.
-func (ExecRunner) Run(ctx context.Context, nice int, name string, args []string, line func(string)) error {
+func (ExecRunner) Run(ctx context.Context, nice int, name string, args []string, line func(string), started func(Proc)) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -47,6 +54,9 @@ func (ExecRunner) Run(ctx context.Context, nice int, name string, args []string,
 	}
 	if nice > 0 {
 		setNice(cmd.Process.Pid, nice)
+	}
+	if started != nil {
+		started(execProc{cmd.Process})
 	}
 	sc := bufio.NewScanner(stdout)
 	for sc.Scan() {

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestNormalizeURL(t *testing.T) {
 	for in, want := range map[string]string{
@@ -34,6 +37,30 @@ func TestTranscodeDefaultsAndEnv(t *testing.T) {
 	tc = st.Get().Transcode
 	if !tc.Enabled || tc.Concurrency != 8 || tc.Nice != 0 || tc.FilmGrain != 8 {
 		t.Errorf("env not applied or not clamped: %+v", tc)
+	}
+}
+
+func TestTranscodeScheduleCleaned(t *testing.T) {
+	st, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Update(func(s *Settings) {
+		s.Transcode.Schedule = []Window{
+			{Days: []int{5, 1, 1, 9}, From: " 22:00", To: "07:00"},
+			{From: "00:00", To: "24:00"},
+			{From: "24:00", To: "06:00"},
+			{From: "7:5", To: "08:00"},
+			{From: "25:00", To: "08:00"},
+			{Days: []int{7, -1}, From: "01:00", To: "02:00"},
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Window{{Days: []int{1, 5}, From: "22:00", To: "07:00"}, {From: "00:00", To: "24:00"}}
+	if !reflect.DeepEqual(got.Transcode.Schedule, want) {
+		t.Errorf("schedule = %+v, want %+v", got.Transcode.Schedule, want)
 	}
 }
 

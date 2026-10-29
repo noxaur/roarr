@@ -79,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	guarded("GET /api/activity", s.activity)
 	guarded("DELETE /api/activity/{id}", s.removeActivity)
 	guarded("GET /api/transcode", s.transcode)
+	guarded("POST /api/transcode/{action}", s.transcodeAction)
 	guarded("GET /api/imports", s.imports)
 	guarded("GET /api/requests", s.requests)
 	guarded("POST /api/requests/{id}/{action}", s.requestAction)
@@ -668,6 +669,20 @@ func (s *Server) removeActivity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) transcode(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, s.app.Transcode.Status())
+}
+
+// transcodeAction pauses or resumes the AV1 queue.
+func (s *Server) transcodeAction(w http.ResponseWriter, r *http.Request) {
+	switch r.PathValue("action") {
+	case "pause":
+		s.app.Transcode.SetPaused(true)
+	case "resume":
+		s.app.Transcode.SetPaused(false)
+	default:
+		writeErr(w, http.StatusNotFound, errors.New("unknown action"))
+		return
+	}
 	writeJSON(w, 200, s.app.Transcode.Status())
 }
 

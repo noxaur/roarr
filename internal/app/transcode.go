@@ -23,7 +23,17 @@ import (
 
 func transcodeOptions(s config.Settings) transcode.Options {
 	t := s.Transcode
-	return transcode.Options{Enabled: t.Enabled, Concurrency: t.Concurrency, Nice: t.Nice, CRF: t.CRF, Preset: t.Preset, FilmGrain: t.FilmGrain, MinSavings: t.MinSavings}
+	o := transcode.Options{Enabled: t.Enabled, Concurrency: t.Concurrency, Nice: t.Nice, CRF: t.CRF, Preset: t.Preset, FilmGrain: t.FilmGrain, MinSavings: t.MinSavings}
+	for _, w := range t.Schedule {
+		from, _ := config.ParseClock(w.From)
+		to, _ := config.ParseClock(w.To)
+		tw := transcode.Window{From: from, To: to}
+		for _, d := range w.Days {
+			tw.Days = append(tw.Days, time.Weekday(d))
+		}
+		o.Schedule = append(o.Schedule, tw)
+	}
+	return o
 }
 
 func (a *App) startTranscode(ctx context.Context) {

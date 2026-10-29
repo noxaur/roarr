@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
-import { api, type ImportsStatus, type NativeJob, type Settings, type TranscodeJob, type TranscodeStatus, type VerifyList } from "@/lib/api";
-import { bytes, pct } from "@/lib/format";
+import { Pause, Play, Plus, X } from "lucide-react";
+import { api, type ImportsStatus, type NativeJob, type ScheduleWindow, type Settings, type TranscodeJob, type TranscodeStatus, type VerifyList } from "@/lib/api";
+import { bytes, pad, pct } from "@/lib/format";
 import { badPathPairs, setVerifyMode, verifyMode, type VerifyMode } from "@/lib/settings";
-import { baseName, isPending, savedShare } from "@/lib/transcode";
+import { baseName, holdText, isPending, newWindow, savedShare, WEEK } from "@/lib/transcode";
 import { outcome } from "@/lib/verify";
 import { cn } from "@/lib/utils";
 import { Field, LockedInput, Num, Segmented, Toggle } from "@/components/AdminFields";
-import { Bar, Dot, Figure, Notice, SectionHead, type Tone } from "@/components/kit";
+import { Bar, Dot, Figure, Notice, SameWidth, SectionHead, State, type Tone } from "@/components/kit";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // Admin tabs for the media pipeline: who imports, the download checks, and
 // AV1 conversion. Each edits the shared settings copy; the page's save bar
@@ -14,8 +17,8 @@ import { Bar, Dot, Figure, Notice, SectionHead, type Tone } from "@/components/k
 
 type Edit = { s: Settings; locked: Record<string, boolean>; update: (f: (x: Settings) => void) => void };
 
-/** Polls an endpoint while the tab is open. */
-function usePoll<T>(load: () => Promise<T>, ms: number): T | null {
+/** Polls an endpoint while the tab is open. The setter takes a fresher answer, such as one from an action. */
+function usePoll<T>(load: () => Promise<T>, ms: number): [T | null, (v: T) => void] {
   const [v, setV] = useState<T | null>(null);
   useEffect(() => {
     let stop = false;
@@ -30,7 +33,7 @@ function usePoll<T>(load: () => Promise<T>, ms: number): T | null {
       clearInterval(t);
     };
   }, [load, ms]);
-  return v;
+  return [v, setV];
 }
 
 function PathMap({ value, locked, placeholder, onChange }: { value?: string; locked?: boolean; placeholder: string; onChange: (v: string) => void }) {
@@ -58,7 +61,7 @@ const TRANSFERS = [
 export function ImportTab({ s, locked, update }: Edit) {
   const im = s.import ?? {};
   const native = im.mode === "native";
-  const st = usePoll(api.imports, 4000);
+  const [st] = usePoll(api.imports, 4000);
   const set = (f: (i: NonNullable<Settings["import"]>) => void) =>
     update((x) => {
       x.import ??= {};
@@ -141,7 +144,7 @@ const VMODES = [
 
 export function ChecksTab({ s, locked, update }: Edit) {
   const v = s.verify ?? { autoRegrab: false };
-  const st = usePoll(api.verify, 5000);
+  const [st] = usePoll(api.verify, 5000);
   const tools = st?.tools;
   const set = (f: (x: NonNullable<Settings["verify"]>) => void) =>
     update((x) => {
@@ -202,7 +205,7 @@ function CheckCounts({ st }: { st: VerifyList }) {
 
 export function TranscodeTab({ s, locked, update }: Edit) {
   const t = s.transcode;
-  const st = usePoll(api.transcode, 3000);
+  const [st, setSt] = usePoll(api.transcode, 3000);
   const set = (f: (x: Settings["transcode"]) => void) => update((x) => f(x.transcode));
 
   return (
@@ -235,22 +238,133 @@ export function TranscodeTab({ s, locked, update }: Edit) {
           <Num label="Nice" value={t.nice} min={0} max={19} unit="nice" disabled={locked.TRANSCODE_NICE} onChange={(n) => set((x) => (x.nice = n))} />
         </div>
       </Field>
+      <Field label={st?.zone ? `Schedule (${st.zone})` : "Schedule"} hint="Convert only inside these hours, in server time. No windows = any time. A window that ends before it starts runs past midnight.">
+        <Schedule value={t.schedule ?? []} onChange={(w) => set((x) => (x.schedule = w))} />
+      </Field>
       <Field label="Path map" hint="Sonarr/Radarr path = roarr path">
         <PathMap value={t.pathMap} locked={locked.TRANSCODE_PATH_MAP} placeholder="/tv=/media/tv,/movies=/media/movies" onChange={(p) => set((x) => (x.pathMap = p))} />
       </Field>
-      {st && <TranscodeQueue st={st} />}
+      {st && <TranscodeQueue st={st} onChange={setSt} />}
     </>
+  );
+}
+
+/** Day choices, as qBittorrent's speed schedule offers them. */
+const DAY_SETS: [string, string, number[]][] = [
+  ["every", "Every day", [1, 2, 3, 4, 5, 6, 0]],
+  ["weekdays", "Weekdays", [1, 2, 3, 4, 5]],
+  ["weekends", "Weekends", [6, 0]],
+  ...WEEK.map(({ day, name }): [string, string, number[]] => [String(day), name, [day]]),
+];
+const sameDays = (a: number[], b: number[]) => a.length === b.length && a.every((d) => b.includes(d));
+
+/** Half-hour steps; a time typed into settings.json elsewhere stays selectable. */
+const TIMES = Array.from({ length: 48 }, (_, i) => `${pad(Math.floor(i / 2))}:${i % 2 ? "30" : "00"}`);
+const END_TIMES = [...TIMES, "24:00"];
+
+/**
+ * Weekly windows, one line each: days, from, to. A window needs 424 px for one line; below that it takes two, and
+ * the windows get more space between them so each still reads as one.
+ */
+function Schedule({ value, onChange }: { value: ScheduleWindow[]; onChange: (v: ScheduleWindow[]) => void }) {
+  const edit = (i: number, w: ScheduleWindow) => onChange(value.map((x, k) => (k === i ? w : x)));
+  return (
+    <div className="@container">
+    <div className="grid gap-4 @[26.5rem]:gap-2">
+      {value.map((w, i) => {
+        const { from, to } = w;
+        return (
+          <div key={i} className="flex flex-wrap items-center gap-2">
+            <DaySelect value={w.days?.length ? w.days : DAY_SETS[0][2]} onChange={(days) => edit(i, { ...w, days })} />
+            <div className="flex flex-wrap items-center gap-2">
+              <TimeSelect label="From" value={from} times={TIMES} onChange={(v) => edit(i, { ...w, from: v })} />
+              <span className="text-muted-foreground">–</span>
+              <TimeSelect label="To" value={to} times={END_TIMES} onChange={(v) => edit(i, { ...w, to: v })} />
+              <span className="w-5 text-[12px] text-muted-foreground" title={to <= from ? "Ends the next day" : undefined}>
+                {to <= from ? "+1" : ""}
+              </span>
+              <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="Remove window" onClick={() => onChange(value.filter((_, k) => k !== i))}>
+                <X />
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+      <div className="flex items-center gap-4">
+        <Button variant="outline" onClick={() => onChange([...value, newWindow()])}>
+          <Plus /> Add window
+        </Button>
+        {value.length === 0 && <span className="text-[13px] text-muted-foreground">Any time</span>}
+      </div>
+    </div>
+    </div>
+  );
+}
+
+function DaySelect({ value, onChange }: { value: number[]; onChange: (v: number[]) => void }) {
+  const set = DAY_SETS.find(([, , days]) => sameDays(days, value));
+  const custom = WEEK.filter((d) => value.includes(d.day))
+    .map((d) => d.short)
+    .join(" ");
+  return (
+    <Select value={set?.[0] ?? "custom"} onValueChange={(k) => onChange(DAY_SETS.find(([key]) => key === k)?.[2] ?? value)}>
+      <SelectTrigger aria-label="Days" className="h-9 w-32 bg-card">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {!set && <SelectItem value="custom">{custom}</SelectItem>}
+        {DAY_SETS.map(([k, name]) => (
+          <SelectItem key={k} value={k}>
+            {name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function TimeSelect({ label, value, times: base, onChange }: { label: string; value: string; times: string[]; onChange: (v: string) => void }) {
+  const times = base.includes(value) ? base : [...base, value].sort();
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger aria-label={label} className="h-9 w-24 bg-card tabular">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent className="max-h-72">
+        {times.map((t) => (
+          <SelectItem key={t} value={t} className="tabular">
+            {t}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
 const ORDER: Record<string, number> = { running: 0, queued: 1, failed: 2, done: 3, skipped: 4 };
 
-function TranscodeQueue({ st }: { st: TranscodeStatus }) {
+function TranscodeQueue({ st, onChange }: { st: TranscodeStatus; onChange: (st: TranscodeStatus) => void }) {
   const jobs = [...(st.jobs ?? [])].sort((a, b) => ORDER[a.state] - ORDER[b.state]);
   const c = st.counts;
+  const [busy, setBusy] = useState(false);
+  const hold = holdText(st);
+  const toggle = () => {
+    setBusy(true);
+    api
+      .transcodePause(!st.paused)
+      .then(onChange)
+      .catch(() => {})
+      .finally(() => setBusy(false));
+  };
   return (
     <section className="mt-8">
-      <SectionHead title="Queue" className="mb-3" />
+      <SectionHead title="Queue" className="mb-3">
+        {hold && <State tone={st.held ? "miss" : "live"}>{hold}</State>}
+        <Button variant="outline" size="sm" className="ml-auto" disabled={busy || !st.enabled} onClick={toggle}>
+          {st.paused ? <Play /> : <Pause />}
+          <SameWidth shown={st.paused ? "Resume" : "Pause"} other={st.paused ? "Pause" : "Resume"} />
+        </Button>
+      </SectionHead>
       <div className="mb-3 flex flex-wrap gap-x-6 gap-y-1">
         <Figure value={c.running} label="running" tone={c.running ? "live" : undefined} />
         <Figure value={c.queued} label="queued" />
@@ -272,7 +386,7 @@ function TranscodeRow({ j }: { j: TranscodeJob }) {
   const share = savedShare(j);
   return (
     <div className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-x-3 border-t py-3 md:grid-cols-[10px_minmax(0,1fr)_200px]">
-      <Dot tone={tone} pulse={j.state === "running"} />
+      <Dot tone={tone} pulse={j.state === "running" && !j.paused} />
       <div className="min-w-0">
         <div className="truncate text-[14px]">{j.title || baseName(j.path)}</div>
         <div className="truncate font-mono text-[11px] text-muted-foreground" title={j.path}>
@@ -284,7 +398,7 @@ function TranscodeRow({ j }: { j: TranscodeJob }) {
         {j.state === "running" ? (
           <>
             <div className="flex justify-between gap-3">
-              <span className="text-muted-foreground">{j.speed ?? ""}</span>
+              <span className="text-muted-foreground">{j.paused ? "paused" : (j.speed ?? "")}</span>
               <span>{j.percent.toFixed(0)}%</span>
             </div>
             <Bar value={j.percent / 100} segments={32} stretch className="mt-2" />
