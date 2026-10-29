@@ -104,6 +104,16 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 				return
 			}
 		}
+		// JSON answers go out gzipped. The search stream is left alone: it
+		// flushes small events and must not wait on a compressor.
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/search" {
+			h.Add("Vary", "Accept-Encoding")
+			if accepts(r, "gzip") {
+				gw := &gzipWriter{ResponseWriter: w}
+				defer gw.close() // after the recover below has written its error
+				w = gw
+			}
+		}
 		start := time.Now()
 		// A panic would drop the connection and show up in front of roarr as a
 		// bare 502. Log it and answer with JSON instead.
@@ -761,11 +771,17 @@ func (s *Server) static() http.Handler {
 				if strings.HasPrefix(p, "assets/") {
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 				}
-				files.ServeHTTP(w, r)
+				if !serveEncoded(w, r, s.ui, p) {
+					files.ServeHTTP(w, r)
+				}
 				return
 			}
 		}
 		// SPA fallback.
+		w.Header().Set("Cache-Control", "no-cache")
+		if serveEncoded(w, r, s.ui, "index.html") {
+			return
+		}
 		b, err := fs.ReadFile(s.ui, "index.html")
 		if err != nil {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")

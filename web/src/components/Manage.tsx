@@ -21,7 +21,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Kbd } from "@/components/ui/kbd";
 import { useConfirm } from "./Confirm";
 
 /** "WEBDL-1080p  x265  HDR10  1.4 GB  NTb" */
@@ -50,7 +49,7 @@ export function FileFacts({ file }: { file: FileInfo }) {
   ];
   return (
     <div>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1 text-[13.5px]">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-1 text-[14px]">
         {rows
           .filter(([, v]) => v)
           .map(([k, v]) => (
@@ -60,7 +59,7 @@ export function FileFacts({ file }: { file: FileInfo }) {
             </div>
           ))}
       </dl>
-      <div className="mt-2.5 font-mono text-[11px] leading-snug break-all text-muted-foreground">{file.path}</div>
+      <div className="mt-3 font-mono text-[11px] leading-snug break-all text-muted-foreground">{file.path}</div>
     </div>
   );
 }
@@ -131,8 +130,8 @@ export function ManageMenu({
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Settings2 /> Manage
+        <Button variant="ghost" size="icon-sm" aria-label={`Manage ${title}`} title="Manage" className="text-muted-foreground data-[state=open]:bg-accent">
+          <Settings2 />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
@@ -174,7 +173,7 @@ export function ManageMenu({
           <Trash2 /> Remove from {app}
         </DropdownMenuItem>
         {path && (
-          <DropdownMenuLabel className="truncate pt-2 font-mono text-[10.5px] font-normal text-muted-foreground" title={path}>
+          <DropdownMenuLabel className="truncate pt-2 font-mono text-[11px] font-normal text-muted-foreground" title={path}>
             {path}
           </DropdownMenuLabel>
         )}
@@ -192,7 +191,7 @@ export function RowMenu({ label, children, className }: { label: string; childre
           variant="ghost"
           size="icon-sm"
           aria-label={label}
-          className={cn("size-7 shrink-0 text-muted-foreground data-[state=open]:bg-muted", className)}
+          className={cn("size-8 shrink-0 text-muted-foreground data-[state=open]:bg-accent", className)}
           onClick={(e) => e.stopPropagation()}
         >
           <MoreHorizontal />
@@ -219,16 +218,16 @@ export function MonitorToggle({ on, onToggle, disabled, label }: { on: boolean; 
         onToggle();
       }}
       className={cn(
-        "grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
-        on && "text-foreground/80",
+        "grid size-8 shrink-0 cursor-pointer place-items-center rounded-[2px] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40",
+        on && "text-muted-foreground",
       )}
     >
-      <Bookmark className="size-3.5" fill={on ? "currentColor" : "none"} />
+      <Bookmark className="size-4" fill={on ? "currentColor" : "none"} />
     </button>
   );
 }
 
-/** Floating bar for whatever is ticked. Esc clears. */
+/** Floating bar for the selected items. Esc clears. */
 export function SelectionBar({ count, summary, onClear, children }: { count: number; summary?: ReactNode; onClear: () => void; children: ReactNode }) {
   useEffect(() => {
     if (!count) return;
@@ -239,17 +238,20 @@ export function SelectionBar({ count, summary, onClear, children }: { count: num
     return () => removeEventListener("keydown", on);
   }, [count, onClear]);
   if (!count) return null;
+  // The bar has a fixed width and its actions sit on the right, so a new
+  // count or summary never moves a button. Actions that do not apply to the
+  // selection are disabled, not removed, for the same reason.
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 flex justify-center px-4 sm:bottom-5">
-      <div className="pointer-events-auto flex max-w-full animate-in items-center gap-1 overflow-x-auto rounded-lg border bg-popover/95 p-1.5 pl-4 text-popover-foreground shadow-xl backdrop-blur fade-in-0 slide-in-from-bottom-3">
-        <span className="shrink-0 pr-2 text-sm whitespace-nowrap">
-          <b className="font-mono font-medium tabular">{count}</b> ticked
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-40 flex justify-center px-4 md:bottom-6 md:pl-[256px]">
+      <div data-selection-bar className="pointer-events-auto flex w-[768px] max-w-full animate-in items-center gap-1 overflow-x-auto rounded-[2px] border bg-popover p-2 pl-4 text-popover-foreground fade-in-0 slide-in-from-bottom-3">
+        <span className="flex-1 shrink-0 pr-2 text-sm whitespace-nowrap">
+          <b className="font-mono font-medium tabular">{count}</b> selected
           {summary && <span className="meta ml-2 font-mono">{summary}</span>}
         </span>
-        <span className="mx-1 h-5 w-px shrink-0 bg-border" />
         {children}
-        <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={onClear} aria-label="Clear selection">
-          <X /> <Kbd className="hidden sm:inline-flex">esc</Kbd>
+        <span className="mx-1 h-5 w-px shrink-0 bg-border" />
+        <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={onClear} aria-label="Clear selection" title="Clear selection (esc)">
+          <X />
         </Button>
       </div>
     </div>

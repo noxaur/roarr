@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, Check, Download, ExternalLink } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { ArrowDown, ArrowUp, Check, ExternalLink } from "lucide-react";
 import type { GrabResult, Release } from "@/lib/api";
 import { age, bytes, epCode } from "@/lib/format";
 import { codecName, langCode, langsOf, resName } from "@/lib/langs";
@@ -7,8 +7,9 @@ import { fitScore, type Grabber, type GrabOpts, type Kind, type LivePlan } from 
 import type { SearchState } from "@/lib/useSearch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
-import { Dot, Notice, Spec, Spinner } from "./kit";
+import { Notice, Spec, Spinner, type Tone } from "./kit";
 
 type SortKey = "best" | "score" | "res" | "size" | "seeders" | "age";
 type AudioFilter = "any" | "en" | "multi" | `lang:${string}`;
@@ -29,6 +30,24 @@ export interface ReleaseSheetProps {
   watchFirst?: boolean;
   epLabel?: (id: number) => string;
   movieLabel?: (tmdb: number) => string;
+  /** The seasons the selection touches, as cells: each release lights the ones it covers. */
+  cells?: { id: number; tone: Tone }[];
+  /** Column label for the cells: "S02". */
+  cellsLabel?: string;
+}
+
+const fillOf: Record<Tone, string> = { have: "bg-have", miss: "bg-miss", live: "bg-live", bad: "bg-bad", none: "bg-unlit" };
+
+/** The season's cells, unlit where this release does not cover them. */
+function Covers({ r, cells }: { r: Release; cells: { id: number; tone: Tone }[] }) {
+  const covers = new Set(r.covers ?? []);
+  return (
+    <span aria-hidden className="flex flex-wrap gap-1">
+      {cells.map((c) => (
+        <i key={c.id} className={cn("block size-2 rounded-[1px]", covers.has(c.id) ? fillOf[c.tone] : "bg-unlit")} />
+      ))}
+    </span>
+  );
 }
 
 /**
@@ -49,6 +68,24 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
   const [limit, setLimit] = useState(60);
   const opts: GrabOpts = { watchFirst: p.watchFirst };
   const want = useMemo(() => new Set(p.wanted), [p.wanted]);
+  // The releases to get. roarr's picks start selected; once you change the
+  // selection, new picks no longer replace it.
+  const pickKey = plan.picks.map((x) => x.release.key).join(",");
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [touched, setTouched] = useState(false);
+  useEffect(() => {
+    if (!touched) setChosen(new Set(pickKey ? pickKey.split(",") : []));
+  }, [pickKey, touched]);
+  useEffect(() => setTouched(false), [p.wanted.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const choose = (key: string, on: boolean) => {
+    setTouched(true);
+    setChosen((s) => {
+      const n = new Set(s);
+      if (on) n.add(key);
+      else n.delete(key);
+      return n;
+    });
+  };
 
   // Filter options come from what is actually on offer.
   const facets = useMemo(() => {
@@ -94,66 +131,44 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
   const live = indexers.filter((i) => !i.disabled);
   const answered = live.filter((i) => i.answered >= i.queries).length;
   const failed = live.filter((i) => i.answered >= i.queries && i.errors.length > 0 && i.errors.length >= i.answered);
-  const allGot = plan.picks.length > 0 && plan.picks.every((x) => grabber.results.get(x.release.key)?.ok);
+  const selected = plan.all.filter((r) => chosen.has(r.key) && !grabber.results.get(r.key)?.ok);
+  const size = selected.reduce((n, r) => n + r.size, 0);
+  const cells = p.kind === "tv" ? (p.cells ?? []) : [];
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === "age" ? 1 : -1 }));
 
+  const cols = cells.length ? "grid-cols-[16px_minmax(64px,auto)_minmax(240px,1fr)_auto_72px_64px_120px_48px]" : "grid-cols-[16px_minmax(240px,1fr)_auto_72px_64px_120px_48px]";
+
   return (
     <Sheet open={p.open} onOpenChange={p.onOpenChange}>
       <SheetContent className="w-full gap-0 overflow-hidden p-0 sm:max-w-[1180px]">
-        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2 border-b px-5 pt-5 pb-3.5 sm:px-6">
-          <div className="min-w-0 pr-8">
-            <SheetTitle className="truncate text-[20px] leading-tight font-medium">{p.title}</SheetTitle>
-            <SheetDescription className="mt-1 truncate font-mono text-[12px]">{p.detail ?? " "}</SheetDescription>
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 pt-6 pr-16 pb-4 pl-6">
+          <div className="flex min-w-0 items-baseline gap-3 pr-8">
+            <span className="label-caps">Releases</span>
+            <SheetTitle className="truncate text-[14px] font-normal">{p.title}</SheetTitle>
+            <SheetDescription className="truncate font-mono text-[12px]">{p.detail ?? ""}</SheetDescription>
           </div>
-          <div className="flex items-center gap-2 font-mono text-[11.5px] text-muted-foreground tabular">
-            {!state.done && <Spinner className="size-3" />}
+          <div className="flex items-center gap-2 font-mono text-[12px] text-muted-foreground tabular">
+            {!state.done && <Spinner />}
             <span>
               {answered}/{live.length || "…"} indexers
             </span>
-            <span>{plan.all.length} releases</span>
             {failed.length > 0 && (
               <span className="text-bad" title={failed.map((i) => `${i.name}: ${i.errors[0]}`).join("\n")}>
-                {failed.length} failed
+                · {failed.length} failed
               </span>
             )}
           </div>
         </div>
 
         {state.error && (
-          <Notice tone="bad" className="mx-5 mt-3 sm:mx-6">
+          <Notice tone="bad" className="mx-6 mb-3">
             {state.error}
           </Notice>
         )}
 
-        {p.wanted.length > 0 && (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-card px-5 py-2.5 text-[13px] sm:px-6">
-            {plan.picks.length > 0 ? (
-              <>
-                <span className="inline-flex items-center gap-2">
-                  <Dot tone="have" />
-                  <b className="font-medium">Best pick</b>
-                  <span className="text-muted-foreground">
-                    {plan.picks.length === 1 ? "1 release" : `${plan.picks.length} releases`}, {bytes(plan.size)}
-                    {plan.missing.length > 0 && `, ${plan.missing.length} of ${p.wanted.length} not covered`}
-                  </span>
-                </span>
-                <Button size="sm" className="ml-auto" disabled={allGot || grabber.busy.size > 0} onClick={() => grabber.grabAll(plan.picks.map((x) => x.release), opts)}>
-                  {allGot ? <Check /> : grabber.busy.size > 0 ? <Spinner /> : <Download />}
-                  {allGot ? "Sent" : "Get best pick"}
-                </Button>
-              </>
-            ) : (
-              <span className="inline-flex items-center gap-2 text-muted-foreground">
-                <Dot tone={state.done ? "miss" : "live"} pulse={!state.done} />
-                {state.done ? "Nothing passes your rules. Pick one below, or show rejected." : "Searching…"}
-              </span>
-            )}
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-x-1 gap-y-1.5 px-5 py-2.5 sm:px-6">
+        <div className="flex flex-wrap items-center gap-x-1 gap-y-2 px-6 pb-3">
           {facets.res.length > 1 && (
             <Group label="Res">
               {facets.res.map((r) => (
@@ -220,49 +235,50 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
             </Group>
           )}
           {rejectedCount > 0 && (
-            <label className="ml-auto inline-flex h-7 cursor-pointer items-center gap-2 text-[12.5px] text-muted-foreground select-none">
-              <input type="checkbox" className="accent-foreground" checked={showRejected} onChange={(e) => setShowRejected(e.target.checked)} />
-              Show {rejectedCount} rejected
+            <label className="ml-auto inline-flex h-8 cursor-pointer items-center gap-2 text-[13px] text-muted-foreground select-none">
+              <Checkbox checked={showRejected} onCheckedChange={(v) => setShowRejected(v === true)} />
+              Show rejected
             </label>
           )}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto px-5 pb-4 sm:px-6">
-          <div className="hidden grid-cols-[44px_minmax(220px,1fr)_58px_66px_92px_92px_90px_90px_70px_56px_36px] items-center gap-x-2.5 border-b pb-1.5 md:grid">
-            <Th sort={sort} k="score" onClick={toggleSort} title="Score">
-              Score
-            </Th>
+        <div className="min-h-0 flex-1 overflow-auto px-6 pb-4">
+          <div className={cn("hidden h-8 items-center gap-x-4 border-b md:grid", cols)}>
+            <span />
+            {cells.length > 0 && <span className="meta">covers {p.cellsLabel}</span>}
             <Th sort={sort} k="best" onClick={toggleSort}>
-              Release
+              release
             </Th>
             <Th sort={sort} k="res" onClick={toggleSort}>
-              Res
+              format
             </Th>
-            <Th>Source</Th>
-            <Th>Video</Th>
-            <Th>Audio</Th>
-            <Th>Lang</Th>
-            <Th>Subs</Th>
             <Th sort={sort} k="size" onClick={toggleSort} right>
-              Size
+              size
             </Th>
             <Th sort={sort} k="seeders" onClick={toggleSort} right>
-              Seeds
+              seeders
             </Th>
-            <span />
+            <Th>indexer</Th>
+            <Th sort={sort} k="age" onClick={toggleSort} right>
+              age
+            </Th>
           </div>
 
-          {list.length === 0 && <div className="py-12 text-center text-[13px] text-muted-foreground">{state.done ? "No releases match." : "Waiting for indexers…"}</div>}
+          {list.length === 0 && <div className="py-12 text-center text-[13px] text-muted-foreground">{state.done ? (plan.all.length ? "No releases match." : "Nothing found.") : "Waiting for indexers…"}</div>}
 
           {list.slice(0, limit).map((r) => (
             <Row
               key={r.key}
               r={r}
               p={p}
+              cols={cols}
+              cells={cells}
               fills={picks.get(r.key)}
               bestScore={bestScore}
               open={expanded === r.key}
               onToggle={() => setExpanded(expanded === r.key ? null : r.key)}
+              chosen={chosen.has(r.key)}
+              onChoose={(on) => choose(r.key, on)}
               busy={grabber.busy.has(r.key)}
               result={grabber.results.get(r.key)}
               onGrab={(o) => grabber.grab(r, { ...opts, ...o })}
@@ -276,6 +292,17 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
             </div>
           )}
         </div>
+
+        <div className="flex items-center justify-end gap-4 border-t px-6 py-4">
+          {plan.missing.length > 0 && state.done && <span className="meta mr-auto">{plan.missing.length === 1 ? (p.epLabel?.(plan.missing[0]) ?? "1 episode") : `${plan.missing.length} episodes`} not available yet</span>}
+          <Button size="lg" className="min-w-[240px] justify-between" disabled={selected.length === 0 || grabber.busy.size > 0} onClick={() => grabber.grabAll(selected, opts)}>
+            <span className="flex items-center gap-2">
+              {grabber.busy.size > 0 && <Spinner className="size-4" />}
+              {selected.length === 0 ? "Select releases" : `Get ${selected.length === 1 ? (p.detail ?? "1 release") : `${selected.length} releases`}`}
+            </span>
+            {size > 0 && <span className="font-mono text-[12px] tabular">{bytes(size)}</span>}
+          </Button>
+        </div>
       </SheetContent>
     </Sheet>
   );
@@ -283,8 +310,8 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
 
 function Group({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="mr-3 inline-flex items-center gap-1">
-      <span className="meta mr-0.5">{label}</span>
+    <div className="mr-4 inline-flex items-center gap-1">
+      <span className="meta mr-1">{label}</span>
       {children}
     </div>
   );
@@ -297,8 +324,8 @@ function Chip({ on, onClick, children }: { on: boolean; onClick: () => void; chi
       aria-pressed={on}
       onClick={onClick}
       className={cn(
-        "h-7 cursor-pointer rounded-md border border-transparent px-2 font-mono text-[11.5px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",
-        on && "border-border bg-card text-foreground",
+        "h-8 cursor-pointer rounded-[2px] px-2 font-mono text-[12px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
+        on && "bg-accent text-foreground",
       )}
     >
       {children}
@@ -328,7 +355,7 @@ function Th({
       type="button"
       title={title}
       onClick={() => onClick(k)}
-      className={cn("meta inline-flex cursor-pointer items-center gap-0.5 outline-none hover:text-foreground focus-visible:underline", right && "justify-end", active && "text-foreground")}
+      className={cn("meta inline-flex cursor-pointer items-center gap-1 outline-none hover:text-foreground focus-visible:underline", right && "justify-end", active && "text-foreground")}
     >
       {children}
       {active && (sort.dir === -1 ? <ArrowDown className="size-3" /> : <ArrowUp className="size-3" />)}
@@ -396,20 +423,28 @@ function SubSpecs({ r }: { r: Release }) {
 function Row({
   r,
   p,
+  cols,
+  cells,
   fills,
   bestScore,
   open,
   onToggle,
+  chosen,
+  onChoose,
   busy,
   result,
   onGrab,
 }: {
   r: Release;
   p: ReleaseSheetProps;
+  cols: string;
+  cells: { id: number; tone: Tone }[];
   fills?: number[];
   bestScore: number;
   open: boolean;
   onToggle: () => void;
+  chosen: boolean;
+  onChoose: (on: boolean) => void;
   busy: boolean;
   result?: GrabResult;
   onGrab: (o: GrabOpts) => void;
@@ -420,132 +455,109 @@ function Row({
   const nFills = (r.covers ?? []).filter((id) => want.has(id)).length;
   const extras = (r.covers?.length ?? 0) - nFills;
   const cover = coverLabel(r, p);
-  const video = [codecName(i.codec), i.hdr, i.tenBit && "10bit"].filter(Boolean) as string[];
+  const tags = [resName(i.resolution), i.source, codecName(i.codec), i.hdr, i.tenBit && "10bit"].filter(Boolean) as string[];
   const audioBits = [i.audio, i.channels].filter(Boolean).join(" ");
   const sent = result?.ok;
   const failed = result && !result.ok;
   const showDetail = open || failed;
 
-  const why = (
-    <>
-      {r.rejected ? (
-        <span className="text-bad">Rejected: {(r.reasons ?? []).join(", ")}</span>
-      ) : picked ? (
-        <span className="text-have">Best pick{p.kind === "tv" && fills ? `, fills ${fills.length} of ${p.wanted.length}` : ""}</span>
-      ) : bestScore ? (
-        <span className="text-muted-foreground">
-          Not picked: {Math.round(r.score)} vs {Math.round(bestScore)}
-          {p.kind === "tv" && extras > 0 ? `, +${extras} episodes you did not ask for` : ""}
-        </span>
-      ) : null}
-    </>
-  );
-
-  const action = sent ? (
-    <span className="grid size-8 place-items-center rounded-md bg-have-soft text-have" aria-label="Sent to download client">
-      <Check className="size-4" />
+  const why = r.rejected ? (
+    <span className="text-bad">Rejected: {(r.reasons ?? []).join(", ")}</span>
+  ) : picked ? (
+    <span className="text-foreground">
+      roarr's pick, score {Math.round(r.score)}
+      {p.kind === "tv" && fills ? `, fills ${fills.length} of ${p.wanted.length}` : ""}
+    </span>
+  ) : bestScore ? (
+    <span className="text-muted-foreground">
+      Score {Math.round(r.score)}, the pick has {Math.round(bestScore)}
+      {p.kind === "tv" && extras > 0 ? `. Also ${extras} episodes you did not select` : ""}
     </span>
   ) : (
-    <Button variant={picked ? "default" : "outline"} size="icon-sm" disabled={busy} onClick={() => onGrab({})} aria-label={`Get ${r.title}`} title="Get this release">
-      {busy ? <Spinner /> : <Download />}
-    </Button>
+    <span className="text-muted-foreground">Score {Math.round(r.score)}</span>
   );
 
-  const scoreCell = (
-    <span
-      className={cn(
-        "grid h-7 w-[38px] place-items-center rounded-md font-mono text-[12.5px] font-medium tabular",
-        picked ? "bg-have text-background" : r.rejected ? "bg-bad-soft text-bad" : "bg-muted",
-      )}
-      title={picked ? "Best pick" : r.rejected ? "Rejected" : "Score"}
-    >
-      {r.rejected ? "–" : Math.round(r.score)}
-    </span>
+  const box = sent ? (
+    <Check className="size-4 text-have" aria-label="Sent to the download client" />
+  ) : busy ? (
+    <Spinner />
+  ) : (
+    <Checkbox checked={chosen} onCheckedChange={(v) => onChoose(v === true)} onClick={(e) => e.stopPropagation()} aria-label={`Select ${r.title}`} />
   );
 
   return (
-    <div className={cn("border-b", r.rejected && "opacity-70")}>
+    <div className={cn("border-b", r.rejected && "opacity-60")}>
       {/* Desktop: one grid row. */}
       <div
-        className={cn("hidden min-h-[52px] cursor-pointer grid-cols-[44px_minmax(220px,1fr)_58px_66px_92px_92px_90px_90px_70px_56px_36px] items-center gap-x-2.5 py-1.5 outline-none hover:bg-card md:grid", open && "bg-card")}
+        className={cn("hidden min-h-9 cursor-pointer items-center gap-x-4 py-1 outline-none hover:bg-card md:grid", cols, (open || chosen) && "bg-card")}
         role="button"
         tabIndex={0}
         aria-expanded={open}
         onClick={onToggle}
         onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
+          if (e.key === "Enter") {
             e.preventDefault();
             onToggle();
+          } else if (e.key === " ") {
+            e.preventDefault();
+            onChoose(!chosen);
           }
         }}
       >
-        {scoreCell}
-        <span className="min-w-0">
-          <span className="block truncate font-mono text-[12px] leading-snug" title={r.title}>
-            {r.title}
-          </span>
-          <span className="mt-0.5 flex items-center gap-x-2 text-[11.5px] text-muted-foreground">
-            {cover && <span className="font-mono text-foreground/80">{cover}</span>}
-            {i.group && <span className="font-mono">{i.group}</span>}
-            <span className="truncate">{r.indexers.length > 1 ? `${r.indexers.length} indexers` : r.indexer}</span>
-            <span className="tabular">{age(r.ageHours)}</span>
-            {(i.repack || i.proper) && <span>{i.repack ? "repack" : "proper"}</span>}
-          </span>
+        <span className="grid place-items-center">{box}</span>
+        {cells.length > 0 && <Covers r={r} cells={cells} />}
+        <span className="min-w-0 truncate font-mono text-[12px]" title={r.title}>
+          {r.title}
         </span>
-        <span className="font-mono text-[12px] tabular">{resName(i.resolution) || <span className="text-muted-foreground">?</span>}</span>
-        <span className="truncate font-mono text-[12px]">{i.source || <span className="text-muted-foreground">?</span>}</span>
         <span className="flex flex-wrap gap-1">
-          {video.map((v) => (
-            <Spec key={v} tone={v === "DV" || v.startsWith("HDR") ? "live" : undefined}>
+          {tags.map((v) => (
+            <Spec key={v} tone={v === "DV" || v.startsWith("HDR") ? "live" : r.rejected && /CAM|TS|TC/i.test(v) ? "bad" : undefined}>
               {v}
             </Spec>
           ))}
-        </span>
-        <span className="truncate font-mono text-[12px]">{audioBits || <span className="text-muted-foreground">?</span>}</span>
-        <span className="flex flex-wrap gap-1">
           <LangSpecs r={r} />
         </span>
-        <span className="flex flex-wrap gap-1">
-          <SubSpecs r={r} />
-        </span>
         <span className="text-right font-mono text-[12px] tabular">{bytes(r.size)}</span>
-        <span className={cn("text-right font-mono text-[12px] tabular", r.seeders === 0 ? "text-bad" : r.seeders < 5 ? "text-miss" : r.seeders >= 20 && "text-have")}>{r.seeders}</span>
-        <span onClick={(e) => e.stopPropagation()}>{action}</span>
+        <span className={cn("text-right font-mono text-[12px] tabular", r.seeders === 0 && "text-bad")}>{r.seeders}</span>
+        <span className="truncate text-[13px] text-muted-foreground">{r.indexers.length > 1 ? `${r.indexers.length} indexers` : r.indexer}</span>
+        <span className="text-right font-mono text-[12px] text-muted-foreground tabular">{age(r.ageHours)}</span>
       </div>
 
       {/* Phone: stacked card. */}
-      <div className="flex items-start gap-3 py-2.5 md:hidden">
-        <button className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 text-left outline-none focus-visible:underline" aria-expanded={open} onClick={onToggle}>
-          {scoreCell}
-          <span className="min-w-0 flex-1">
-            <span className="block font-mono text-[12px] leading-snug break-all">{r.title}</span>
-            <span className="mt-1.5 flex flex-wrap gap-1">
-              {cover && <Spec>{cover}</Spec>}
-              {i.resolution && <Spec>{resName(i.resolution)}</Spec>}
-              {i.source && <Spec>{i.source}</Spec>}
-              {video.map((v) => (
-                <Spec key={v}>{v}</Spec>
-              ))}
-              {audioBits && <Spec>{audioBits}</Spec>}
-              <LangSpecs r={r} />
-              <SubSpecs r={r} />
-            </span>
-            <span className="mt-1.5 flex flex-wrap gap-x-3 font-mono text-[11.5px] text-muted-foreground tabular">
-              <span>{bytes(r.size)}</span>
-              <span className={cn(r.seeders === 0 && "text-bad")}>{r.seeders} seeds</span>
-              <span>{age(r.ageHours)}</span>
-              {i.group && <span>{i.group}</span>}
-            </span>
+      <div className="flex items-start gap-3 py-3 md:hidden">
+        <span className="pt-1">{box}</span>
+        <button className="min-w-0 flex-1 cursor-pointer text-left outline-none focus-visible:underline" aria-expanded={open} onClick={onToggle}>
+          <span className="block font-mono text-[12px] leading-5 break-all">{r.title}</span>
+          {cells.length > 0 && <Covers r={r} cells={cells} />}
+          <span className="mt-2 flex flex-wrap gap-1">
+            {cover && <Spec>{cover}</Spec>}
+            {tags.map((v) => (
+              <Spec key={v}>{v}</Spec>
+            ))}
+            <LangSpecs r={r} />
+          </span>
+          <span className="mt-2 flex flex-wrap gap-x-3 font-mono text-[12px] text-muted-foreground tabular">
+            <span>{bytes(r.size)}</span>
+            <span className={cn(r.seeders === 0 && "text-bad")}>{r.seeders} seeders</span>
+            <span>{age(r.ageHours)}</span>
           </span>
         </button>
-        {action}
       </div>
 
       {showDetail && (
-        <div className="mb-2 ml-0 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md bg-muted/70 px-3.5 py-2.5 text-[12.5px] md:ml-[54px]">
+        <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[2px] bg-card px-4 py-3 text-[13px] md:ml-8">
           <span className="mr-auto">
             {why}
             {p.kind === "tv" && !picked && !r.rejected && nFills > 0 && <span className="text-muted-foreground">, fills {nFills}</span>}
+          </span>
+          <span className="flex basis-full flex-wrap gap-x-4 gap-y-1 font-mono text-[12px] text-muted-foreground">
+            {cover && <span>{cover}</span>}
+            {audioBits && <span>{audioBits}</span>}
+            {i.group && <span>{i.group}</span>}
+            {(i.repack || i.proper) && <span>{i.repack ? "repack" : "proper"}</span>}
+            <span className="inline-flex gap-1">
+              <SubSpecs r={r} />
+            </span>
           </span>
           {r.notes && r.notes.length > 0 && (
             <span className="flex basis-full flex-wrap gap-1">
@@ -570,7 +582,7 @@ function Row({
                 {result.rejections?.length ? `: ${result.rejections.join(", ")}` : ""}
               </span>
               {result.canForce && (
-                <Button variant="destructive" size="sm" disabled={busy} onClick={() => onGrab({ force: true })}>
+                <Button variant="outline" size="sm" className="text-destructive" disabled={busy} onClick={() => onGrab({ force: true })}>
                   Download anyway
                 </Button>
               )}

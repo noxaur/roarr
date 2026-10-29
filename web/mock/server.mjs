@@ -359,7 +359,15 @@ const json = (res, body, status = 200) => {
   res.end(JSON.stringify(body));
 };
 
-createServer((req, res) => {
+// MOCK_LATENCY=300 makes every answer wait like a real Sonarr does, to test
+// how the UI feels on a slow network.
+const LATENCY = +(process.env.MOCK_LATENCY || 0);
+
+createServer((req, res) => (LATENCY ? setTimeout(() => handle(req, res), LATENCY) : handle(req, res))).listen(PORT, () =>
+  console.log(`mock roarr API on http://localhost:${PORT}`),
+);
+
+function handle(req, res) {
   const u = new URL(req.url, "http://x");
   const p = u.pathname;
   let m;
@@ -440,4 +448,4 @@ createServer((req, res) => {
   }
   if (req.method !== "GET") return json(res, { ok: true, message: "mock: done" });
   json(res, { error: "mock: no route " + p }, 404);
-}).listen(PORT, () => console.log(`mock roarr API on http://localhost:${PORT}`));
+}

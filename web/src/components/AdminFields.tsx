@@ -39,17 +39,27 @@ export function LockedInput({
         onChange={(e) => onChange(e.target.value)}
         className={cn(locked && "pr-9", mono && "font-mono text-[13px]")}
       />
-      {locked && <Lock aria-label="Set by environment" className="absolute top-1/2 right-3 size-3.5 -translate-y-1/2 text-muted-foreground" />}
+      {locked && <EnvLock className="absolute top-1/2 right-3 -translate-y-1/2" />}
     </div>
   );
 }
 
+/** A lock: an environment variable sets this value. */
+export function EnvLock({ className }: { className?: string }) {
+  return (
+    <span title="Set by an environment variable" className={cn("inline-grid text-muted-foreground", className)}>
+      <Lock aria-label="Set by an environment variable" className="size-3" />
+    </span>
+  );
+}
+
+/** One setting. The hint is there on hover and for screen readers; the row shows only the label and the control. */
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
-    <div className="grid gap-x-8 gap-y-2.5 border-t py-4 sm:grid-cols-[200px_minmax(0,1fr)]">
-      <div>
+    <div className="grid gap-x-8 gap-y-2 border-t py-4 sm:grid-cols-[200px_minmax(0,1fr)]">
+      <div className="self-center" title={typeof hint === "string" ? hint : undefined}>
         <div className="font-medium">{label}</div>
-        {hint && <p className="meta mt-1">{hint}</p>}
+        {hint && <p className="sr-only">{hint}</p>}
       </div>
       <div className="min-w-0 self-center">{children}</div>
     </div>
@@ -61,7 +71,7 @@ export function Toggle({ checked, disabled, onChange, children }: { checked: boo
     <label className={cn("flex cursor-pointer items-center gap-3 text-[14px]", disabled && "cursor-not-allowed opacity-60")}>
       <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
       <span>{children}</span>
-      {disabled && <Lock className="size-3 text-muted-foreground" />}
+      {disabled && <EnvLock />}
     </label>
   );
 }
@@ -91,7 +101,7 @@ export function Num({
     <div className="flex items-center gap-2">
       <Input type="number" aria-label={label} min={min} max={max} value={value} disabled={disabled} onChange={(e) => onChange(+e.target.value)} className="w-24" />
       <span className="font-mono text-xs text-muted-foreground">{unit}</span>
-      {disabled && <Lock className="size-3 text-muted-foreground" />}
+      {disabled && <EnvLock />}
     </div>
   );
 }
@@ -112,7 +122,7 @@ export function Segmented<T extends string>({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <div role="radiogroup" aria-label={label} className={cn("inline-flex max-w-full flex-wrap gap-0.5 rounded-md bg-muted p-[3px]", disabled && "opacity-60")}>
+      <div role="radiogroup" aria-label={label} className={cn("inline-flex max-w-full flex-wrap gap-1 rounded-[2px] bg-card p-1", disabled && "opacity-60")}>
         {options.map(([k, name]) => {
           const on = value === k;
           return (
@@ -124,8 +134,8 @@ export function Segmented<T extends string>({
               disabled={disabled}
               onClick={() => onChange(k)}
               className={cn(
-                "h-8 cursor-pointer rounded-[4px] px-3 text-sm text-foreground/60 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:hover:text-foreground/60",
-                on && "bg-card text-foreground shadow-sm disabled:hover:text-foreground",
+                "h-8 cursor-pointer rounded-[2px] px-3 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:hover:text-muted-foreground",
+                on && "bg-accent text-foreground disabled:hover:text-foreground",
               )}
             >
               {name}
@@ -133,7 +143,7 @@ export function Segmented<T extends string>({
           );
         })}
       </div>
-      {disabled && <Lock className="size-3 text-muted-foreground" />}
+      {disabled && <EnvLock />}
     </div>
   );
 }

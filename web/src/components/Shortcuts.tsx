@@ -8,7 +8,6 @@ const GROUPS: [string, [string, string][]][] = [
       ["Find a title", "⌘K"],
       ["Find a title", "/"],
       ["Downloads panel", "D"],
-      ["Light / dark", "T"],
       ["Undo", "⌘Z"],
       ["This sheet", "?"],
     ],
@@ -42,12 +41,12 @@ export function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenC
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[640px]">
-        <DialogTitle className="text-[17px] font-medium">Keyboard shortcuts</DialogTitle>
+        <DialogTitle className="text-[16px] font-medium">Keyboard shortcuts</DialogTitle>
         <DialogDescription className="sr-only">Every keyboard shortcut in roarr</DialogDescription>
         <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
           {GROUPS.map(([name, rows]) => (
             <section key={name}>
-              <div className="meta mb-1.5">{name}</div>
+              <div className="label-caps mb-2">{name}</div>
               {rows.map(([label, k]) => (
                 <div key={label} className="flex h-8 items-center justify-between border-b text-[13px]">
                   <span className="text-muted-foreground">{label}</span>

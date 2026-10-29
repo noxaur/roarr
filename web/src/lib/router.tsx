@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ComponentProps, type ReactNode, type MouseEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ComponentProps, type FocusEvent, type ReactNode, type MouseEvent, type PointerEvent } from "react";
+import { prefetch } from "./prefetch";
 
 // A tiny history router: roarr has a handful of routes and does not need a
 // dependency for them.
@@ -47,13 +48,59 @@ export function match(pattern: string, path: string): Record<string, string> | n
   return out;
 }
 
-export function Link({ to, onClick, ...rest }: { to: string } & Omit<ComponentProps<"a">, "href">) {
+// A pointer that rests this long on a link is about to click it. Shorter
+// would fetch every poster the pointer crosses on its way somewhere else.
+const INTENT_MS = 60;
+
+export function Link({
+  to,
+  onClick,
+  onPointerEnter,
+  onPointerLeave,
+  onPointerDown,
+  onFocus,
+  onBlur,
+  ...rest
+}: { to: string } & Omit<ComponentProps<"a">, "href">) {
   const { navigate } = useRouter();
+  const timer = useRef(0);
+  useEffect(() => () => clearTimeout(timer.current), []);
   const go = (e: MouseEvent<HTMLAnchorElement>) => {
     onClick?.(e);
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
     e.preventDefault();
     navigate(to);
   };
-  return <a href={to} onClick={go} {...rest} />;
+  return (
+    <a
+      href={to}
+      onClick={go}
+      onPointerEnter={(e: PointerEvent<HTMLAnchorElement>) => {
+        onPointerEnter?.(e);
+        clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => prefetch(to), INTENT_MS);
+      }}
+      onPointerLeave={(e: PointerEvent<HTMLAnchorElement>) => {
+        onPointerLeave?.(e);
+        clearTimeout(timer.current);
+      }}
+      // A press comes about 100 ms before the click: start the fetch now.
+      onPointerDown={(e: PointerEvent<HTMLAnchorElement>) => {
+        onPointerDown?.(e);
+        clearTimeout(timer.current);
+        prefetch(to);
+      }}
+      // Arrow keys move focus fast through the library grid: wait for it to rest.
+      onFocus={(e: FocusEvent<HTMLAnchorElement>) => {
+        onFocus?.(e);
+        clearTimeout(timer.current);
+        if (e.currentTarget.matches(":focus-visible")) timer.current = window.setTimeout(() => prefetch(to), INTENT_MS * 2);
+      }}
+      onBlur={(e: FocusEvent<HTMLAnchorElement>) => {
+        onBlur?.(e);
+        clearTimeout(timer.current);
+      }}
+      {...rest}
+    />
+  );
 }

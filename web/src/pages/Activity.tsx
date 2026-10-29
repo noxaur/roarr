@@ -11,8 +11,7 @@ import { byHash, forActivity, headline, hrefOf, isBlocking, isFlagged, orphans }
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useConfirm } from "@/components/Confirm";
-import { Bar, Dot, Empty, Figure, Notice, PageHeader, SectionHead, type Tone } from "@/components/kit";
-import { Thumb } from "@/components/Poster";
+import { Bar, Dot, Empty, Notice, PageHeader, SectionHead } from "@/components/kit";
 import { VerdictActions, VerdictBadge, VerdictChecks } from "@/components/Verdict";
 
 const withPick = (href: string) => `${href}${href.includes("?") ? "&" : "?"}pick=1`;
@@ -23,7 +22,7 @@ const withPick = (href: string) => `${href}${href.includes("?") ? "&" : "?"}pick
  * pick again, remove it, or remove it and blocklist that release.
  */
 export function ActivityPage() {
-  const { activity, reloadActivity, reloadLibrary, verify, library } = useStore();
+  const { activity, reloadActivity, reloadLibrary, verify } = useStore();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const confirm = useConfirm();
 
@@ -100,19 +99,11 @@ export function ActivityPage() {
   const rest = activity.filter((a) => !stuck(a));
   // Failed checks whose download already left the queue.
   const done = orphans(verify, activity);
-  const posterOf = (r: VerifyRecord) => library.find((x) => x.kind === r.kind && x.id === (r.kind === "tv" ? r.seriesId : r.movieId))?.poster;
-  const total = activity.reduce((n, a) => n + (a.speed ?? 0), 0);
   const needs = attention.length + done.length;
 
   return (
     <div className="space-y-8">
-      <PageHeader title="Downloads" sub="Refreshes every 2 s">
-        <div className="flex flex-wrap gap-x-5 gap-y-1">
-          <Figure value={rest.length} label="in flight" tone={rest.length ? "live" : undefined} />
-          <Figure value={needs} label="need you" tone={needs ? "bad" : undefined} />
-          <Figure value={total ? speed(total) : "0"} label="" />
-        </div>
-      </PageHeader>
+      <PageHeader title="Downloads" />
 
       {Object.entries(errors).map(([k, v]) => (
         <Notice key={k} tone="bad">
@@ -129,7 +120,7 @@ export function ActivityPage() {
             <Row key={a.id} a={a} rec={recOf(a)} attention onRemove={(b) => remove(a, b)} onRetry={() => retry(a)} />
           ))}
           {done.map((r) => (
-            <CheckRow key={r.hash} r={r} poster={posterOf(r)} />
+            <CheckRow key={r.hash} r={r} />
           ))}
         </section>
       )}
@@ -146,11 +137,6 @@ export function ActivityPage() {
   );
 }
 
-function toneOf(s: string): Tone {
-  if (s === "warning" || s === "failed") return "bad";
-  if (s === "downloading" || s === "importing") return "live";
-  return "none";
-}
 const statusText = (s: string) => (s === "warning" ? "Stuck" : s === "failed" ? "Failed" : s === "importing" ? "Importing" : s === "queued" ? "Queued" : "");
 
 function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: VerifyRecord; attention?: boolean; onRemove: (blocklist: boolean) => void; onRetry: () => void }) {
@@ -159,7 +145,7 @@ function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: 
   // generic stuck-download ones.
   const failed = !!rec && isBlocking(rec);
   const title = a.href ? (
-    <Link to={a.href} className="rounded-sm outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50">
+    <Link to={a.href} title={a.release} className="rounded-[2px] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60">
       {a.title}
     </Link>
   ) : (
@@ -168,7 +154,7 @@ function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: 
   const menu = (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon-sm" aria-label={`More for ${a.title}`}>
+        <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={`More for ${a.title}`}>
           <MoreHorizontal />
         </Button>
       </DropdownMenuTrigger>
@@ -180,7 +166,7 @@ function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: 
         )}
         {a.href && (
           <DropdownMenuItem onSelect={() => navigate(withPick(a.href!))}>
-            <ListChecks /> Choose another release
+            <ListChecks /> Pick release manually
           </DropdownMenuItem>
         )}
         <DropdownMenuItem onSelect={onRetry}>
@@ -200,71 +186,66 @@ function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: 
   return (
     <div
       className={cn(
-        "grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-x-3.5 gap-y-2.5 border-t py-3 md:grid-cols-[44px_minmax(0,1fr)_minmax(200px,280px)_auto] md:gap-x-5",
-        attention && "border-l-2 border-l-bad pl-3",
+        "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-3 border-t py-4 md:grid-cols-[minmax(0,1fr)_minmax(200px,280px)_auto] md:gap-x-6",
       )}
     >
-      <Thumb src={a.poster} title={a.title} className="w-10 md:w-11" />
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-          <span className="text-[15px] font-medium">{title}</span>
-          {a.subtitle && <span className="font-mono text-[12px] text-muted-foreground">{a.subtitle}</span>}
-          {statusText(a.status) && (
-            <span className={cn("inline-flex items-center gap-1.5 text-[12.5px]", toneOf(a.status) === "bad" ? "text-bad" : "text-muted-foreground")}>
-              <Dot tone={toneOf(a.status)} />
-              {statusText(a.status)}
-            </span>
+      <div className="flex min-w-0 gap-3">
+        {attention && <Dot tone="bad" className="mt-2 size-3" />}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="text-[14px] font-medium">{title}</span>
+            {a.subtitle && <span className="font-mono text-[12px] text-muted-foreground">{a.subtitle}</span>}
+            {!attention && statusText(a.status) && <span className="text-[12px] text-muted-foreground">{statusText(a.status)}</span>}
+            {rec && isFlagged(rec) && !failed && <VerdictBadge r={rec} />}
+          </div>
+          {failed ? (
+            <VerdictChecks r={rec!} className="mt-2" />
+          ) : (
+            a.messages?.map((m, i) => (
+              <div key={i} className="mt-1 max-w-[60ch] text-[13px] leading-5 text-muted-foreground">
+                {m}
+              </div>
+            ))
           )}
-          {a.watch && <span className="meta">imports as episodes finish</span>}
-          {rec && isFlagged(rec) && !failed && <VerdictBadge r={rec} />}
-        </div>
-        <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground" title={a.release}>
-          {a.release}
-        </div>
-        {failed ? (
-          <VerdictChecks r={rec!} className="mt-2" />
-        ) : (
-          a.messages?.map((m, i) => (
-            <div key={i} className={cn("mt-1 text-[13px]", attention ? "text-bad" : "text-foreground/80")}>
-              {m}
+          {a.watch && <WatchStrip w={a.watch} />}
+          {(failed || attention) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {failed ? (
+                <VerdictActions r={rec!} />
+              ) : (
+                <>
+                  <Button size="sm" variant="outline" onClick={onRetry}>
+                    Re-grab
+                  </Button>
+                  {a.href && (
+                    <Button size="sm" variant="ghost" className="font-normal text-muted-foreground" onClick={() => navigate(withPick(a.href!))}>
+                      Pick release manually
+                    </Button>
+                  )}
+                </>
+              )}
             </div>
-          ))
-        )}
-        {a.watch && <WatchStrip w={a.watch} />}
-      </div>
-      {failed ? (
-        <div className="col-span-3 flex flex-wrap items-center justify-end gap-2 md:col-span-2">
-          <VerdictActions r={rec!} className="justify-end" />
-          {menu}
-        </div>
-      ) : attention ? (
-        <div className="col-span-3 flex flex-wrap items-center justify-end gap-2 md:col-span-2">
-          {a.href && (
-            <Button size="sm" onClick={() => navigate(withPick(a.href!))}>
-              <ListChecks /> Choose another release
-            </Button>
           )}
-          <Button size="sm" variant="outline" onClick={onRetry}>
-            <RefreshCw /> Pick again
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => onRemove(false)}>
-            <Trash2 /> Remove
-          </Button>
-          {menu}
         </div>
+      </div>
+      {failed || attention ? (
+        <div className="col-start-2 row-start-1 self-start md:col-start-3">{menu}</div>
       ) : (
         <>
-          <div className="col-span-3 md:col-span-1">
-            <div className="flex justify-between font-mono text-[11.5px] tabular">
-              <span>{a.size > 0 ? `${bytes(a.size - a.sizeLeft)} / ${bytes(a.size)}` : "size unknown yet"}</span>
-              <span>{pct(a.progress)}</span>
+          <div className={cn("col-span-2 font-mono text-[12px] tabular md:col-span-1", a.status === "importing" ? "text-have" : "text-live")}>
+            <div className="mb-2 flex justify-end gap-2">
+              {[pct(a.progress), a.speed ? speed(a.speed) : a.status === "queued" ? "waiting" : null, a.eta && a.status === "downloading" ? a.eta : null, a.size > 0 ? bytes(a.size) : null]
+                .filter(Boolean)
+                .map((x, i) => (
+                  <span key={i} className="whitespace-nowrap">
+                    {i > 0 && <span className="mr-2 opacity-60">·</span>}
+                    {x}
+                  </span>
+                ))}
             </div>
-            <Bar value={a.progress} className="my-1.5" tone={a.status === "importing" ? "have" : "live"} />
-            <div className="meta font-mono tabular">
-              {[a.speed ? speed(a.speed) : a.status === "queued" ? "waiting" : null, a.eta && a.status === "downloading" ? `${a.eta} left` : null].filter(Boolean).join(", ") || " "}
-            </div>
+            <Bar value={a.progress} segments={32} stretch tone={a.status === "importing" ? "have" : "live"} />
           </div>
-          <div className="col-start-3 row-start-1 md:col-start-4">{menu}</div>
+          <div className="col-start-2 row-start-1 md:col-start-3">{menu}</div>
         </>
       )}
     </div>
@@ -272,33 +253,29 @@ function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: 
 }
 
 /** A finished download that failed its check: same row shape, verdict actions. */
-function CheckRow({ r, poster }: { r: VerifyRecord; poster?: string }) {
+function CheckRow({ r }: { r: VerifyRecord }) {
   const href = hrefOf(r);
   return (
-    <div className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-x-3.5 gap-y-2.5 border-t border-l-2 border-l-bad py-3 pl-3 md:grid-cols-[44px_minmax(0,1fr)_auto] md:gap-x-5">
-      <Thumb src={poster} title={r.title} className="w-10 md:w-11" />
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-          <span className="text-[15px] font-medium">
+    <div className="flex gap-3 border-t py-4">
+      <Dot tone="bad" className="mt-2 size-3" />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-[14px] font-medium" title={r.release}>
             {href ? (
-              <Link to={href} className="rounded-sm outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50">
+              <Link to={href} className="rounded-[2px] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60">
                 {r.title}
               </Link>
             ) : (
               r.title
             )}
           </span>
-          <span className="inline-flex items-center gap-1.5 text-[12.5px] text-bad" title={headline(r)}>
-            <Dot tone="bad" />
+          <span className="text-[12px] text-bad" title={headline(r)}>
             {r.rejected ? "Re-grab failed" : "Failed check"}
           </span>
         </div>
-        <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground" title={r.release}>
-          {r.release}
-        </div>
         <VerdictChecks r={r} className="mt-2" />
+        <VerdictActions r={r} className="mt-3" />
       </div>
-      <VerdictActions r={r} className="col-span-2 justify-end md:col-span-1" />
     </div>
   );
 }
@@ -309,7 +286,7 @@ function WatchStrip({ w }: { w: WatchJob }) {
   const imported = files.filter((f) => f.imported).length;
   return (
     <div className="mt-2">
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap gap-2">
         {files.map((f) => {
           const isFocus = focus?.index === f.index;
           return (
@@ -317,15 +294,14 @@ function WatchStrip({ w }: { w: WatchJob }) {
               key={f.index}
               title={f.error ?? f.name}
               className={cn(
-                "relative grid h-5 min-w-[30px] place-items-center overflow-hidden rounded-[4px] border px-1 font-mono text-[10px] text-muted-foreground",
-                f.imported && "border-transparent bg-have text-background",
-                isFocus && "border-live text-foreground",
+                "grid h-5 min-w-8 place-items-center rounded-[2px] bg-unlit px-1 font-mono text-[10px] text-muted-foreground",
+                f.imported && "bg-have text-black/80",
+                isFocus && "bg-live text-black/80",
                 f.skipped && "line-through opacity-50",
-                f.error && "border-bad text-bad",
+                f.error && "bg-bad text-black/80",
               )}
             >
-              {!f.imported && f.progress > 0 && f.progress < 1 && <i className="absolute inset-y-0 left-0 bg-live-soft" style={{ width: pct(f.progress) }} />}
-              <span className="relative">{epCode(f.season, f.episode).replace(/^S\d+/, "")}</span>
+              {epCode(f.season, f.episode).replace(/^S\d+/, "")}
             </span>
           );
         })}

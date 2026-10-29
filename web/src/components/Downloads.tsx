@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { byHash, forActivity, headline, hrefOf, isBlocking, orphans } from "@/lib/verify";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Bar, Kbd } from "./kit";
+import { Bar } from "./kit";
 import { useConfirm } from "./Confirm";
 import { VerdictActions } from "./Verdict";
 
@@ -61,7 +61,7 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
   const checkCard = (r: VerifyRecord) => {
     const href = hrefOf(r);
     return (
-      <div key={r.hash} className="rounded-md border border-l-2 border-l-bad bg-card p-3">
+      <div key={r.hash} className="rounded-[2px] bg-card p-3">
         <div className="flex items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
             {href ? (
@@ -74,11 +74,8 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
           </span>
           <span className="font-mono text-[11px] text-bad">{r.rejected ? "re-grab failed" : "failed check"}</span>
         </div>
-        <div className="mt-0.5 truncate font-mono text-[10.5px] text-muted-foreground" title={r.release}>
-          {r.release}
-        </div>
-        <div className="mt-1.5 text-[12.5px] leading-snug text-bad">{headline(r)}</div>
-        <VerdictActions r={r} size="xs" className="mt-2.5" />
+        <div className="mt-2 text-[12px] leading-snug text-bad">{headline(r)}</div>
+        <VerdictActions r={r} size="xs" className="mt-3" />
       </div>
     );
   };
@@ -89,21 +86,18 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
     return (
       <ContextMenu key={a.id}>
         <ContextMenuTrigger asChild>
-          <div className={cn("rounded-md border bg-card p-3", bad && "border-l-2 border-l-bad")}>
+          <div className="rounded-[2px] bg-card p-3">
             <div className="flex items-baseline gap-2">
               <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
                 {a.title}
-                {a.subtitle && <span className="font-mono text-[11.5px] font-normal text-muted-foreground"> {a.subtitle}</span>}
+                {a.subtitle && <span className="font-mono text-[12px] font-normal text-muted-foreground"> {a.subtitle}</span>}
               </span>
               <span className={cn("font-mono text-[11px]", bad ? "text-bad" : a.status === "downloading" ? "text-live" : "text-muted-foreground")}>
                 {rec ? "failed check" : a.status === "warning" ? "stuck" : a.status}
               </span>
             </div>
-            <div className="mt-0.5 mb-2 truncate font-mono text-[10.5px] text-muted-foreground" title={a.release}>
-              {a.release}
-            </div>
-            <Bar value={a.progress} tone={bad ? "bad" : "live"} />
-            <div className="meta mt-1.5 flex justify-between font-mono tabular">
+            <Bar className="mt-3" value={a.progress} segments={24} stretch tone={bad ? "bad" : "live"} />
+            <div className="meta mt-2 flex justify-between font-mono tabular">
               <span>
                 {pct(a.progress)} of {bytes(a.size)}
               </span>
@@ -111,13 +105,13 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
             </div>
             {rec && (
               <>
-                <div className="mt-1.5 text-[12.5px] leading-snug text-bad">{headline(rec)}</div>
-                <VerdictActions r={rec} size="xs" className="mt-2.5" />
+                <div className="mt-2 text-[12px] leading-snug text-bad">{headline(rec)}</div>
+                <VerdictActions r={rec} size="xs" className="mt-3" />
               </>
             )}
             {bad && !rec && a.href && (
-              <button onClick={() => go(withPick(a.href!))} className="mt-2 inline-flex cursor-pointer items-center gap-1.5 text-[12.5px] font-medium underline-offset-4 hover:underline">
-                <ListChecks className="size-3.5" /> Choose another release
+              <button onClick={() => go(withPick(a.href!))} className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[12px] font-medium underline-offset-4 hover:underline">
+                Pick release manually
               </button>
             )}
           </div>
@@ -131,7 +125,7 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
           )}
           {a.href && (
             <ContextMenuItem onSelect={() => go(withPick(a.href!))}>
-              <ListChecks /> Choose another release
+              <ListChecks /> Pick release manually
             </ContextMenuItem>
           )}
           <ContextMenuItem onSelect={() => navigator.clipboard?.writeText(a.release).then(() => toast("Copied release name"), () => {})}>
@@ -152,22 +146,19 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" data-downloads className="w-full gap-0 p-0 sm:max-w-[400px]">
-        <SheetHeader className="border-b px-4 py-3.5">
-          <SheetTitle className="text-[15px] font-medium">Downloads</SheetTitle>
-          <SheetDescription className="font-mono text-[11px]">
-            {total ? speed(total) : "idle"}, {activity.length + done.length} listed, <Kbd>D</Kbd> toggles
-          </SheetDescription>
+        <SheetHeader className="border-b px-4 py-4">
+          <SheetTitle className="text-[14px] font-medium">Downloads</SheetTitle>
+          <SheetDescription className="font-mono text-[12px]">{total ? speed(total) : "idle"}</SheetDescription>
         </SheetHeader>
         <div className="flex-1 space-y-2 overflow-y-auto p-3">
           {activity.length === 0 && done.length === 0 && <div className="px-3 py-16 text-center text-[13px] text-muted-foreground">Nothing in flight.</div>}
-          {attention.length + done.length > 0 && <div className="meta px-1 pt-1">Needs you</div>}
+          {attention.length + done.length > 0 && <div className="label-caps px-1 pt-1">Needs you</div>}
           {attention.map(row)}
           {done.map(checkCard)}
-          {attention.length + done.length > 0 && rest.length > 0 && <div className="meta px-1 pt-3">In flight</div>}
+          {attention.length + done.length > 0 && rest.length > 0 && <div className="label-caps px-1 pt-3">In flight</div>}
           {rest.map(row)}
         </div>
-        <div className="flex items-center justify-between border-t px-4 py-3 text-[12.5px] text-muted-foreground">
-          <span>Right-click for more</span>
+        <div className="flex items-center justify-end border-t px-4 py-3 text-[12px] text-muted-foreground">
           <Link to="/downloads" onClick={() => onOpenChange(false)} className="font-medium text-foreground hover:underline">
             All downloads
           </Link>

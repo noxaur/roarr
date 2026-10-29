@@ -1,19 +1,22 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
+import { Bar } from "./kit";
 
-// When there is no artwork we set the title on a quiet, dark tone instead of
-// showing a broken image. The tone is stable per title.
+// When there is no artwork we print the title small, like a label on a tape
+// spine, on a quiet dark tone instead of showing a broken image. The tone is
+// stable per title. The label sits 24 px up so that a download bar (bottom
+// 8 px) never covers it; the select box and the pin keep the top corners.
 const PALETTE: [string, string][] = [
-  ["#1f2a2e", "#f4f4f2"],
-  ["#3a2a1e", "#f4f4f2"],
-  ["#2b2621", "#f4f4f2"],
-  ["#2e1e1e", "#f4f4f2"],
-  ["#262b22", "#f4f4f2"],
-  ["#1e2433", "#f4f4f2"],
-  ["#2a1e33", "#f4f4f2"],
-  ["#1c2b2b", "#f4f4f2"],
-  ["#331e2a", "#f4f4f2"],
+  ["#1f2a2e", "#c9ccd1"],
+  ["#2a241f", "#c9ccd1"],
+  ["#24221f", "#c9ccd1"],
+  ["#2a1f1f", "#c9ccd1"],
+  ["#22261f", "#c9ccd1"],
+  ["#1f2330", "#c9ccd1"],
+  ["#261f2c", "#c9ccd1"],
+  ["#1c2626", "#c9ccd1"],
+  ["#2c1f26", "#c9ccd1"],
 ];
 
 function hash(s: string): number {
@@ -29,9 +32,8 @@ export function PosterImg({ src, title, year, className }: { src?: string; title
   const h = hash(title);
   const [bg, fg] = PALETTE[h % PALETTE.length];
   return (
-    <div className={cn("@container relative flex size-full flex-col justify-between overflow-hidden p-[7%]", className)} style={{ background: bg, color: fg }}>
-      <span className="relative font-mono text-[10px] tracking-wider opacity-70 @max-[60px]:hidden">{year ?? ""}</span>
-      <span className="relative text-[clamp(10px,12cqw,28px)] leading-[1.02] font-semibold tracking-[-0.04em] text-balance @max-[60px]:hidden">{title}</span>
+    <div className={cn("@container relative flex size-full flex-col justify-end overflow-hidden p-2 pb-6", className)} style={{ background: bg, color: fg }} data-year={year}>
+      <span className="line-clamp-2 text-[8px] leading-3 font-semibold tracking-[0.08em] uppercase @max-[60px]:hidden">{title}</span>
     </div>
   );
 }
@@ -55,19 +57,15 @@ export function PosterCard({
 }) {
   return (
     <Link to={to} className="group block min-w-0 outline-none">
-      <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-muted ring-ring/50 transition group-hover:-translate-y-0.5 group-focus-visible:ring-[3px]">
-        <PosterImg src={poster} title={title} year={year} className="transition duration-300 group-hover:scale-[1.02]" />
-        {corner && <div className="absolute top-2 right-2 rounded-full shadow-[0_0_0_1px_rgb(26_28_28/0.22)]">{corner}</div>}
-        {progress !== undefined && progress > 0 && progress < 1 && (
-          <div className="absolute inset-x-2 bottom-2 h-1 overflow-hidden rounded-full bg-ink/25">
-            <i className="block h-full rounded-full bg-live" style={{ width: `${progress * 100}%` }} />
-          </div>
-        )}
+      <div className="relative aspect-[2/3] overflow-hidden rounded-[2px] bg-muted ring-ring/60 group-focus-visible:ring-2">
+        <PosterImg src={poster} title={title} year={year} />
+        {corner && <div className="absolute top-2 right-2">{corner}</div>}
+        {progress !== undefined && progress > 0 && progress < 1 && <Bar value={progress} segments={12} stretch className="absolute inset-x-2 bottom-2" />}
       </div>
-      <div className="mt-2.5 truncate font-semibold tracking-tight" title={title}>
+      <div className="mt-2 truncate text-[14px] font-medium" title={title}>
         {title}
       </div>
-      {sub && <div className="truncate font-mono text-[11px] tracking-wide text-muted-foreground uppercase">{sub}</div>}
+      {sub && <div className="meta truncate">{sub}</div>}
     </Link>
   );
 }
@@ -75,7 +73,7 @@ export function PosterCard({
 /** Small square-ish thumbnail for list rows. */
 export function Thumb({ src, title, className }: { src?: string; title: string; className?: string }) {
   return (
-    <div className={cn("aspect-[2/3] w-12 shrink-0 overflow-hidden rounded-md bg-muted", className)}>
+    <div className={cn("aspect-[2/3] w-12 shrink-0 overflow-hidden rounded-[2px] bg-muted", className)}>
       <PosterImg src={src} title={title} />
     </div>
   );

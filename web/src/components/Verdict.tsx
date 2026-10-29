@@ -111,7 +111,7 @@ export function VerdictActions({ r, size = "sm", className }: { r: VerifyRecord;
   const o = outcome(r);
   return (
     <div className={cn("flex flex-wrap items-center gap-2", className)}>
-      <Button size={size} variant={o === "warn" ? "outline" : "default"} disabled={!!busy} onClick={() => regrab(r)}>
+      <Button size={size} variant="outline" disabled={!!busy} onClick={() => regrab(r)}>
         {busy === "regrab" ? <Spinner /> : <RotateCcw />} Re-grab
       </Button>
       {o !== "regrabFailed" && (
@@ -139,13 +139,13 @@ export function VerdictBadge({ r, className }: { r: VerifyRecord; className?: st
           onClick={stop}
           onPointerDown={stop}
           onMouseDown={stop}
-          className={cn("shrink-0 cursor-pointer rounded-[4px] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50", className)}
+          className={cn("shrink-0 cursor-pointer rounded-[2px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60", className)}
           aria-label={`${r.title}: ${tag(r)}`}
         >
           <Spec tone={verdictTone(r)}>{tag(r)}</Spec>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[min(92vw,380px)] p-3.5" onClick={stop} onPointerDown={stop} onMouseDown={stop}>
+      <PopoverContent align="start" className="w-[min(92vw,380px)] p-4" onClick={stop} onPointerDown={stop} onMouseDown={stop}>
         <VerdictCard r={r} />
       </PopoverContent>
     </Popover>

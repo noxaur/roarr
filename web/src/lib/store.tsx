@@ -11,6 +11,8 @@ interface Store {
   libraryErrors: Record<string, string>;
   libraryLoaded: boolean;
   reloadLibrary: (hard?: boolean) => Promise<void>;
+  /** Changes titles in the browser at once, before the server confirms. */
+  patchLibrary: (keys: Iterable<string>, patch: Partial<LibraryItem>) => void;
   activity: ActivityItem[];
   reloadActivity: () => void;
   /** Download check records, newest first. Empty when checks are off. */
@@ -23,26 +25,73 @@ interface Store {
 
 const Ctx = createContext<Store | null>(null);
 
+// The last library this browser saw. It paints the shelf on the first frame;
+// the request below then checks it against the server with its ETag.
+const SNAPSHOT = "roarr.library";
+interface Snapshot {
+  etag: string | null;
+  items: LibraryItem[];
+  errors: Record<string, string>;
+}
+function readSnapshot(): Snapshot | null {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT);
+    return raw ? (JSON.parse(raw) as Snapshot) : null;
+  } catch {
+    return null;
+  }
+}
+function writeSnapshot(s: Snapshot) {
+  try {
+    localStorage.setItem(SNAPSHOT, JSON.stringify(s));
+  } catch {
+    /* full or blocked: the next visit loads from the network */
+  }
+}
+/** Removes what this browser keeps of the account: on sign-out, or when the session ends. */
+export function forgetLocalCopy() {
+  try {
+    localStorage.removeItem(SNAPSHOT);
+    localStorage.removeItem("roarr.me");
+  } catch {
+    /* blocked */
+  }
+}
+
+const snapshot = readSnapshot();
+const fetchLibrary = (etag: string | null, hard = false) =>
+  fetch(`/api/library${hard ? "?refresh=1" : ""}`, { headers: etag && !hard ? { "If-None-Match": etag } : {} });
+// Sent while the module loads, in parallel with /api/me, not after it.
+let early: Promise<Response> | null = fetchLibrary(snapshot?.etag ?? null);
+
 export function StoreProvider({ children, user }: { children: ReactNode; user?: string }) {
-  const [library, setLibrary] = useState<LibraryItem[]>([]);
-  const [libraryErrors, setLibraryErrors] = useState<Record<string, string>>({});
-  const [libraryLoaded, setLoaded] = useState(false);
+  const [library, setLibrary] = useState<LibraryItem[]>(() => snapshot?.items ?? []);
+  const [libraryErrors, setLibraryErrors] = useState<Record<string, string>>(() => snapshot?.errors ?? {});
+  const [libraryLoaded, setLoaded] = useState(!!snapshot);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [verify, setVerify] = useState<VerifyRecord[]>([]);
   const [pendingRequests, setPending] = useState<number | null>(null);
-  const etag = useRef<string | null>(null);
+  const etag = useRef<string | null>(snapshot?.etag ?? null);
 
   const reloadLibrary = useCallback(async (hard = false) => {
-    const res = await fetch(`/api/library${hard ? "?refresh=1" : ""}`, {
-      headers: etag.current && !hard ? { "If-None-Match": etag.current } : {},
-    });
-    if (res.status === 304) return;
-    if (!res.ok) return;
+    const first = early;
+    early = null;
+    let res = await (first && !hard ? first : fetchLibrary(etag.current, hard)).catch(() => null);
+    // The early request can go out before the sign-in that mounted us.
+    if (first && !hard && res?.status === 401) res = await fetchLibrary(etag.current).catch(() => null);
+    if (!res || res.status === 304 || !res.ok) return;
     etag.current = res.headers.get("ETag");
     const j = (await res.json()) as { items: LibraryItem[]; errors: Record<string, string> };
     setLibrary(j.items);
     setLibraryErrors(j.errors ?? {});
     setLoaded(true);
+    const save = () => writeSnapshot({ etag: etag.current, items: j.items, errors: j.errors ?? {} });
+    (window.requestIdleCallback ?? setTimeout)(save);
+  }, []);
+
+  const patchLibrary = useCallback((keys: Iterable<string>, patch: Partial<LibraryItem>) => {
+    const ks = new Set(keys);
+    setLibrary((l) => l.map((it) => (ks.has(it.key) ? { ...it, ...patch } : it)));
   }, []);
 
   const reloadActivity = useCallback(() => {
@@ -88,7 +137,7 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
   }, [reloadLibrary, reloadActivity, reloadVerify, reloadRequests]);
 
   return (
-    <Ctx.Provider value={{ user, library, libraryErrors, libraryLoaded, reloadLibrary, activity, reloadActivity, verify, reloadVerify, pendingRequests, reloadRequests }}>
+    <Ctx.Provider value={{ user, library, libraryErrors, libraryLoaded, reloadLibrary, patchLibrary, activity, reloadActivity, verify, reloadVerify, pendingRequests, reloadRequests }}>
       {children}
     </Ctx.Provider>
   );

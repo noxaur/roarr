@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, FolderSync, LayoutGrid, List, ListChecks, Pin, Radar, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, type LibraryItem } from "@/lib/api";
@@ -9,7 +9,6 @@ import { Link, useRouter } from "@/lib/router";
 import { usePointerSelect } from "@/lib/select";
 import { keyIsBusy, useShell } from "@/lib/shell";
 import { isActive, useStore } from "@/lib/store";
-import { toggleTheme } from "@/lib/theme";
 import { done } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -32,18 +31,18 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenu
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useConfirm } from "@/components/Confirm";
-import { Dot, Empty, Kbd, Notice, type Tone } from "@/components/kit";
+import { Bar, CellStrip, Dot, Empty, Kbd, Notice, SameWidth, libraryCells, type Tone } from "@/components/kit";
+import { SelectionBar } from "@/components/Manage";
 import { PosterImg } from "@/components/Poster";
 
-type Filter = "all" | "tv" | "movie" | "missing" | "downloading" | "unmonitored" | "pinned";
+type Filter = "all" | "missing" | "downloading" | "unmonitored" | "pinned";
+type Kind = LibraryItem["kind"];
 type Sort = "title" | "year" | "missing" | "size";
 type View = "grid" | "list";
 type Size = "s" | "m" | "l";
 
 const FILTERS: [Filter, string][] = [
   ["all", "Everything"],
-  ["tv", "Shows"],
-  ["movie", "Movies"],
   ["missing", "Missing"],
   ["downloading", "Downloading"],
   ["unmonitored", "Not monitored"],
@@ -104,8 +103,8 @@ function usePinned(): [Set<string>, (next: Set<string>) => void] {
   return [p, set];
 }
 
-export function Home() {
-  const { library, libraryLoaded, libraryErrors, activity, reloadLibrary, reloadActivity } = useStore();
+export function Home({ kind }: { kind?: Kind }) {
+  const { library, libraryLoaded, libraryErrors, activity, reloadLibrary, patchLibrary, reloadActivity } = useStore();
   const { navigate, search } = useRouter();
   const { openSearch, toggleDownloads, openShortcuts } = useShell();
   const confirm = useConfirm();
@@ -142,27 +141,26 @@ export function Home() {
   const isDownloading = useCallback((it: LibraryItem) => progress.has(libraryHref(it)), [progress]);
 
   const counts = useMemo(() => {
-    const c: Record<Filter, number> = { all: library.length, tv: 0, movie: 0, missing: 0, downloading: 0, unmonitored: 0, pinned: 0 };
-    let disk = 0;
+    const c: Record<Filter, number> = { all: 0, missing: 0, downloading: 0, unmonitored: 0, pinned: 0 };
     for (const it of library) {
-      c[it.kind]++;
+      if (kind && it.kind !== kind) continue;
+      c.all++;
       if (missingOf(it) > 0) c.missing++;
       if (isDownloading(it)) c.downloading++;
       if (!it.monitored) c.unmonitored++;
       if (pinned.has(it.key)) c.pinned++;
-      disk += it.sizeOnDisk ?? 0;
     }
-    return { ...c, disk };
-  }, [library, isDownloading, pinned]);
+    return c;
+  }, [library, isDownloading, pinned, kind]);
 
+  // Typing stays instant; the shelf filters a frame behind on big libraries.
+  const findLater = useDeferredValue(find);
   const items = useMemo(() => {
-    const q = fold(find);
+    const q = fold(findLater);
     const keep = (it: LibraryItem) => {
+      if (kind && it.kind !== kind) return false;
       if (q && ![it.title, ...(it.aliases ?? []), String(it.year ?? "")].some((t) => fold(t).includes(q))) return false;
       switch (filter) {
-        case "tv":
-        case "movie":
-          return it.kind === filter;
         case "missing":
           return missingOf(it) > 0;
         case "downloading":
@@ -182,7 +180,7 @@ export function Home() {
       size: (a, b) => (b.sizeOnDisk ?? 0) - (a.sizeOnDisk ?? 0),
     };
     return library.filter(keep).sort((a, b) => Number(pinned.has(b.key)) - Number(pinned.has(a.key)) || by[sort](a, b));
-  }, [library, find, filter, sort, pinned, isDownloading]);
+  }, [library, findLater, filter, sort, pinned, isDownloading, kind]);
 
   const byKey = useMemo(() => new Map(library.map((i) => [i.key, i])), [library]);
   // Selection survives filtering but never points at titles that are gone.
@@ -217,15 +215,19 @@ export function Home() {
     setTimeout(() => reloadLibrary(), 1500);
   };
 
+  // The shelf changes at once; titles the server refuses flip back.
   const setMonitored = async (xs: LibraryItem[], on: boolean, quiet = false) => {
-    const ok = await Promise.all(xs.map((it) => api.patchTitle(it.kind, it.id, { monitored: on }).then(() => true, () => false)));
-    await reloadLibrary(true);
-    const n = ok.filter(Boolean).length;
-    if (n < xs.length) toast.error(`${xs.length - n} of ${xs.length} could not be changed`);
-    if (!quiet && n) {
-      const what = xs.length === 1 ? xs[0].title : plural(n, "title");
+    const was = new Map(xs.map((it) => [it.key, it.monitored]));
+    patchLibrary(was.keys(), { monitored: on });
+    if (!quiet) {
+      const what = xs.length === 1 ? xs[0].title : plural(xs.length, "title");
       done(on ? `Monitoring ${what}` : `Stopped monitoring ${what}`, () => setMonitored(xs, !on, true));
     }
+    const ok = await Promise.all(xs.map((it) => api.patchTitle(it.kind, it.id, { monitored: on }).then(() => true, () => false)));
+    const failed = xs.filter((_, i) => !ok[i]);
+    for (const it of failed) patchLibrary([it.key], { monitored: was.get(it.key) });
+    if (failed.length) toast.error(`${failed.length} of ${xs.length} could not be changed`);
+    reloadLibrary(true);
   };
   const toggleMonitor = (xs: LibraryItem[]) => {
     if (!xs.length) return;
@@ -432,7 +434,7 @@ export function Home() {
       )}
       {menuOne && (
         <ContextMenuItem onSelect={() => navigate(`${libraryHref(menuOne)}?pick=1`)}>
-          <ListChecks /> {menuOne.have > 0 && missingOf(menuOne) === 0 ? "Choose a replacement…" : "Choose release…"}
+          <ListChecks /> {menuOne.have > 0 && missingOf(menuOne) === 0 ? "Pick a replacement manually…" : menuOne.kind === "movie" ? "Pick release manually…" : "Pick releases manually…"}
         </ContextMenuItem>
       )}
       <ContextMenuItem onSelect={() => command(menuTargets, "search")}>
@@ -523,9 +525,6 @@ export function Home() {
       <ContextMenuItem onSelect={toggleDownloads}>
         <Download /> Downloads panel <ContextMenuShortcut>D</ContextMenuShortcut>
       </ContextMenuItem>
-      <ContextMenuItem onSelect={toggleTheme}>
-        Light / dark <ContextMenuShortcut>T</ContextMenuShortcut>
-      </ContextMenuItem>
       <ContextMenuItem onSelect={openShortcuts}>
         Keyboard shortcuts <ContextMenuShortcut>?</ContextMenuShortcut>
       </ContextMenuItem>
@@ -539,26 +538,15 @@ export function Home() {
     if (miss > 0) return [it.kind === "movie" ? "Missing" : `${miss} missing`, it.monitored ? "miss" : "none"];
     return ["On disk", "have"];
   };
-  const countOf = (it: LibraryItem) => (it.kind === "tv" ? `${it.have}/${it.total}` : it.sizeOnDisk ? bytes(it.sizeOnDisk) : "—");
   const selItems = targetsOf(null);
 
   return (
-    <div className="space-y-7">
-      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
-        <div>
-          <h1 className="text-[26px] leading-none font-medium">Library</h1>
-          {libraryLoaded && (
-            <p className="meta mt-2 flex flex-wrap gap-x-3 font-mono tabular">
-              <span>{counts.all} titles</span>
-              {counts.missing > 0 && <span className="text-miss">{counts.missing} with gaps</span>}
-              {counts.downloading > 0 && <span className="text-live">{counts.downloading} downloading</span>}
-              {counts.disk > 0 && <span>{bytes(counts.disk)}</span>}
-            </p>
-          )}
-        </div>
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
+        <h1 className="text-[24px] leading-8 font-semibold">{kind === "tv" ? "Shows" : kind === "movie" ? "Movies" : "Library"}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <label className="relative flex items-center">
-            <Search className="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
             <span className="sr-only">Filter the library</span>
             <input
               ref={findRef}
@@ -566,18 +554,18 @@ export function Home() {
               onChange={(e) => setFind(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
               placeholder="Filter"
-              className="h-8 w-44 rounded-md border bg-card pr-8 pl-8 text-[13px] outline-none placeholder:text-muted-foreground focus:border-ring"
+              className="h-8 w-48 rounded-[2px] bg-card pr-8 pl-8 text-[13px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
             />
             {find ? (
               <button onClick={() => setFind("")} className="absolute right-2 cursor-pointer text-muted-foreground hover:text-foreground" aria-label="Clear filter">
-                <X className="size-3.5" />
+                <X className="size-4" />
               </button>
             ) : (
-              <Kbd className="pointer-events-none absolute right-1.5">F</Kbd>
+              <Kbd className="pointer-events-none absolute right-2">F</Kbd>
             )}
           </label>
           <Button variant="outline" size="sm" className="h-8" onClick={() => (selected.size ? setSelected(new Set()) : selectAll())}>
-            {selected.size ? "Clear" : "Select all"}
+            <SameWidth shown={selected.size ? "Clear" : "Select all"} other={selected.size ? "Select all" : "Clear"} />
           </Button>
           <Segmented
             label="Poster size"
@@ -611,8 +599,8 @@ export function Home() {
             value={view}
             onChange={(v) => setView(v as View)}
             options={[
-              ["grid", <LayoutGrid key="g" className="size-3.5" />, "Grid (V)"],
-              ["list", <List key="l" className="size-3.5" />, "List (V)"],
+              ["grid", <LayoutGrid key="g" className="size-4" />, "Grid (V)"],
+              ["list", <List key="l" className="size-4" />, "List (V)"],
             ]}
           />
         </div>
@@ -624,7 +612,7 @@ export function Home() {
         </Notice>
       ))}
 
-      <div className="flex flex-wrap gap-0.5 border-b pb-3">
+      <div className="flex flex-wrap gap-1">
         {FILTERS.filter(([k]) => k === "all" || counts[k] > 0 || k === filter).map(([k, l], n) => (
           <button
             key={k}
@@ -632,12 +620,11 @@ export function Home() {
             title={`${l} (${n + 1})`}
             aria-pressed={filter === k}
             className={cn(
-              "flex h-7 cursor-pointer items-center gap-1.5 rounded-md border border-transparent px-2.5 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",
-              filter === k && "border-border bg-card text-foreground",
+              "flex h-8 cursor-pointer items-center rounded-[2px] px-3 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
+              filter === k && "bg-accent text-foreground",
             )}
           >
             {l}
-            <span className="font-mono text-[11px] text-muted-foreground tabular">{counts[k]}</span>
           </button>
         ))}
       </div>
@@ -649,8 +636,8 @@ export function Home() {
               <Grid min={MIN[size]}>
                 {Array.from({ length: 12 }, (_, i) => (
                   <div key={i}>
-                    <Skeleton className="aspect-[2/3] rounded-lg" />
-                    <Skeleton className="mt-2.5 h-4 w-3/4" />
+                    <Skeleton className="aspect-[2/3]" />
+                    <Skeleton className="mt-3 h-4 w-3/4" />
                   </div>
                 ))}
               </Grid>
@@ -678,7 +665,6 @@ export function Home() {
             ) : view === "grid" ? (
               <Grid min={MIN[size]}>
                 {items.map((it) => {
-                  const [label, dot] = status(it);
                   const sel = selected.has(it.key);
                   const p = progress.get(libraryHref(it));
                   return (
@@ -690,47 +676,39 @@ export function Home() {
                       aria-pressed={sel}
                       onClick={(e) => onItemClick(e, it)}
                       onFocus={() => setCursor(it.key)}
-                      className={cn("group -m-1.5 block min-w-0 rounded-lg p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring", cursor === it.key && "ring-1 ring-ring/50")}
+                      className={cn("group -m-2 block min-w-0 rounded-[2px] p-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/60", cursor === it.key && "bg-card")}
                     >
-                      <div className={cn("relative aspect-[2/3] overflow-hidden rounded-md bg-muted", sel && "ring-2 ring-live ring-offset-2 ring-offset-background")}>
+                      <div className={cn("relative aspect-[2/3] overflow-hidden rounded-[2px] bg-muted", sel && "ring-2 ring-white ring-offset-2 ring-offset-background")}>
                         <PosterImg src={it.poster} title={it.title} year={it.year} />
                         <span
                           data-tick
                           aria-hidden
                           className={cn(
-                            "absolute top-2 right-2 grid size-5 place-items-center rounded-full border-[1.5px] border-white/80 bg-black/35 text-transparent opacity-0 transition-opacity group-hover:opacity-100",
+                            "absolute top-2 right-2 grid size-5 place-items-center rounded-[2px] border-2 border-white/80 bg-black/40 text-transparent opacity-0 transition-opacity group-hover:opacity-100",
                             selected.size > 0 && "opacity-100",
-                            sel && "border-live bg-live text-white opacity-100",
+                            sel && "border-white bg-white text-black opacity-100",
                           )}
                         >
                           <Check className="size-3" strokeWidth={3} />
                         </span>
                         {pinned.has(it.key) && (
-                          <span className="absolute top-2 left-2 grid size-5 place-items-center rounded-full bg-black/45 text-white" title="Pinned">
+                          <span className="absolute top-2 left-2 grid size-5 place-items-center rounded-[2px] bg-black/60 text-white" title="Pinned">
                             <Pin className="size-3" fill="currentColor" />
                           </span>
                         )}
-                        {p !== undefined && (
-                          <div className="absolute inset-x-0 bottom-0 h-[3px] bg-black/30">
-                            <i className="block h-full bg-live transition-[width] duration-700" style={{ width: `${Math.max(0.03, p) * 100}%` }} />
-                          </div>
-                        )}
+                        {p !== undefined && <Bar value={Math.max(0.05, p)} segments={12} stretch className="absolute inset-x-2 bottom-2" />}
                       </div>
-                      <div className="mt-2 truncate px-0.5 text-[13.5px] font-medium" title={it.title}>
+                      <div className="mt-2 truncate text-[14px] font-medium" title={it.title}>
                         {it.title}
                       </div>
-                      <div className="mt-0.5 flex items-center gap-1.5 px-0.5 text-[12px] text-muted-foreground">
-                        <Dot tone={dot} className="size-1.5" />
-                        <span className="truncate">{label}</span>
-                        <span className="ml-auto font-mono text-[11px] tabular">{countOf(it)}</span>
-                      </div>
+                      <CellStrip cells={libraryCells(it, p !== undefined, 26)} className="mt-2" />
                     </Link>
                   );
                 })}
               </Grid>
             ) : (
               <div role="table" className="border-t">
-                <div role="row" className="meta hidden h-9 grid-cols-[minmax(0,1fr)_80px_60px_90px_100px_150px] items-center gap-4 border-b px-3 sm:grid">
+                <div role="row" className="meta hidden h-9 grid-cols-[minmax(0,1fr)_80px_60px_200px_100px_148px] items-center gap-4 border-b px-3 sm:grid">
                   <span>Title</span>
                   <span>Type</span>
                   <span>Year</span>
@@ -752,20 +730,20 @@ export function Home() {
                       onClick={(e) => onItemClick(e, it)}
                       onFocus={() => setCursor(it.key)}
                       className={cn(
-                        "grid h-11 grid-cols-[minmax(0,1fr)_110px] items-center gap-4 border-b px-3 outline-none hover:bg-card focus-visible:bg-accent sm:grid-cols-[minmax(0,1fr)_80px_60px_90px_100px_150px]",
+                        "grid h-12 grid-cols-[minmax(0,1fr)_112px] items-center gap-4 border-b px-3 outline-none hover:bg-card focus-visible:bg-accent sm:grid-cols-[minmax(0,1fr)_80px_60px_200px_100px_148px]",
                         cursor === it.key && "bg-accent",
-                        sel && "bg-live-soft/60 shadow-[inset_2px_0_0_var(--live)] hover:bg-live-soft",
+                        sel && "bg-card",
                       )}
                     >
                       <span className="flex min-w-0 items-center gap-3">
                         <span
                           data-tick
                           aria-hidden
-                          className={cn("grid size-4 shrink-0 place-items-center rounded-[4px] border-[1.5px] border-input text-transparent", sel && "border-live bg-live text-white")}
+                          className={cn("grid size-4 shrink-0 place-items-center rounded-[2px] border border-muted-foreground/70 text-transparent", sel && "border-white bg-white text-black")}
                         >
-                          <Check className="size-2.5" strokeWidth={3.5} />
+                          <Check className="size-3" strokeWidth={3} />
                         </span>
-                        <span className="h-8 w-[22px] shrink-0 overflow-hidden rounded-[3px] bg-muted">
+                        <span className="h-8 w-5 shrink-0 overflow-hidden rounded-[2px] bg-muted">
                           <PosterImg src={it.poster} title={it.title} />
                         </span>
                         <span className="truncate text-sm font-medium">{it.title}</span>
@@ -773,10 +751,10 @@ export function Home() {
                       </span>
                       <span className="hidden text-[13px] text-muted-foreground sm:block">{it.kind === "tv" ? "Show" : "Movie"}</span>
                       <span className="hidden font-mono text-xs text-muted-foreground sm:block">{it.year ?? ""}</span>
-                      <span className="hidden font-mono text-xs text-muted-foreground tabular sm:block">{it.kind === "tv" ? `${it.have}/${it.total}` : it.have ? "1/1" : "0/1"}</span>
+                      <CellStrip cells={libraryCells(it, isDownloading(it), 16)} className="hidden sm:flex" />
                       <span className="hidden font-mono text-xs text-muted-foreground tabular sm:block">{bytes(it.sizeOnDisk ?? 0)}</span>
                       <span className="flex items-center gap-2 text-[13px] text-muted-foreground">
-                        <Dot tone={dot} className="size-1.5" />
+                        <Dot tone={dot} />
                         <span className="truncate">{label}</span>
                       </span>
                     </Link>
@@ -791,39 +769,26 @@ export function Home() {
 
       {pointer.box && <div className="marquee" style={{ left: pointer.box.x, top: pointer.box.y, width: pointer.box.w, height: pointer.box.h }} />}
 
-      {selected.size > 0 && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 flex justify-center px-4 sm:bottom-6">
-          <div className="pointer-events-auto flex max-w-full animate-in items-center gap-0.5 overflow-x-auto rounded-lg border bg-popover p-1.5 pl-4 text-sm text-popover-foreground shadow-xl fade-in-0 slide-in-from-bottom-3">
-            <span className="mr-2 shrink-0 whitespace-nowrap">
-              <b className="font-mono font-medium tabular">{selected.size}</b> selected
-            </span>
-            <BarBtn onClick={selectAll}>All</BarBtn>
-            <BarBtn onClick={invert} hint="I">
-              Invert
-            </BarBtn>
-            <span className="mx-1 h-5 w-px shrink-0 bg-border" />
-            {selItems.some((i) => missingOf(i) > 0) && (
-              <Button size="sm" className="shrink-0" onClick={() => getMissing(selItems)}>
-                <Download /> Get missing
-              </Button>
-            )}
-            <BarBtn onClick={() => toggleMonitor(selItems)} hint="M">
-              {selItems.every((i) => i.monitored) ? "Unmonitor" : "Monitor"}
-            </BarBtn>
-            <BarBtn onClick={() => command(selItems, "search")}>Search</BarBtn>
-            <BarBtn onClick={() => togglePin(selItems)} hint="P">
-              {selItems.every((i) => pinned.has(i.key)) ? "Unpin" : "Pin"}
-            </BarBtn>
-            <BarBtn onClick={() => remove(selItems)} hint="⌫" danger>
-              Remove
-            </BarBtn>
-            <span className="mx-1 h-5 w-px shrink-0 bg-border" />
-            <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={() => setSelected(new Set())} aria-label="Clear selection">
-              <X /> <Kbd className="hidden sm:inline-flex">esc</Kbd>
-            </Button>
-          </div>
-        </div>
-      )}
+      <SelectionBar count={selected.size} onClear={() => setSelected(new Set())}>
+        <BarBtn onClick={selectAll}>All</BarBtn>
+        <BarBtn onClick={invert} hint="I">
+          Invert
+        </BarBtn>
+        <span className="mx-1 h-5 w-px shrink-0 bg-border" />
+        <Button size="sm" className="shrink-0" disabled={!selItems.some((i) => missingOf(i) > 0)} onClick={() => getMissing(selItems)}>
+          <Download /> Get missing
+        </Button>
+        <BarBtn onClick={() => toggleMonitor(selItems)} hint="M">
+          <SameWidth shown={selItems.every((i) => i.monitored) ? "Unmonitor" : "Monitor"} other={selItems.every((i) => i.monitored) ? "Monitor" : "Unmonitor"} />
+        </BarBtn>
+        <BarBtn onClick={() => command(selItems, "search")}>Search</BarBtn>
+        <BarBtn onClick={() => togglePin(selItems)} hint="P">
+          <SameWidth shown={selItems.every((i) => pinned.has(i.key)) ? "Unpin" : "Pin"} other={selItems.every((i) => pinned.has(i.key)) ? "Pin" : "Unpin"} />
+        </BarBtn>
+        <BarBtn onClick={() => remove(selItems)} hint="⌫" danger>
+          Remove
+        </BarBtn>
+      </SelectionBar>
 
       <QuickLook
         item={peek}
@@ -841,7 +806,7 @@ export function Home() {
 
 function Grid({ min, children }: { min: number; children: ReactNode }) {
   return (
-    <div className="grid gap-x-5 gap-y-7" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(${min}px, 42vw), 1fr))` }}>
+    <div className="grid gap-x-6 gap-y-8" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(${min}px, 42vw), 1fr))` }}>
       {children}
     </div>
   );
@@ -861,7 +826,7 @@ function Segmented({
   disabled?: boolean;
 }) {
   return (
-    <div role="group" aria-label={label} className={cn("flex h-8 gap-0.5 rounded-md border bg-card p-0.5", disabled && "opacity-50")}>
+    <div role="group" aria-label={label} className={cn("flex h-8 gap-1 rounded-[2px] bg-card p-1", disabled && "opacity-50")}>
       {options.map(([v, content, title]) => (
         <Tooltip key={v}>
           <TooltipTrigger asChild>
@@ -871,8 +836,8 @@ function Segmented({
               aria-label={title}
               onClick={() => onChange(v)}
               className={cn(
-                "grid min-w-7 cursor-pointer place-items-center rounded-[4px] px-1.5 font-mono text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default",
-                value === v && "bg-muted text-foreground",
+                "grid min-w-6 cursor-pointer place-items-center rounded-[2px] px-1 font-mono text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-default",
+                value === v && "bg-accent text-foreground",
               )}
             >
               {content}
@@ -928,22 +893,22 @@ function QuickLook({
               <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                 <div>
                   <dt className="meta">Status</dt>
-                  <dd className="mt-0.5 flex items-center gap-2">
+                  <dd className="mt-1 flex items-center gap-2">
                     <Dot tone={status?.[1] ?? "none"} />
                     {status?.[0]}
                   </dd>
                 </div>
                 <div>
                   <dt className="meta">On disk</dt>
-                  <dd className="mt-0.5 font-mono tabular">{item.kind === "tv" ? `${item.have} of ${item.total} episodes` : item.have ? "Yes" : "No"}</dd>
+                  <dd className="mt-1 font-mono tabular">{item.kind === "tv" ? `${item.have} of ${item.total} episodes` : item.have ? "Yes" : "No"}</dd>
                 </div>
                 <div>
                   <dt className="meta">Size</dt>
-                  <dd className="mt-0.5 font-mono tabular">{bytes(item.sizeOnDisk ?? 0)}</dd>
+                  <dd className="mt-1 font-mono tabular">{bytes(item.sizeOnDisk ?? 0)}</dd>
                 </div>
                 <div>
                   <dt className="meta">Monitored</dt>
-                  <dd className="mt-0.5">{item.monitored ? "Yes" : "No"}</dd>
+                  <dd className="mt-1">{item.monitored ? "Yes" : "No"}</dd>
                 </div>
               </dl>
               <div className="mt-auto flex flex-wrap gap-2">
@@ -967,7 +932,7 @@ function QuickLook({
                     navigate(`${libraryHref(item)}?pick=1`);
                   }}
                 >
-                  <ListChecks /> Choose release
+                  <ListChecks /> {item.kind === "movie" ? "Pick release manually" : "Pick releases manually"}
                 </Button>
               </div>
             </div>
