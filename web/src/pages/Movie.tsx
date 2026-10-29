@@ -6,6 +6,8 @@ import { bytes } from "@/lib/format";
 import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
 import { useRouter } from "@/lib/router";
 import { useStore } from "@/lib/store";
+import { peek } from "@/lib/cache";
+import { keys, loadMovie, loadMovieByTmdb } from "@/lib/prefetch";
 import { baseName, jobTag, useConverting } from "@/lib/transcode";
 import { forMovie, isBlocking, isFlagged } from "@/lib/verify";
 import { useSearch } from "@/lib/useSearch";
@@ -20,21 +22,29 @@ import { VerdictActions, VerdictChecks } from "@/components/Verdict";
 import { Crumbs, GetCard, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
 
 export function MoviePage({ id, tmdb }: { id?: number; tmdb?: number }) {
-  const [d, setD] = useState<MovieDetail | null>(null);
+  const { library } = useStore();
+  const key = id ? keys.movie(id) : keys.movieTmdb(tmdb ?? 0);
+  // A hover on the link usually filled the cache already.
+  const [d, setD] = useState<MovieDetail | null>(() => peek<MovieDetail>(key) ?? null);
   const [error, setError] = useState<string | null>(null);
+  const shown = useRef(!!d);
   const load = useCallback(
-    () =>
-      (id ? api.movie(id) : api.movieByTmdb(tmdb ?? 0))
-        .then(setD)
-        .catch((e) => setError(String(e.message ?? e))),
+    (fresh = false) =>
+      (id ? loadMovie(id, fresh) : loadMovieByTmdb(tmdb ?? 0, fresh))
+        .then((x) => {
+          shown.current = true;
+          setD(x);
+        })
+        // A failed refresh keeps the page that is on screen.
+        .catch((e) => !shown.current && setError(String(e.message ?? e))),
     [id, tmdb],
   );
   useEffect(() => {
     load();
   }, [load]);
   if (error) return <Notice tone="bad">{error}</Notice>;
-  if (!d) return <TitleSkeleton />;
-  return <MovieView d={d} reload={load} />;
+  if (!d) return <TitleSkeleton section="Movies" known={library.find((i) => i.kind === "movie" && (id ? i.id === id : i.tmdbId === tmdb))} />;
+  return <MovieView d={d} reload={() => load(true)} />;
 }
 
 type Scope = "this" | "missing" | "all" | "custom";

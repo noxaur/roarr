@@ -143,17 +143,32 @@ export function GetCard({
   );
 }
 
-export function TitleSkeleton() {
+/**
+ * What a title page shows while its details load. The library already knows
+ * the poster and the name, so they appear at once, in the place the page puts
+ * them; only the parts that wait on Sonarr or Radarr are placeholders.
+ */
+export function TitleSkeleton({ section, known }: { section: "Shows" | "Movies"; known?: { poster?: string; title: string; year?: number } }) {
   return (
-    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
-      <div className="flex gap-6">
-        <Skeleton className="aspect-[2/3] w-[84px]" />
-        <div className="flex-1 space-y-3">
-          <Skeleton className="h-8 w-2/3" />
-          <Skeleton className="h-3 w-1/3" />
-        </div>
-      </div>
-      <Skeleton className="h-[248px]" />
-    </div>
+    <>
+      <Crumbs section={section} />
+      <TitleLayout
+        head={
+          known ? (
+            <TitleHead poster={known.poster} title={known.title} year={known.year} meta={[known.year]} />
+          ) : (
+            <div className="flex gap-6">
+              <Skeleton className="aspect-[2/3] w-16 shrink-0 sm:w-[84px]" />
+              <div className="flex-1 space-y-3 pt-1">
+                <Skeleton className="h-8 w-2/3" />
+                <Skeleton className="h-3 w-1/3" />
+              </div>
+            </div>
+          )
+        }
+        aside={<Skeleton className="h-[248px]" />}
+        body={null}
+      />
+    </>
   );
 }

@@ -5,6 +5,8 @@ import { api, type DiscoverItem, type LibraryItem } from "@/lib/api";
 import { autoGet } from "@/lib/actions";
 import { fold } from "@/lib/format";
 import { discoverHref, libraryHref, rankLibrary } from "@/lib/rank";
+import { cached, forget, peek } from "@/lib/cache";
+import { prefetch } from "@/lib/prefetch";
 import { useRouter } from "@/lib/router";
 import { useStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
@@ -50,19 +52,26 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
       setLoading(false);
       return;
     }
-    setLoading(true);
     setError(null);
+    // A term seen before (backspace, retyping) answers from the cache at once.
+    const key = `discover:${term.toLowerCase()}`;
+    const hit = peek<{ results: DiscoverItem[] }>(key);
+    if (hit) {
+      setRemote(hit.results);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     let alive = true;
     const t = setTimeout(() => {
-      api
-        .discover(term)
+      cached(key, () => api.discover(term), 5 * 60_000)
         .then((r) => {
           if (!alive) return;
           setRemote(r.results);
         })
         .catch((e) => alive && setError(String(e.message ?? e)))
         .finally(() => alive && setLoading(false));
-    }, 220);
+    }, 150);
     return () => {
       alive = false;
       clearTimeout(t);
@@ -80,6 +89,14 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
     return { a, b };
   }, [local, remote]);
 
+  // The highlighted row is the likely pick: fetch its page while the user decides.
+  useEffect(() => {
+    const row = [...rows.a, ...rows.b].find((r) => r.key === selected);
+    if (!open || !row) return;
+    const t = setTimeout(() => prefetch(row.href), 120);
+    return () => clearTimeout(t);
+  }, [open, selected, rows]);
+
   const go = (href: string) => {
     onOpenChange(false);
     navigate(href);
@@ -96,6 +113,7 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
       return n;
     });
     if (res) {
+      forget("discover:"); // "in library" changed
       reloadActivity();
       setTimeout(() => reloadLibrary(), 1200);
     }

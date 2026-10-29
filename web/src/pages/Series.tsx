@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bookmark, Check, ChevronRight, Download, ListChecks, Radar, RefreshCw, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import type { CSSProperties } from "react";
-import { api, type EpisodeAction, type EpisodeDetail, type Release, type SeriesDetail, type VerifyRecord } from "@/lib/api";
+import { api, type EpisodeAction, type EpisodeDetail, type Release, type SeriesDetail, type Settings, type VerifyRecord } from "@/lib/api";
+import { peek } from "@/lib/cache";
+import { keys, loadSeries, loadSeriesByTvdb, loadSettings } from "@/lib/prefetch";
 import { autoGet, run } from "@/lib/actions";
 import { bytes, epCode, pad, pct } from "@/lib/format";
 import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
@@ -24,28 +26,39 @@ import { VerdictBadge, useVerdictActions } from "@/components/Verdict";
 import { Crumbs, GetCard, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
 
 export function SeriesPage({ id, tvdb, tmdb }: { id?: number; tvdb?: number; tmdb?: number }) {
-  const [d, setD] = useState<SeriesDetail | null>(null);
+  const { library } = useStore();
+  const key = id ? keys.series(id) : keys.seriesTvdb(tvdb ?? 0, tmdb);
+  // A hover on the link usually filled the cache already.
+  const [d, setD] = useState<SeriesDetail | null>(() => peek<SeriesDetail>(key) ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [prefs, setPrefs] = useState({ prefetch: true, watchFirst: true });
+  const [prefs, setPrefs] = useState(() => prefsOf(peek("settings")));
+  const shown = useRef(!!d);
 
   const load = useCallback(
     (fresh = false) =>
-      (id ? api.series(id, fresh) : api.seriesByTvdb(tvdb ?? 0, tmdb))
-        .then((x) => setD({ ...x, seasons: (x.seasons ?? []).map((s) => ({ ...s, episodes: s.episodes ?? [] })) }))
-        .catch((e) => setError(String(e.message ?? e))),
+      (id ? loadSeries(id, fresh) : loadSeriesByTvdb(tvdb ?? 0, tmdb, fresh))
+        .then((x) => {
+          shown.current = true;
+          setD(x);
+        })
+        // A failed refresh keeps the page that is on screen.
+        .catch((e) => !shown.current && setError(String(e.message ?? e))),
     [id, tvdb, tmdb],
   );
   useEffect(() => {
     load();
-    api
-      .settings()
-      .then((s) => setPrefs({ prefetch: s.settings.behaviour.prefetch, watchFirst: s.settings.behaviour.watchFirst }))
+    loadSettings()
+      .then((s) => setPrefs(prefsOf(s)))
       .catch(() => {});
   }, [load]);
 
   if (error) return <Notice tone="bad">{error}</Notice>;
-  if (!d) return <TitleSkeleton />;
+  if (!d) return <TitleSkeleton section="Shows" known={library.find((i) => i.kind === "tv" && (id ? i.id === id : i.tvdbId === tvdb))} />;
   return <SeriesView d={d} reload={() => load(true)} prefs={prefs} />;
+}
+
+function prefsOf(s?: { settings: Settings }) {
+  return s ? { prefetch: s.settings.behaviour.prefetch, watchFirst: s.settings.behaviour.watchFirst } : { prefetch: true, watchFirst: true };
 }
 
 type Scope = "missing" | "all" | "season" | "custom";

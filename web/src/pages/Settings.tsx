@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Lock, Plus, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, type ServiceStatus, type Settings } from "@/lib/api";
 import { errText } from "@/lib/actions";
+import { cached, peek, put } from "@/lib/cache";
 import { countChanges } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -36,10 +37,15 @@ const SIZES = [
   ["larger", "Larger", "Favour higher bitrates, up to the max size."],
 ] as const;
 
+type SettingsAnswer = { settings: Settings; locked: Record<string, boolean> };
+
 export function SettingsPage() {
-  const [saved, setSaved] = useState<Settings | null>(null);
-  const [s, setS] = useState<Settings | null>(null);
-  const [locked, setLocked] = useState<Record<string, boolean>>({});
+  // A hover on the Admin link usually filled the cache already.
+  const [first] = useState(() => peek<SettingsAnswer>("settings"));
+  const [saved, setSaved] = useState<Settings | null>(first?.settings ?? null);
+  const [s, setS] = useState<Settings | null>(first?.settings ?? null);
+  const [locked, setLocked] = useState<Record<string, boolean>>(first?.locked ?? {});
+  const edited = useRef(false);
   const [status, setStatus] = useState<Record<string, ServiceStatus>>({});
   const [version, setVersion] = useState("");
   const [saving, setSaving] = useState(false);
@@ -58,7 +64,9 @@ export function SettingsPage() {
       .finally(() => setChecking(false));
   };
   useEffect(() => {
-    api.settings().then((r) => {
+    // Check the cached copy against the server, unless the form is already being changed.
+    cached("settings", api.settings, 5_000).then((r) => {
+      if (edited.current) return;
       setS(r.settings);
       setSaved(r.settings);
       setLocked(r.locked);
@@ -72,12 +80,15 @@ export function SettingsPage() {
   const update = (f: (x: Settings) => void) => {
     const next = structuredClone(s);
     f(next);
+    edited.current = true;
     setS(next);
   };
   const save = async () => {
     setSaving(true);
     try {
       const r = await api.saveSettings(s);
+      put("settings", r);
+      edited.current = false;
       setS(r.settings);
       setSaved(r.settings);
       setLocked(r.locked);

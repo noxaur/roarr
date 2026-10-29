@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { speed } from "@/lib/format";
 import { Link, useRouter } from "@/lib/router";
 import { useShell } from "@/lib/shell";
-import { isActive, problemCount, useStore } from "@/lib/store";
+import { forgetLocalCopy, isActive, problemCount, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { totalSpeed } from "./Downloads";
@@ -133,7 +133,7 @@ export function Nav({ authMode }: { authMode: string }) {
                 <Keyboard /> Shortcuts <DropdownMenuShortcut>?</DropdownMenuShortcut>
               </DropdownMenuItem>
               {authMode !== "none" && (
-                <DropdownMenuItem onSelect={() => api.logout().then(() => location.reload())}>
+                <DropdownMenuItem onSelect={() => api.logout().then(() => (forgetLocalCopy(), location.reload()))}>
                   <LogOut /> Sign out
                 </DropdownMenuItem>
               )}

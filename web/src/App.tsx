@@ -1,7 +1,8 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type ComponentType } from "react";
 import { api, setUnauthorizedHandler } from "./lib/api";
 import { Router, match, useRouter } from "./lib/router";
-import { StoreProvider } from "./lib/store";
+import { StoreProvider, forgetLocalCopy } from "./lib/store";
+import { pages, warmPages, type Chunk } from "./lib/prefetch";
 import { Toaster } from "./components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { ConfirmProvider } from "./components/Confirm";
@@ -14,24 +15,62 @@ import { undoLast } from "./lib/undo";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
 
-// Home ships with the first load; every other page is fetched on demand.
-const SeriesPage = lazy(() => import("./pages/Series").then((m) => ({ default: m.SeriesPage })));
-const MoviePage = lazy(() => import("./pages/Movie").then((m) => ({ default: m.MoviePage })));
-const ActivityPage = lazy(() => import("./pages/Activity").then((m) => ({ default: m.ActivityPage })));
-const RequestsPage = lazy(() => import("./pages/Requests").then((m) => ({ default: m.RequestsPage })));
-const SettingsPage = lazy(() => import("./pages/Settings").then((m) => ({ default: m.SettingsPage })));
+// Home ships with the first load; every other page is fetched on demand, and
+// once the browser is idle (see warmPages).
+const SeriesPage = page(pages.series, (m) => m.SeriesPage);
+const MoviePage = page(pages.movie, (m) => m.MoviePage);
+const ActivityPage = page(pages.activity, (m) => m.ActivityPage);
+const RequestsPage = page(pages.requests, (m) => m.RequestsPage);
+const SettingsPage = page(pages.settings, (m) => m.SettingsPage);
+
+// React.lazy suspends on the first render even when the code is already
+// here, and React then holds the fallback for up to 300 ms. A page whose code
+// has arrived renders directly instead.
+function page<M, P extends object>(c: Chunk<M>, pick: (m: M) => ComponentType<P>) {
+  const Lazy = lazy(() => c().then((m) => ({ default: pick(m) })));
+  return function Page(props: P) {
+    // Decided once per mount: switching component types would remount the page.
+    const [C] = useState<ComponentType<P>>(() => (c.mod ? pick(c.mod) : Lazy));
+    return <C {...props} />;
+  };
+}
+
+type Me = { authMode: string; authenticated: boolean; user?: string };
+
+// The last answer to /api/me. A returning visitor gets the app on the first
+// frame instead of a blank page for one round trip; /api/me then confirms it.
+const ME = "roarr.me"; // forgetLocalCopy clears it too
+function lastMe(): Me | null {
+  try {
+    const m = JSON.parse(localStorage.getItem(ME) ?? "null") as Me | null;
+    return m?.authenticated ? m : null;
+  } catch {
+    return null;
+  }
+}
+const firstMe = api.me();
 
 export function App() {
-  const [me, setMe] = useState<{ authMode: string; authenticated: boolean; user?: string } | null>(null);
+  const [me, setMe] = useState<Me | null>(lastMe);
 
-  const check = () =>
-    api
-      .me()
-      .then(setMe)
-      .catch(() => setMe({ authMode: "none", authenticated: true }));
+  const check = (req = api.me()) =>
+    req
+      .then((m) => {
+        setMe(m);
+        try {
+          if (m.authenticated) localStorage.setItem(ME, JSON.stringify({ authMode: m.authMode, authenticated: true, user: m.user }));
+          else forgetLocalCopy();
+        } catch {
+          /* blocked */
+        }
+      })
+      .catch(() => setMe((m) => m ?? { authMode: "none", authenticated: true }));
   useEffect(() => {
-    check();
-    setUnauthorizedHandler(() => setMe((m) => (m ? { ...m, authenticated: false } : m)));
+    check(firstMe);
+    setUnauthorizedHandler(() => {
+      forgetLocalCopy();
+      setMe((m) => (m ? { ...m, authenticated: false } : m));
+    });
   }, []);
 
   if (!me) return null;
@@ -58,6 +97,8 @@ function Shell({ authMode }: { authMode: string }) {
   const [searching, setSearching] = useState(false);
   const [downloads, setDownloads] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
+
+  useEffect(warmPages, []);
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {

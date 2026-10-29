@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, FolderSync, LayoutGrid, List, ListChecks, Pin, Radar, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, type LibraryItem } from "@/lib/api";
@@ -104,7 +104,7 @@ function usePinned(): [Set<string>, (next: Set<string>) => void] {
 }
 
 export function Home({ kind }: { kind?: Kind }) {
-  const { library, libraryLoaded, libraryErrors, activity, reloadLibrary, reloadActivity } = useStore();
+  const { library, libraryLoaded, libraryErrors, activity, reloadLibrary, patchLibrary, reloadActivity } = useStore();
   const { navigate, search } = useRouter();
   const { openSearch, toggleDownloads, openShortcuts } = useShell();
   const confirm = useConfirm();
@@ -153,8 +153,10 @@ export function Home({ kind }: { kind?: Kind }) {
     return c;
   }, [library, isDownloading, pinned, kind]);
 
+  // Typing stays instant; the shelf filters a frame behind on big libraries.
+  const findLater = useDeferredValue(find);
   const items = useMemo(() => {
-    const q = fold(find);
+    const q = fold(findLater);
     const keep = (it: LibraryItem) => {
       if (kind && it.kind !== kind) return false;
       if (q && ![it.title, ...(it.aliases ?? []), String(it.year ?? "")].some((t) => fold(t).includes(q))) return false;
@@ -178,7 +180,7 @@ export function Home({ kind }: { kind?: Kind }) {
       size: (a, b) => (b.sizeOnDisk ?? 0) - (a.sizeOnDisk ?? 0),
     };
     return library.filter(keep).sort((a, b) => Number(pinned.has(b.key)) - Number(pinned.has(a.key)) || by[sort](a, b));
-  }, [library, find, filter, sort, pinned, isDownloading, kind]);
+  }, [library, findLater, filter, sort, pinned, isDownloading, kind]);
 
   const byKey = useMemo(() => new Map(library.map((i) => [i.key, i])), [library]);
   // Selection survives filtering but never points at titles that are gone.
@@ -213,15 +215,19 @@ export function Home({ kind }: { kind?: Kind }) {
     setTimeout(() => reloadLibrary(), 1500);
   };
 
+  // The shelf changes at once; titles the server refuses flip back.
   const setMonitored = async (xs: LibraryItem[], on: boolean, quiet = false) => {
-    const ok = await Promise.all(xs.map((it) => api.patchTitle(it.kind, it.id, { monitored: on }).then(() => true, () => false)));
-    await reloadLibrary(true);
-    const n = ok.filter(Boolean).length;
-    if (n < xs.length) toast.error(`${xs.length - n} of ${xs.length} could not be changed`);
-    if (!quiet && n) {
-      const what = xs.length === 1 ? xs[0].title : plural(n, "title");
+    const was = new Map(xs.map((it) => [it.key, it.monitored]));
+    patchLibrary(was.keys(), { monitored: on });
+    if (!quiet) {
+      const what = xs.length === 1 ? xs[0].title : plural(xs.length, "title");
       done(on ? `Monitoring ${what}` : `Stopped monitoring ${what}`, () => setMonitored(xs, !on, true));
     }
+    const ok = await Promise.all(xs.map((it) => api.patchTitle(it.kind, it.id, { monitored: on }).then(() => true, () => false)));
+    const failed = xs.filter((_, i) => !ok[i]);
+    for (const it of failed) patchLibrary([it.key], { monitored: was.get(it.key) });
+    if (failed.length) toast.error(`${failed.length} of ${xs.length} could not be changed`);
+    reloadLibrary(true);
   };
   const toggleMonitor = (xs: LibraryItem[]) => {
     if (!xs.length) return;
