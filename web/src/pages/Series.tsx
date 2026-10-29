@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { Bar, Notice, Spec, State } from "@/components/kit";
+import { Bar, Notice, SameWidth, Spec, State } from "@/components/kit";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useConfirm } from "@/components/Confirm";
 import { ManageMenu, MonitorToggle, RowMenu, SelectionBar } from "@/components/Manage";
@@ -621,7 +621,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                     </button>
                     {aired.length > 0 && (
                       <Button variant="ghost" size="xs" className="h-8 px-2 text-[13px] font-normal text-muted-foreground" onClick={() => tickSeason(s.number)}>
-                        {allTicked ? "Deselect" : "Select"}
+                        <SameWidth shown={allTicked ? "Deselect" : "Select"} other={allTicked ? "Select" : "Deselect"} />
                       </Button>
                     )}
                     {lib && (
@@ -790,28 +790,24 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
         cellsLabel={sheetCells.label}
       />
       <SelectionBar count={tickedArr.length} onClear={clearTicks} summary={tickedOnDisk.length > 0 && `${tickedOnDisk.length} on disk, ${bytes(sizeOf(tickedOnDisk))}`}>
-        {tickedMissing.length > 0 && (
-          <Button size="sm" className="shrink-0" onClick={() => getNow(tickedMissing)}>
-            <Download /> Get {tickedMissing.length === tickedArr.length ? "" : `${tickedMissing.length} missing`}
-          </Button>
-        )}
+        <Button size="sm" className="shrink-0" disabled={!tickedMissing.length} onClick={() => getNow(tickedMissing)}>
+          <Download /> Get missing
+        </Button>
         <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setSheet(true)}>
           <ListChecks /> Pick manually
         </Button>
-        {lib && tickedOnDisk.length > 0 && (
-          <Button variant="ghost" size="sm" className="shrink-0" onClick={() => replace(tickedOnDisk.map((e) => e.id))}>
-            <RefreshCw /> Replace{tickedOnDisk.length < tickedArr.length ? ` ${tickedOnDisk.length}` : ""}
-          </Button>
-        )}
         {lib && (
-          <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setMonitored(tickedArr, !allMon)}>
-            {allMon ? "Unmonitor" : "Monitor"}
-          </Button>
-        )}
-        {lib && tickedOnDisk.length > 0 && (
-          <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" onClick={() => deleteFiles(tickedArr)}>
-            <Trash2 /> Delete{tickedOnDisk.length < tickedArr.length ? ` ${tickedOnDisk.length}` : ""}
-          </Button>
+          <>
+            <Button variant="ghost" size="sm" className="shrink-0" disabled={!tickedOnDisk.length} onClick={() => replace(tickedOnDisk.map((e) => e.id))}>
+              <RefreshCw /> Replace
+            </Button>
+            <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setMonitored(tickedArr, !allMon)}>
+              <SameWidth shown={allMon ? "Unmonitor" : "Monitor"} other={allMon ? "Monitor" : "Unmonitor"} />
+            </Button>
+            <Button variant="ghost" size="sm" className="shrink-0 text-destructive hover:text-destructive" disabled={!tickedOnDisk.length} onClick={() => deleteFiles(tickedArr)}>
+              <Trash2 /> Delete
+            </Button>
+          </>
         )}
       </SelectionBar>
     </>

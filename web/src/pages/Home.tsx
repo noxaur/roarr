@@ -31,7 +31,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenu
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useConfirm } from "@/components/Confirm";
-import { Bar, CellStrip, Dot, Empty, Kbd, Notice, libraryCells, type Tone } from "@/components/kit";
+import { Bar, CellStrip, Dot, Empty, Kbd, Notice, SameWidth, libraryCells, type Tone } from "@/components/kit";
+import { SelectionBar } from "@/components/Manage";
 import { PosterImg } from "@/components/Poster";
 
 type Filter = "all" | "missing" | "downloading" | "unmonitored" | "pinned";
@@ -534,7 +535,7 @@ export function Home({ kind }: { kind?: Kind }) {
   const selItems = targetsOf(null);
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
         <h1 className="text-[24px] leading-8 font-semibold">{kind === "tv" ? "Shows" : kind === "movie" ? "Movies" : "Library"}</h1>
         <div className="flex flex-wrap items-center gap-2">
@@ -558,7 +559,7 @@ export function Home({ kind }: { kind?: Kind }) {
             )}
           </label>
           <Button variant="outline" size="sm" className="h-8" onClick={() => (selected.size ? setSelected(new Set()) : selectAll())}>
-            {selected.size ? "Clear" : "Select all"}
+            <SameWidth shown={selected.size ? "Clear" : "Select all"} other={selected.size ? "Select all" : "Clear"} />
           </Button>
           <Segmented
             label="Poster size"
@@ -689,7 +690,7 @@ export function Home({ kind }: { kind?: Kind }) {
                             <Pin className="size-3" fill="currentColor" />
                           </span>
                         )}
-                        {p !== undefined && <Bar value={Math.max(0.05, p)} segments={12} stretch className="absolute inset-x-2 top-2" />}
+                        {p !== undefined && <Bar value={Math.max(0.05, p)} segments={12} stretch className="absolute inset-x-2 bottom-2" />}
                       </div>
                       <div className="mt-2 truncate text-[14px] font-medium" title={it.title}>
                         {it.title}
@@ -762,39 +763,26 @@ export function Home({ kind }: { kind?: Kind }) {
 
       {pointer.box && <div className="marquee" style={{ left: pointer.box.x, top: pointer.box.y, width: pointer.box.w, height: pointer.box.h }} />}
 
-      {selected.size > 0 && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 flex justify-center px-4 sm:bottom-6">
-          <div className="pointer-events-auto flex max-w-full animate-in items-center gap-1 overflow-x-auto rounded-[2px] border bg-popover p-2 pl-4 text-sm text-popover-foreground fade-in-0 slide-in-from-bottom-3">
-            <span className="mr-2 shrink-0 whitespace-nowrap">
-              <b className="font-mono font-medium tabular">{selected.size}</b> selected
-            </span>
-            <BarBtn onClick={selectAll}>All</BarBtn>
-            <BarBtn onClick={invert} hint="I">
-              Invert
-            </BarBtn>
-            <span className="mx-1 h-5 w-px shrink-0 bg-border" />
-            {selItems.some((i) => missingOf(i) > 0) && (
-              <Button size="sm" className="shrink-0" onClick={() => getMissing(selItems)}>
-                <Download /> Get missing
-              </Button>
-            )}
-            <BarBtn onClick={() => toggleMonitor(selItems)} hint="M">
-              {selItems.every((i) => i.monitored) ? "Unmonitor" : "Monitor"}
-            </BarBtn>
-            <BarBtn onClick={() => command(selItems, "search")}>Search</BarBtn>
-            <BarBtn onClick={() => togglePin(selItems)} hint="P">
-              {selItems.every((i) => pinned.has(i.key)) ? "Unpin" : "Pin"}
-            </BarBtn>
-            <BarBtn onClick={() => remove(selItems)} hint="⌫" danger>
-              Remove
-            </BarBtn>
-            <span className="mx-1 h-5 w-px shrink-0 bg-border" />
-            <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={() => setSelected(new Set())} aria-label="Clear selection">
-              <X /> <Kbd className="hidden sm:inline-flex">esc</Kbd>
-            </Button>
-          </div>
-        </div>
-      )}
+      <SelectionBar count={selected.size} onClear={() => setSelected(new Set())}>
+        <BarBtn onClick={selectAll}>All</BarBtn>
+        <BarBtn onClick={invert} hint="I">
+          Invert
+        </BarBtn>
+        <span className="mx-1 h-5 w-px shrink-0 bg-border" />
+        <Button size="sm" className="shrink-0" disabled={!selItems.some((i) => missingOf(i) > 0)} onClick={() => getMissing(selItems)}>
+          <Download /> Get missing
+        </Button>
+        <BarBtn onClick={() => toggleMonitor(selItems)} hint="M">
+          <SameWidth shown={selItems.every((i) => i.monitored) ? "Unmonitor" : "Monitor"} other={selItems.every((i) => i.monitored) ? "Monitor" : "Unmonitor"} />
+        </BarBtn>
+        <BarBtn onClick={() => command(selItems, "search")}>Search</BarBtn>
+        <BarBtn onClick={() => togglePin(selItems)} hint="P">
+          <SameWidth shown={selItems.every((i) => pinned.has(i.key)) ? "Unpin" : "Pin"} other={selItems.every((i) => pinned.has(i.key)) ? "Pin" : "Unpin"} />
+        </BarBtn>
+        <BarBtn onClick={() => remove(selItems)} hint="⌫" danger>
+          Remove
+        </BarBtn>
+      </SelectionBar>
 
       <QuickLook
         item={peek}

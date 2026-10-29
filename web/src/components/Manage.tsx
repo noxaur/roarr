@@ -238,16 +238,19 @@ export function SelectionBar({ count, summary, onClear, children }: { count: num
     return () => removeEventListener("keydown", on);
   }, [count, onClear]);
   if (!count) return null;
+  // The bar has a fixed width and its actions sit on the right, so a new
+  // count or summary never moves a button. Actions that do not apply to the
+  // selection are disabled, not removed, for the same reason.
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-40 flex justify-center px-4 md:bottom-6 md:pl-[240px]">
-      <div className="pointer-events-auto flex max-w-full animate-in items-center gap-1 overflow-x-auto rounded-[2px] border bg-popover p-2 pl-4 text-popover-foreground fade-in-0 slide-in-from-bottom-3">
-        <span className="shrink-0 pr-2 text-sm whitespace-nowrap">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-40 flex justify-center px-4 md:bottom-6 md:pl-[256px]">
+      <div data-selection-bar className="pointer-events-auto flex w-[768px] max-w-full animate-in items-center gap-1 overflow-x-auto rounded-[2px] border bg-popover p-2 pl-4 text-popover-foreground fade-in-0 slide-in-from-bottom-3">
+        <span className="flex-1 shrink-0 pr-2 text-sm whitespace-nowrap">
           <b className="font-mono font-medium tabular">{count}</b> selected
           {summary && <span className="meta ml-2 font-mono">{summary}</span>}
         </span>
-        <span className="mx-1 h-5 w-px shrink-0 bg-border" />
         {children}
-        <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={onClear} aria-label="Clear selection">
+        <span className="mx-1 h-5 w-px shrink-0 bg-border" />
+        <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={onClear} aria-label="Clear selection" title="Clear selection (esc)">
           <X />
         </Button>
       </div>

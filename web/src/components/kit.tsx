@@ -114,6 +114,21 @@ export function libraryCells(it: LibraryItem, downloading: boolean, max = 48): T
   return Array.from({ length: n }, (_, i) => (i < have ? "have" : i === have && downloading ? "live" : gap === "live" ? "miss" : gap));
 }
 
+/**
+ * A label that swaps with another ("Pin" / "Unpin") without changing width:
+ * both sit in one grid cell, the other one invisible.
+ */
+export function SameWidth({ shown, other }: { shown: ReactNode; other: ReactNode }) {
+  return (
+    <span className="inline-grid">
+      <span className="col-start-1 row-start-1">{shown}</span>
+      <span aria-hidden className="invisible col-start-1 row-start-1">
+        {other}
+      </span>
+    </span>
+  );
+}
+
 export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <kbd className={cn("inline-flex h-5 min-w-5 items-center justify-center rounded-[2px] bg-muted px-1 font-mono text-[11px] text-muted-foreground", className)}>
