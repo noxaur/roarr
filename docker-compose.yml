@@ -15,6 +15,14 @@ services:
       - "3847:3847"
     volumes:
       - roarr-config:/config
+      # The AV1 converter (TRANSCODE) needs the media folders at the same
+      # paths as in Sonarr/Radarr, and write access to them. Without these
+      # mounts every conversion fails with "cannot read file".
+      # - /srv/media/tv:/tv
+      # - /srv/media/movies:/movies
+    # Run as the uid/gid that owns the media (the PUID/PGID of your *arr
+    # containers), so converted files can replace the originals.
+    # user: "1000:1000"
     # Lets roarr reach apps published on the host's ports. URLs that say
     # localhost / 127.0.0.1 (typed here, or stored in Prowlarr/Sonarr) are
     # retried on the host automatically.

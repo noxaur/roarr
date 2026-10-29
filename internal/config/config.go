@@ -131,7 +131,7 @@ func Defaults() Settings {
 			IndexerTimeout: 30,
 			CacheMinutes:   20,
 		},
-		Transcode: Transcode{Concurrency: 1, Nice: 10, Preset: 6, MinSavings: 15},
+		Transcode: Transcode{Concurrency: 1, Nice: 10, Preset: 8, MinSavings: 15},
 	}
 }
 
@@ -165,7 +165,7 @@ var envSpec = []struct {
 	{"TRANSCODE_CONCURRENCY", func(s *Settings, v string) { s.Transcode.Concurrency = atoi(v, 1) }},
 	{"TRANSCODE_NICE", func(s *Settings, v string) { s.Transcode.Nice = atoiNonNeg(v, 10) }},
 	{"TRANSCODE_CRF", func(s *Settings, v string) { s.Transcode.CRF = atoiNonNeg(v, 0) }},
-	{"TRANSCODE_PRESET", func(s *Settings, v string) { s.Transcode.Preset = atoiNonNeg(v, 6) }},
+	{"TRANSCODE_PRESET", func(s *Settings, v string) { s.Transcode.Preset = atoiNonNeg(v, 8) }},
 	{"TRANSCODE_FILM_GRAIN", func(s *Settings, v string) { s.Transcode.FilmGrain = atoiNonNeg(v, 0) }},
 	{"TRANSCODE_MIN_SAVINGS", func(s *Settings, v string) { s.Transcode.MinSavings = atoiNonNeg(v, 15) }},
 	{"TRANSCODE_PATH_MAP", func(s *Settings, v string) { s.Transcode.PathMap = v }},
@@ -273,7 +273,7 @@ func (s *Store) recompute() {
 	tc.Nice = min(max(tc.Nice, 0), 19)
 	tc.CRF = min(max(tc.CRF, 0), 63)
 	if tc.Preset <= 0 { // 0 would mean "slowest"; treat it as unset
-		tc.Preset = 6
+		tc.Preset = 8
 	}
 	tc.Preset = min(tc.Preset, 13)
 	tc.FilmGrain = min(max(tc.FilmGrain, 0), 50)
