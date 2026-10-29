@@ -115,8 +115,45 @@ func (a *App) ensureSeries(ctx context.Context, g *GrabRequest) (*SeriesDetail, 
 		g.SeriesID = s.ID
 		slog.Info("added series to sonarr", "title", s.Title, "id", s.ID)
 		a.Library.Refresh(ctx)
+		// Sonarr fills in a new show's episodes in a background refresh.
+		// Matching the release before that sees no episodes, so a pack
+		// would get no watch-first job and nothing would track it.
+		id := g.SeriesID
+		return awaitEpisodes(ctx, func(ctx context.Context) (*SeriesDetail, error) { return a.Series(ctx, id, true) })
 	}
 	return a.Series(ctx, g.SeriesID, true)
+}
+
+// How long a grab waits for Sonarr to list a just-added show's episodes.
+var (
+	episodeWait = 30 * time.Second
+	episodePoll = time.Second
+)
+
+// awaitEpisodes fetches the series until it lists episodes or episodeWait
+// runs out, and returns the last fetch either way.
+func awaitEpisodes(ctx context.Context, fetch func(context.Context) (*SeriesDetail, error)) (*SeriesDetail, error) {
+	deadline := time.Now().Add(episodeWait)
+	for {
+		d, err := fetch(ctx)
+		if err != nil || hasEpisodes(d) || !time.Now().Before(deadline) {
+			return d, err
+		}
+		select {
+		case <-ctx.Done():
+			return d, nil
+		case <-time.After(episodePoll):
+		}
+	}
+}
+
+func hasEpisodes(d *SeriesDetail) bool {
+	for _, s := range d.Seasons {
+		if len(s.Episodes) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // defaults picks a quality profile (preferring one matching hint) and the
@@ -224,6 +261,9 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 	if multiSeason && !g.Force && c.QBit != nil && g.Release.Protocol != "usenet" {
 		g.Force = true
 		watch = true
+		// Sonarr never queues these, so the watch-first job is the only
+		// thing that tracks and imports it, even when no episode matched.
+		isPack = true
 	}
 
 	if g.Force {

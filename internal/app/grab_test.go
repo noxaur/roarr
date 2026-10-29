@@ -193,3 +193,28 @@ func TestMagnetHash(t *testing.T) {
 		t.Fatalf("no hash = %q", got)
 	}
 }
+
+func TestAwaitEpisodesWaitsForSonarrRefresh(t *testing.T) {
+	defer func(w, p time.Duration) { episodeWait, episodePoll = w, p }(episodeWait, episodePoll)
+	episodeWait, episodePoll = time.Second, time.Millisecond
+
+	calls := 0
+	d, err := awaitEpisodes(context.Background(), func(context.Context) (*SeriesDetail, error) {
+		calls++
+		if calls < 3 {
+			return &SeriesDetail{}, nil // just added: no episodes yet
+		}
+		return &SeriesDetail{Seasons: []SeasonDetail{{Number: 1, Episodes: []EpisodeDetail{{ID: 7, Season: 1, Number: 1}}}}}, nil
+	})
+	if err != nil || calls != 3 || !hasEpisodes(d) {
+		t.Fatalf("calls=%d err=%v episodes=%v", calls, err, hasEpisodes(d))
+	}
+
+	// A show with no episodes at all gives up after episodeWait.
+	episodeWait = 20 * time.Millisecond
+	start := time.Now()
+	d, err = awaitEpisodes(context.Background(), func(context.Context) (*SeriesDetail, error) { return &SeriesDetail{}, nil })
+	if err != nil || d == nil || hasEpisodes(d) || time.Since(start) > time.Second {
+		t.Fatalf("empty show: d=%v err=%v took=%v", d, err, time.Since(start))
+	}
+}

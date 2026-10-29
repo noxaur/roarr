@@ -535,7 +535,8 @@ func (w *WatchFirst) importReady(ctx context.Context, c *Clients, j *WatchJob, t
 	// when Sonarr and qBittorrent see the same paths (the usual /data layout)
 	// or Sonarr has a remote path mapping for qBittorrent's.
 	items, err := c.Sonarr.ManualImportCandidates(ctx, strings.ToUpper(hash), "")
-	if (err != nil || len(items) == 0) && t.ContentPath != "" {
+	tracked := err == nil && len(items) > 0
+	if !tracked && t.ContentPath != "" {
 		folder := t.ContentPath
 		if len(j.Files) > 0 && !strings.Contains(j.Files[0].Name, "/") {
 			folder = t.SavePath // single-folder-less torrent
@@ -571,7 +572,11 @@ func (w *WatchFirst) importReady(ctx context.Context, c *Clients, j *WatchJob, t
 				it.Episodes = append(it.Episodes, arr.Episode{ID: id})
 			}
 		}
-		it.DownloadID = strings.ToUpper(hash)
+		// Sonarr imports the file but then fails the command with a null
+		// reference when the download id names a download it does not track.
+		if tracked {
+			it.DownloadID = strings.ToUpper(hash)
+		}
 		batch = append(batch, it)
 		batchFiles = append(batchFiles, f.Index)
 	}
