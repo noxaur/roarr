@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,6 +58,34 @@ type Transcode struct {
 	// PathMap rewrites *arr file paths to paths roarr can read:
 	// "/tv=/media/tv,/movies=/media/movies".
 	PathMap string `json:"pathMap,omitempty"`
+	// Schedule limits conversion to these weekly windows. Empty means any
+	// time.
+	Schedule []Window `json:"schedule,omitempty"`
+}
+
+// Window is a weekly span of local time.
+type Window struct {
+	// Days the window starts on, 0 = Sunday to 6 = Saturday. Empty means
+	// every day.
+	Days []int `json:"days,omitempty"`
+	// From and To are "HH:MM". A To at or before From ends the next day;
+	// "24:00" is the end of the day.
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// ParseClock reads "HH:MM" as minutes after midnight. "24:00" is allowed.
+func ParseClock(s string) (int, bool) {
+	h, m, ok := strings.Cut(strings.TrimSpace(s), ":")
+	if !ok || len(m) != 2 {
+		return 0, false
+	}
+	hh, err1 := strconv.Atoi(h)
+	mm, err2 := strconv.Atoi(m)
+	if err1 != nil || err2 != nil || hh < 0 || mm < 0 || mm > 59 || hh > 24 || (hh == 24 && mm != 0) {
+		return 0, false
+	}
+	return hh*60 + mm, true
 }
 
 // Import decides who downloads and imports grabs.
@@ -278,6 +307,7 @@ func (s *Store) recompute() {
 	tc.Preset = min(tc.Preset, 13)
 	tc.FilmGrain = min(max(tc.FilmGrain, 0), 50)
 	tc.MinSavings = min(max(tc.MinSavings, 0), 90)
+	tc.Schedule = cleanSchedule(tc.Schedule)
 	if cur.Import.Mode != "native" {
 		cur.Import.Mode = "arr"
 	}
@@ -293,6 +323,34 @@ func (s *Store) recompute() {
 		cur.Prefs.Resolutions = release.DefaultPrefs().Resolutions
 	}
 	s.cur, s.locked = cur, locked
+}
+
+// cleanSchedule drops windows with bad times and days out of range. A
+// window whose days are all out of range is dropped, not widened to every
+// day.
+func cleanSchedule(ws []Window) []Window {
+	var out []Window
+	for _, w := range ws {
+		from, ok1 := ParseClock(w.From)
+		_, ok2 := ParseClock(w.To)
+		if !ok1 || !ok2 || from == 24*60 {
+			continue
+		}
+		var days []int
+		seen := map[int]bool{}
+		for _, d := range w.Days {
+			if d >= 0 && d <= 6 && !seen[d] {
+				seen[d] = true
+				days = append(days, d)
+			}
+		}
+		if len(w.Days) > 0 && len(days) == 0 {
+			continue
+		}
+		sort.Ints(days)
+		out = append(out, Window{Days: days, From: strings.TrimSpace(w.From), To: strings.TrimSpace(w.To)})
+	}
+	return out
 }
 
 // NormalizeURL cleans a service URL as typed by a person: surrounding

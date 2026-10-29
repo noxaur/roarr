@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TranscodeJob, TranscodeStatus } from "./api";
-import { baseName, jobTag, pendingFor, savedShare } from "./transcode";
+import { baseName, holdText, jobTag, pendingFor, savedShare, serverClock } from "./transcode";
 
 const job = (over: Partial<TranscodeJob>): TranscodeJob => ({ id: "j", path: "/media/tv/Show/Season 01/Show - S01E01.mkv", state: "queued", percent: 0, queuedAt: "", kind: "tv", titleId: 1, ...over });
 const status = (jobs: TranscodeJob[], enabled = true): TranscodeStatus => ({
@@ -35,5 +35,21 @@ describe("transcode", () => {
     expect(jobTag(job({}))).toBe("AV1 queued");
     expect(savedShare(job({ srcBytes: 1000, savedBytes: 540 }))).toBeCloseTo(0.54);
     expect(savedShare(job({}))).toBe(0);
+    expect(jobTag(job({ state: "running", percent: 50, paused: true }))).toBe("AV1 paused");
+  });
+  it("shows schedule times on the server's clock", () => {
+    const now = new Date("2026-11-02T12:00:00Z"); // Monday
+    expect(serverClock("2026-11-02T21:00:00Z", 3600, now)).toBe("22:00");
+    expect(serverClock("2026-11-03T06:00:00Z", 3600, now)).toBe("Tue 07:00");
+    expect(serverClock("2026-11-02T23:30:00Z", 0, now)).toBe("23:30");
+  });
+  it("says what holds the queue", () => {
+    const now = new Date("2026-11-02T12:00:00Z");
+    const st = (over: Partial<TranscodeStatus>) => ({ ...status([]), ...over });
+    expect(holdText(st({}), now)).toBe("");
+    expect(holdText(st({ paused: true, held: true, scheduled: true, nextChange: "2026-11-02T22:00:00Z" }), now)).toBe("Paused");
+    expect(holdText(st({ held: true, scheduled: true, nextChange: "2026-11-02T22:00:00Z", zoneOffset: 0 }), now)).toBe("Waiting until 22:00");
+    expect(holdText(st({ scheduled: true, nextChange: "2026-11-03T07:00:00Z", zoneOffset: 0 }), now)).toBe("Running until Tue 07:00");
+    expect(holdText(st({ enabled: false, paused: true }), now)).toBe("");
   });
 });

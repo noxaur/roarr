@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, type Kind, type TranscodeJob, type TranscodeStatus } from "./api";
+import { api, type Kind, type ScheduleWindow, type TranscodeJob, type TranscodeStatus } from "./api";
+import { pad } from "./format";
 
 // AV1 conversion state. Admin shows the queue; a title page only marks the
 // files being converted right now.
@@ -20,9 +21,41 @@ export function pendingFor(st: TranscodeStatus | null, kind: Kind, titleId: numb
   return m;
 }
 
-/** Short text for a file being converted: "AV1 42%", "AV1 queued". */
+/** Short text for a file being converted: "AV1 42%", "AV1 paused", "AV1 queued". */
 export function jobTag(j: TranscodeJob): string {
-  return j.state === "running" ? `AV1 ${Math.floor(j.percent)}%` : "AV1 queued";
+  if (j.state !== "running") return "AV1 queued";
+  return j.paused ? "AV1 paused" : `AV1 ${Math.floor(j.percent)}%`;
+}
+
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const LONG_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** Days in the order a week is shown, Monday first. */
+export const WEEK = [1, 2, 3, 4, 5, 6, 0].map((d) => ({ day: d, short: DAY_NAMES[d], name: LONG_NAMES[d] }));
+
+/** A new schedule window: every night. */
+export const newWindow = (): ScheduleWindow => ({ days: [1, 2, 3, 4, 5, 6, 0], from: "23:00", to: "07:00" });
+
+/**
+ * A moment as the server's wall clock shows it, "07:00", or "Tue 07:00" when
+ * it is not today there. The schedule is in server time, so the browser's
+ * own zone is not used.
+ */
+export function serverClock(iso: string, offsetSec: number, now = new Date()): string {
+  const at = new Date(Date.parse(iso) + offsetSec * 1000);
+  const here = new Date(now.getTime() + offsetSec * 1000);
+  const hm = `${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}`;
+  return at.toISOString().slice(0, 10) === here.toISOString().slice(0, 10) ? hm : `${DAY_NAMES[at.getUTCDay()]} ${hm}`;
+}
+
+/** What holds or limits the queue: "Paused", "Waiting until 23:00", "Running until 07:00"; "" when it runs freely. */
+export function holdText(st: TranscodeStatus, now = new Date()): string {
+  if (!st.enabled) return "";
+  if (st.paused) return "Paused";
+  const at = st.nextChange ? serverClock(st.nextChange, st.zoneOffset ?? 0, now) : "";
+  if (st.held) return at ? `Waiting until ${at}` : "Waiting for schedule";
+  return st.scheduled && at ? `Running until ${at}` : "";
 }
 
 /** Share of the source size saved, 0..1; 0 when unknown. */

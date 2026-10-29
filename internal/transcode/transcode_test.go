@@ -183,7 +183,27 @@ type fakeRunner struct {
 	outProbe []byte            // ffprobe json of the written file
 	runErr   error
 	onRun    func() // runs while ffmpeg "encodes"
+	proc     *fakeProc
 	ran      [][]string
+}
+
+// fakeProc records suspend and resume calls.
+type fakeProc struct {
+	err               error
+	suspends, resumes int
+}
+
+func (p *fakeProc) Suspend() error {
+	if p.err != nil {
+		return p.err
+	}
+	p.suspends++
+	return nil
+}
+
+func (p *fakeProc) Resume() error {
+	p.resumes++
+	return nil
 }
 
 func (f *fakeRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -200,10 +220,16 @@ func (f *fakeRunner) Output(_ context.Context, name string, args ...string) ([]b
 	return nil, nil
 }
 
-func (f *fakeRunner) Run(_ context.Context, _ int, _ string, args []string, line func(string)) error {
+func (f *fakeRunner) Run(ctx context.Context, _ int, _ string, args []string, line func(string), started func(Proc)) error {
 	f.ran = append(f.ran, args)
+	if f.proc != nil && started != nil {
+		started(f.proc)
+	}
 	if f.onRun != nil {
 		f.onRun()
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	line("out_time_us=50000000")
 	line("speed=2.5x")
