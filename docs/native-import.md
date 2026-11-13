@@ -286,7 +286,7 @@ a.Hooks.AfterImport(func(ctx context.Context, e importer.Event) {
 | `GET /api/imports` | New. Shows the native settings, all jobs with the placement and errors of each file, the tracked titles and the imported files. `?title=tv:tmdb:1399` shows the files of one title. |
 | `GET /api/status` | Adds `importMode`. |
 | `GET /api/tv/tvdb/{tvdb}?tmdb=`, `GET /api/movie/tmdb/{tmdb}` | When Sonarr/Radarr are not configured, these use TMDB through Seerr. Before, they returned an error. |
-| `PUT /api/settings` | When the request has no `import` object, the stored import settings stay. The current UI does not know these settings yet. |
+| `PUT /api/settings` | When the request has no `import` object, the stored import settings stay. |
 | `GET /api/library`, `GET /api/tv/{id}`, `GET /api/movie/{id}` | Without Sonarr/Radarr: titles from `library.json` (see [Native library](#native-library-no-sonarrradarr)). An unknown id gives 404. |
 | `POST /api/tv/{id}/episodes`, `PATCH /api/{kind}/{id}`, `POST /api/{kind}/{id}/command/{refresh\|search}`, `DELETE /api/movie/{id}/file`, `DELETE /api/{kind}/{id}` | Without Sonarr/Radarr: delete, monitor, search and remove in the native library. New option `removeTorrent`. A quality profile change gives an error. |
 | `POST /api/grab` | In the native library, `seriesId`/`movieId` in the result is the library id of the title. |
@@ -330,5 +330,3 @@ Native mode does not do these things yet:
 - **Season packs that finish while roarr is stopped:** roarr imports them
   at the next start. Torrents that you add to qBittorrent outside roarr
   are ignored, also when they are in the `roarr` category.
-- **The settings UI** does not show the import settings yet. Use the
-  environment variables, or `settings.json` → `import`.
