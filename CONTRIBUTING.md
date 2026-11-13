@@ -35,7 +35,7 @@ Thank you for your help. This page tells you how to set up, check and submit a c
 
 - Write commit messages in English: `type(scope): description`. The scope is optional.
 - Write the pull request title like a commit message: `type(scope): description`. Example: `feat(transcode): pause AV1 encoding and limit it to a weekly schedule`.
-- Write the pull request body in this order: the problem in 1 to 3 sentences, a `## Changes` heading with an unordered list, and a `## Verification` heading that says how you verified the change.
+- Write the pull request body as the [pr skill](.agents/skills/pr/SKILL.md) describes.
 - For a UI change, attach a before image and an after image. For motion, attach a video. Upload them to the pull request. Do not commit them.
 - Verify a bug before you fix it. Fix only bugs that you verified.
 
