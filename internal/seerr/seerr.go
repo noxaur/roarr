@@ -111,7 +111,9 @@ type TV struct {
 	PosterPath   string `json:"posterPath"`
 	BackdropPath string `json:"backdropPath"`
 	Status       string `json:"status"`
-	Genres       []struct {
+	// EpisodeRunTime is in minutes, the usual length first.
+	EpisodeRunTime []int `json:"episodeRunTime"`
+	Genres         []struct {
 		Name string `json:"name"`
 	} `json:"genres"`
 	ExternalIDs struct {

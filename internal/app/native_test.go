@@ -308,3 +308,22 @@ func TestNativeImportIsQueuedForTranscode(t *testing.T) {
 		t.Fatalf("transcode queue %+v, want the library file", jobs)
 	}
 }
+
+func TestNativeVerifyKnowsTheRuntime(t *testing.T) {
+	// A 15 minute short is a fake only if its runtime is unknown.
+	a, dest := nativeMovieApp(t, `{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","width":1920,"height":1080},{"index":1,"codec_type":"audio","codec_name":"aac","channels":2}],"format":{"format_name":"matroska,webm","duration":"900"}}`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/movie/9" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"id":9,"title":"The Movie","runtime":15}`))
+	}))
+	t.Cleanup(srv.Close)
+	a.clients.Seerr = seerr.New(srv.URL, "k")
+	a.Native.tick(context.Background())
+	if _, err := os.Stat(dest); err != nil {
+		r, _ := a.Verify.Record("abc")
+		t.Fatalf("not imported: %v, verdict %+v", err, r.Verdict)
+	}
+}

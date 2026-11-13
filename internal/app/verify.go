@@ -40,6 +40,7 @@ type VerifyRecord struct {
 	Kind       string          `json:"kind"`   // tv | movie
 	SeriesID   int             `json:"seriesId,omitempty"`
 	MovieID    int             `json:"movieId,omitempty"`
+	TmdbID     int             `json:"tmdbId,omitempty"` // native imports, which have no *arr id
 	EpisodeIDs []int           `json:"episodeIds,omitempty"`
 	Title      string          `json:"title"`
 	Release    string          `json:"release"`
@@ -489,7 +490,7 @@ func (v *Verification) beforeImport(ctx context.Context, c importer.Candidate) e
 	v.mu.Lock()
 	r, ok := v.recs[hash]
 	if !ok {
-		r = &VerifyRecord{Hash: hash, Source: "roarr", Kind: c.Title.Kind, Title: c.Title.Title, Release: c.Release, Added: time.Now(), State: "pending"}
+		r = &VerifyRecord{Hash: hash, Source: "roarr", Kind: c.Title.Kind, TmdbID: c.Title.TmdbID, Title: c.Title.Title, Release: c.Release, Added: time.Now(), State: "pending"}
 		v.recs[hash] = r
 	}
 	judged := r.Verdict != nil
@@ -525,6 +526,14 @@ func (v *Verification) runtime(ctx context.Context, r VerifyRecord) int {
 	case r.Kind == "movie" && r.MovieID != 0 && c.Radarr != nil:
 		if m, err := c.Radarr.Movie(rctx, r.MovieID); err == nil {
 			return m.Runtime
+		}
+	case r.Kind == "movie" && r.TmdbID != 0 && c.Seerr != nil:
+		if m, err := c.Seerr.Movie(rctx, r.TmdbID); err == nil {
+			return m.Runtime
+		}
+	case r.Kind == "tv" && r.TmdbID != 0 && c.Seerr != nil:
+		if s, err := c.Seerr.TV(rctx, r.TmdbID); err == nil && len(s.EpisodeRunTime) > 0 {
+			return s.EpisodeRunTime[0]
 		}
 	}
 	return 0
