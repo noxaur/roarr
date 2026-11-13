@@ -82,13 +82,21 @@ type Engine struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	cache    map[string]*entry
-	queues   map[int]*queue
-	seq      uint64
-	ixAt     time.Time
+	mu        sync.Mutex
+	cache     map[string]*entry
+	queues    map[int]*queue
+	seq       uint64
+	ixAt      time.Time
+	ix        []arr.Indexer
+	disabled  map[int]time.Time
+	ixRefresh *ixRefresh // in flight, shared by every caller
+}
+
+type ixRefresh struct {
+	done     chan struct{}
 	ix       []arr.Indexer
 	disabled map[int]time.Time
+	err      error
 }
 
 type entry struct {
@@ -113,6 +121,9 @@ type queue struct {
 // errTTL is how long a failed query is remembered before it is retried.
 const errTTL = 90 * time.Second
 
+// ixTTL is how long the indexer list is used before it is refreshed.
+const ixTTL = 3 * time.Minute
+
 // NewEngine returns an engine with defaults.
 func NewEngine(p *arr.Prowlarr) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -123,20 +134,41 @@ func NewEngine(p *arr.Prowlarr) *Engine {
 // Close stops the per-indexer workers.
 func (e *Engine) Close() { e.cancel() }
 
-// Indexers returns enabled indexers (cached for a few minutes).
+// Indexers returns enabled indexers and the ones Prowlarr has disabled for
+// now. A list older than ixTTL is still returned at once and refreshed in the
+// background, so only the first search ever waits for Prowlarr here.
 func (e *Engine) Indexers(ctx context.Context) ([]arr.Indexer, map[int]time.Time, error) {
 	e.mu.Lock()
-	if time.Since(e.ixAt) < 3*time.Minute && e.ix != nil {
-		ix, dis := e.ix, e.disabled
-		e.mu.Unlock()
-		return ix, dis, nil
+	ix, dis, r := e.ix, e.disabled, e.ixRefresh
+	if r == nil && (ix == nil || time.Since(e.ixAt) >= ixTTL) {
+		r = &ixRefresh{done: make(chan struct{})}
+		e.ixRefresh = r
+		go e.refreshIndexers(r)
 	}
 	e.mu.Unlock()
-	all, err := e.Prowlarr.AllIndexers(ctx)
-	if err != nil {
-		return nil, nil, err
+	if ix != nil {
+		return ix, dis, nil
 	}
-	dis, _ := e.Prowlarr.DisabledIndexers(ctx)
+	select {
+	case <-r.done:
+		return r.ix, r.disabled, r.err
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+}
+
+func (e *Engine) refreshIndexers(r *ixRefresh) {
+	ctx, cancel := context.WithTimeout(e.ctx, e.Timeout)
+	defer cancel()
+	var dis map[int]time.Time
+	var disErr error
+	disDone := make(chan struct{})
+	go func() {
+		dis, disErr = e.Prowlarr.DisabledIndexers(ctx)
+		close(disDone)
+	}()
+	all, err := e.Prowlarr.AllIndexers(ctx)
+	<-disDone
 	var on []arr.Indexer
 	for _, i := range all {
 		if i.Enable {
@@ -146,10 +178,26 @@ func (e *Engine) Indexers(ctx context.Context) ([]arr.Indexer, map[int]time.Time
 	sort.Slice(on, func(a, b int) bool {
 		return on[a].Priority < on[b].Priority || on[a].Priority == on[b].Priority && on[a].ID < on[b].ID
 	})
+
 	e.mu.Lock()
-	e.ix, e.disabled, e.ixAt = on, dis, time.Now()
+	if disErr != nil {
+		// Keep what was known rather than treating every indexer as healthy.
+		slog.Debug("indexer status lookup failed", "err", disErr)
+		dis = map[int]time.Time{}
+		for id, until := range e.disabled {
+			if until.After(time.Now()) {
+				dis[id] = until
+			}
+		}
+	}
+	if err == nil {
+		e.ix, e.disabled, e.ixAt = on, dis, time.Now()
+		r.ix, r.disabled = on, dis
+	}
+	r.err = err
+	e.ixRefresh = nil
 	e.mu.Unlock()
-	return on, dis, nil
+	close(r.done)
 }
 
 type job struct {

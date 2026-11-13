@@ -24,6 +24,17 @@ type fakeProwlarr struct {
 	delay time.Duration
 	fail  bool
 	gate  map[string]chan struct{}
+
+	ixCalls, statusCalls int
+	ixGate               chan struct{} // the indexer list waits for it when set
+	status               string        // body of /indexerstatus, "[]" when empty
+	statusFail           bool
+}
+
+func (f *fakeProwlarr) listCalls() (indexers, status int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ixCalls, f.statusCalls
 }
 
 func (f *fakeProwlarr) ran(ix string) []string {
@@ -35,10 +46,28 @@ func (f *fakeProwlarr) ran(ix string) []string {
 func (f *fakeProwlarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/v1/indexer":
+		f.mu.Lock()
+		f.ixCalls++
+		gate := f.ixGate
+		f.mu.Unlock()
+		if gate != nil {
+			<-gate
+		}
 		caps := `{"tvSearchParams":["q","season","ep","tvdbId"],"movieSearchParams":["q","imdbId"],"categories":[{"id":5000},{"id":2000}]}`
 		w.Write([]byte(`[{"id":1,"name":"one","enable":true,"capabilities":` + caps + `},{"id":2,"name":"two","enable":true,"capabilities":` + caps + `}]`))
 	case "/api/v1/indexerstatus":
-		w.Write([]byte(`[]`))
+		f.mu.Lock()
+		f.statusCalls++
+		body, fail := f.status, f.statusFail
+		f.mu.Unlock()
+		if fail {
+			http.Error(w, "boom", 500)
+			return
+		}
+		if body == "" {
+			body = `[]`
+		}
+		w.Write([]byte(body))
 	case "/api/v1/search":
 		ix := r.URL.Query().Get("indexerIds")
 		term := r.URL.Query().Get("query")
@@ -220,6 +249,117 @@ func TestStuckIndexerDoesNotBlockOthers(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("indexer 1 waited for stuck indexer 2")
+	}
+}
+
+func TestColdIndexerListIsFetchedOnce(t *testing.T) {
+	gate := make(chan struct{})
+	f := &fakeProwlarr{order: map[string][]string{}, ixGate: gate}
+	e := newTestEngine(t, f)
+	release := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release)
+
+	var wg sync.WaitGroup
+	got := make([]int, 8)
+	for i := range got {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ix, _, _ := e.Indexers(context.Background())
+			got[i] = len(ix)
+		}()
+	}
+	// The status lookup does not wait for the indexer list.
+	waitFor(t, "both lookups to start", func() bool {
+		ix, st := f.listCalls()
+		return ix == 1 && st == 1
+	})
+	time.Sleep(20 * time.Millisecond) // let every caller arrive
+	release()
+	wg.Wait()
+	if ix, st := f.listCalls(); ix != 1 || st != 1 {
+		t.Fatalf("%d indexer and %d status calls for 8 cold callers, want 1 each", ix, st)
+	}
+	for _, n := range got {
+		if n != 2 {
+			t.Fatalf("callers got %v indexers, want 2 each", got)
+		}
+	}
+}
+
+// expireIndexers makes the cached indexer list older than its TTL.
+func expireIndexers(e *Engine) {
+	e.mu.Lock()
+	e.ixAt = time.Now().Add(-2 * ixTTL)
+	e.mu.Unlock()
+}
+
+func indexersFresh(e *Engine) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return time.Since(e.ixAt) < ixTTL && e.ixRefresh == nil
+}
+
+func TestExpiredIndexerListIsServedWhileRefreshing(t *testing.T) {
+	f := &fakeProwlarr{order: map[string][]string{}}
+	e := newTestEngine(t, f)
+	bg := context.Background()
+	if _, _, err := e.Indexers(bg); err != nil {
+		t.Fatal(err)
+	}
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	t.Cleanup(release)
+	f.mu.Lock()
+	f.ixGate = gate
+	f.mu.Unlock()
+	expireIndexers(e)
+
+	for i := 0; i < 2; i++ {
+		done := make(chan int)
+		go func() {
+			ix, _, _ := e.Indexers(bg)
+			done <- len(ix)
+		}()
+		select {
+		case n := <-done:
+			if n != 2 {
+				t.Fatalf("stale list has %d indexers, want 2", n)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("an expired list waited for the slow refresh")
+		}
+	}
+	waitFor(t, "the refresh to start", func() bool { ix, _ := f.listCalls(); return ix == 2 })
+	release()
+	waitFor(t, "the refresh to land", func() bool { return indexersFresh(e) })
+	if ix, st := f.listCalls(); ix != 2 || st != 2 {
+		t.Fatalf("%d indexer and %d status calls, want one refresh (2 each)", ix, st)
+	}
+}
+
+func TestFailedStatusLookupKeepsDisabledSet(t *testing.T) {
+	till := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	f := &fakeProwlarr{order: map[string][]string{}, status: `[{"indexerId":2,"disabledTill":"` + till + `"}]`}
+	e := newTestEngine(t, f)
+	bg := context.Background()
+	if _, dis, _ := e.Indexers(bg); len(dis) != 1 || dis[2].IsZero() {
+		t.Fatalf("disabled = %v, want indexer 2", dis)
+	}
+
+	f.mu.Lock()
+	f.statusFail = true
+	f.mu.Unlock()
+	e.mu.Lock()
+	e.disabled = map[int]time.Time{1: time.Now().Add(-time.Minute), 2: e.disabled[2]}
+	e.mu.Unlock()
+	expireIndexers(e)
+	e.Indexers(bg)
+	waitFor(t, "the refresh to land", func() bool { return indexersFresh(e) })
+
+	// Indexer 2 stays disabled; indexer 1's ban ran out, so it is not kept.
+	if _, dis, _ := e.Indexers(bg); len(dis) != 1 || dis[2].IsZero() {
+		t.Fatalf("disabled after a failed status lookup = %v, want indexer 2", dis)
 	}
 }
 
