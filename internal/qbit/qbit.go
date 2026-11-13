@@ -82,13 +82,16 @@ func (c *Client) tryLogin(ctx context.Context) error {
 		return nil
 	}
 	form := url.Values{"username": {c.Username}, "password": {c.Password}}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+"/api/v2/auth/login", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+"/api/v2/auth/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	// Referer only: the login that is known to work sends no Origin header.
 	req.Header.Set("Referer", c.Base)
 	res, err := c.http.Do(req)
 	if err != nil {
-		return &httpx.Error{Service: "qbittorrent", Message: httpx.Unreachable(err)}
+		return httpx.TransportError("qbittorrent", err)
 	}
 	defer res.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 512))
@@ -161,7 +164,7 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, b
 		req.Header.Set("Referer", c.Base)
 		res, err := c.http.Do(req)
 		if err != nil {
-			return &httpx.Error{Service: "qbittorrent", Message: httpx.Unreachable(err)}
+			return httpx.TransportError("qbittorrent", err)
 		}
 		if res.StatusCode == http.StatusForbidden && attempt == 0 && c.Password != "" {
 			res.Body.Close()

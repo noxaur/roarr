@@ -2,12 +2,14 @@ package qbit
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestAddTorrentFails(t *testing.T) {
@@ -69,5 +71,35 @@ func TestLoginBackoff(t *testing.T) {
 	}
 	if logins != 1 {
 		t.Fatalf("logins = %d, want 1", logins)
+	}
+}
+
+// A URL that cannot be parsed is an error, not a nil request.
+func TestMalformedURL(t *testing.T) {
+	if _, err := New("http://bad host", "u", "p").Version(context.Background()); err == nil || !strings.Contains(err.Error(), "invalid character") {
+		t.Fatalf("err = %v, want the URL parse error", err)
+	}
+}
+
+// Only a failed connection is "unreachable": a timeout and a cancelled
+// request keep their own cause.
+func TestTransportErrorKeepsCause(t *testing.T) {
+	hang := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-hang }))
+	defer srv.Close()
+	defer close(hang)
+	for _, password := range []string{"", "p"} { // with a password the login is the request that fails
+		c := New(srv.URL, "u", password)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		_, err := c.Version(ctx)
+		cancel()
+		if err == nil || !strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "unreachable") {
+			t.Errorf("password %q: timeout err = %v, want timed out", password, err)
+		}
+		ctx, cancel = context.WithCancel(context.Background())
+		time.AfterFunc(20*time.Millisecond, cancel)
+		if _, err := c.Version(ctx); !errors.Is(err, context.Canceled) {
+			t.Errorf("password %q: cancel err = %v, want context.Canceled", password, err)
+		}
 	}
 }
