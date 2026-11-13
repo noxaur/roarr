@@ -269,6 +269,53 @@ func TestPathMap(t *testing.T) {
 	}
 }
 
+func TestPathMapKeepsValidRulesNextToABrokenOne(t *testing.T) {
+	m, err := ParsePathMap(` /downloads = /data/downloads , broken, /downloads/tv=/tv`)
+	if err == nil || !strings.Contains(err.Error(), "broken") {
+		t.Fatalf("want an error naming the broken rule, got %v", err)
+	}
+	if got := m.Map("/downloads/tv/a.mkv"); got != "/tv/a.mkv" {
+		t.Errorf("Map = %q, want the valid rules to apply", got)
+	}
+}
+
+func TestPathMapMatch(t *testing.T) {
+	m := PathMap{
+		{Remote: "/downloads/", Local: "/data/torrents/"},
+		{Remote: "/downloads/tv", Local: "/tv-dl"},
+		{Remote: `D:\Torrents\`, Local: `E:\Media\`},
+		{Remote: "/same", Local: "/same"},
+	}
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"/downloads/movies/X", "/data/torrents/movies/X", true},
+		{"/downloads/tv/Show S01", "/tv-dl/Show S01", true}, // longest prefix wins
+		{"/downloads", "/data/torrents", true},
+		{"/downloadsx/a", "/downloadsx/a", false},
+		{"/Downloads/a", "/Downloads/a", false}, // only drive letters ignore case
+		{`D:\Torrents\Show\e01.mkv`, `E:\Media/Show/e01.mkv`, true},
+		{`d:\torrents\Show\e01.mkv`, `E:\Media/Show/e01.mkv`, true},
+		{"d:/Torrents", `E:\Media`, true},
+		{`D:\TorrentsX\a.mkv`, `D:\TorrentsX\a.mkv`, false},
+		{"/same/a.mkv", "/same/a.mkv", true}, // matched, although unchanged
+		{"", "", false},
+	}
+	for _, c := range cases {
+		got, ok := m.Match(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("Match(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
+		}
+		if mapped := m.Map(c.in); mapped != c.want {
+			t.Errorf("Map(%q) = %q, want %q", c.in, mapped, c.want)
+		}
+	}
+	if got, ok := (PathMap)(nil).Match("/a/b"); got != "/a/b" || ok {
+		t.Errorf("empty map: %q, %v", got, ok)
+	}
+}
+
 // Callers outside the package bring their own episode ids (Sonarr's), so
 // the matcher must not read anything into them.
 func TestEpisodesOfWithForeignEpisodeIDs(t *testing.T) {
