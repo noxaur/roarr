@@ -390,8 +390,10 @@ export function Home({ kind }: { kind?: Kind }) {
   // ---------- context menu ----------
   const menuTargets = menuFor ? targetsOf(menuFor) : [];
   const menuOne = menuTargets.length === 1 ? menuTargets[0] : null;
-  const onMenuCapture = (e: MouseEvent) => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-sel]");
+  // Right-click, Shift+F10 and a touch hold all open through here; a hold
+  // fires no contextmenu event, so the pressed poster comes from details.
+  const onMenuOpenChange = (open: boolean, details: { event?: Event }) => {
+    const el = open ? (details.event?.target as HTMLElement | null)?.closest<HTMLElement>("[data-sel]") : null;
     setMenuFor(el?.dataset.sel ?? null);
     if (el?.dataset.sel) setCursor(el.dataset.sel);
   };
@@ -620,8 +622,8 @@ export function Home({ kind }: { kind?: Kind }) {
         ))}
       </div>
 
-      <Menu onOpenChange={(o) => !o && setMenuFor(null)}>
-        <MenuContextTrigger ref={shelf} onMouseDown={pointer.onMouseDown} onContextMenuCapture={onMenuCapture} className="min-h-[50vh] select-none">
+      <Menu onOpenChange={onMenuOpenChange}>
+        <MenuContextTrigger ref={shelf} onMouseDown={pointer.onMouseDown} className="min-h-[50vh] select-none">
           {!libraryLoaded ? (
             <Grid min={MIN[size]}>
               {Array.from({ length: 12 }, (_, i) => (
