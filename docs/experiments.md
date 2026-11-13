@@ -133,7 +133,7 @@ read these as ranges.
   complete, the client counts as a seed. Seeders drop the connection, and
   nothing reconnects until the next tracker announce. The "focus" strategy
   sat stalled for 400 s. roarr only uses priority 0 for files it will never
-  need: samples, and episodes already in the library.
+  need: samples, extras, and episodes already in the library.
 
 ### End to end (roarr → qBittorrent → Sonarr → Jellyfin)
 
