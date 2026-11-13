@@ -177,7 +177,8 @@ func mergeClaims(a, b Claims) Claims {
 }
 
 // CheckDuration compares a file's length with the expected runtime.
-// episodes is how many episodes the file holds (multi-episode files).
+// episodes is how many episodes the file holds (multi-episode files). A
+// known runtime decides alone, so a short that runs its length passes.
 func CheckDuration(sec float64, runtimeMin, episodes int, kind string) Check {
 	c := Check{Name: "duration", Level: Pass}
 	if sec <= 0 {
@@ -185,10 +186,6 @@ func CheckDuration(sec float64, runtimeMin, episodes int, kind string) Check {
 		return c
 	}
 	got := fmtMin(sec)
-	if sec < 120 {
-		c.Level, c.Reason = Fail, "only "+got+" long: a sample or trailer"
-		return c
-	}
 	if runtimeMin > 0 {
 		expected := float64(runtimeMin*max(1, episodes)) * 60
 		r := sec / expected
@@ -206,6 +203,8 @@ func CheckDuration(sec float64, runtimeMin, episodes int, kind string) Check {
 	}
 	// Runtime unknown: only extreme lengths stand out.
 	switch {
+	case sec < 120:
+		c.Level, c.Reason = Fail, "only "+got+" long: a sample or trailer"
 	case kind == "movie" && sec < 20*60:
 		c.Level, c.Reason = Fail, "only "+got+" long for a movie"
 	case kind == "movie" && sec < 45*60:

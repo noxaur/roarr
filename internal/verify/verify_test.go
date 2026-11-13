@@ -205,6 +205,9 @@ func TestCheckDuration(t *testing.T) {
 		{100 * 60, 0, 1, "movie", Pass},
 		{11 * 60, 0, 1, "tv", Pass}, // kids' show
 		{0, 45, 1, "tv", Warn},
+		{58, 1, 1, "movie", Pass},  // a one-minute short that runs its length
+		{58, 90, 1, "movie", Fail}, // the same file as a feature: a sample
+		{58, 0, 1, "tv", Fail},     // runtime unknown: under two minutes is a sample
 	}
 	for _, c := range cases {
 		if got := CheckDuration(c.sec, c.runtime, c.eps, c.kind); got.Level != c.want {
