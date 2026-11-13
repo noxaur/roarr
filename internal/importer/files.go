@@ -41,10 +41,12 @@ func IsSubtitle(name string) bool { return subtitleExts[strings.ToLower(path.Ext
 
 var (
 	sampleRe = regexp.MustCompile(`(?i)(^|[.\-_ \[(])sample([.\-_ \])]|$)`)
-	// extraRe finds a marker that ends the name ("Movie (2014)-trailer",
-	// "Movie.2010.Trailer.2"). Anywhere else the word belongs to the title
-	// ("Trailer.Park.Boys.S01E01", "The.Interview.2014.1080p").
-	extraRe = regexp.MustCompile(`(?i)(^|[.\-_ ])(featurettes?|trailers?|behind[.\-_ ]the[.\-_ ]scenes|deleted[.\-_ ]scenes?|making[.\-_ ]of|interviews?|bloopers|gag[.\-_ ]reel|extras|bonus|promo)([.\-_ ]?\d{1,2})?$`)
+	// extraRe finds a marker that ends the name, before any quality tags and
+	// group ("Movie (2014)-trailer", "Movie.2010.Trailer.2.1080p-GRP").
+	// Anywhere else the word belongs to the title ("Trailer.Park.Boys.S01E01",
+	// "The.Interview.2014.1080p").
+	extraRe = regexp.MustCompile(`(?i)(^|[.\-_ ])(featurettes?|trailers?|behind[.\-_ ]the[.\-_ ]scenes|deleted[.\-_ ]scenes?|making[.\-_ ]of|interviews?|bloopers|gag[.\-_ ]reel|extras|bonus|promo)([.\-_ ]?\d{1,2})?` +
+		`([.\-_ ](\d{3,4}[pi]|4k|uhd|hdr(10)?\+?|blu[.\-_ ]?ray|bdrip|brrip|web([.\-_ ]?(dl|rip))?|hdtv|dvdrip|remux|x26[45]|h[.\-_ ]?26[45]|hevc|avc|av1|aac|e?ac3|dts))*(-[a-z0-9]+)?$`)
 )
 
 // extraDirs are folder names that only ever hold bonus material.
