@@ -150,7 +150,7 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
             <SheetDescription className="truncate font-mono text-[12px]">{p.detail ?? ""}</SheetDescription>
           </div>
           <div className="flex items-center gap-2 font-mono text-[12px] text-muted-foreground tabular">
-            {!state.done && <Spinner />}
+            {!state.done && !state.errored && <Spinner />}
             <span>
               {answered}/{live.length || "…"} indexers
             </span>
@@ -264,7 +264,7 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
             </Th>
           </div>
 
-          {list.length === 0 && <div className="py-12 text-center text-[13px] text-muted-foreground">{state.done ? (plan.all.length ? "No releases match." : "Nothing found.") : "Waiting for indexers…"}</div>}
+          {list.length === 0 && <div className="py-12 text-center text-[13px] text-muted-foreground">{state.done ? (plan.all.length ? "No releases match." : "Nothing found.") : state.errored ? "The search did not finish." : "Waiting for indexers…"}</div>}
 
           {list.slice(0, limit).map((r) => (
             <Row
