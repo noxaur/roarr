@@ -71,6 +71,7 @@ type WatchFirst struct {
 	app  *App
 	path string
 
+	saveMu    sync.Mutex // one snapshot+write+rename of watch.json at a time
 	mu        sync.Mutex
 	jobs      map[string]*WatchJob // by hash, or by title while the hash is unknown
 	kick      chan struct{}
@@ -150,6 +151,8 @@ func (w *WatchFirst) Remove(key string) {
 }
 
 func (w *WatchFirst) save() {
+	w.saveMu.Lock()
+	defer w.saveMu.Unlock()
 	w.mu.Lock()
 	jobs := make([]*WatchJob, 0, len(w.jobs))
 	for _, j := range w.jobs {
@@ -161,7 +164,7 @@ func (w *WatchFirst) save() {
 		return
 	}
 	tmp := w.path + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
+	if writeJobs(tmp, b, 0o600) == nil {
 		_ = os.Rename(tmp, w.path)
 	}
 }
