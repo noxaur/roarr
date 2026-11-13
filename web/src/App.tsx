@@ -7,7 +7,7 @@ import { Toaster } from "./components/ui/toast";
 import { ConfirmProvider } from "./components/Confirm";
 import { DownloadsDrawer } from "./components/Downloads";
 import { Nav, isAdminPath, isDownloadsPath } from "./components/Nav";
-import { SearchPalette, type Command } from "./components/SearchPalette";
+import type { Command } from "./components/SearchPalette";
 import { ShortcutsDialog } from "./components/Shortcuts";
 import { ShellCtx, keyIsBusy } from "./lib/shell";
 import { undoLast } from "./lib/undo";
@@ -21,6 +21,7 @@ const MoviePage = page(pages.movie, (m) => m.MoviePage);
 const ActivityPage = page(pages.activity, (m) => m.ActivityPage);
 const RequestsPage = page(pages.requests, (m) => m.RequestsPage);
 const SettingsPage = page(pages.settings, (m) => m.SettingsPage);
+const SearchPalette = page(pages.palette, (m) => m.SearchPalette);
 
 // React.lazy suspends on the first render even when the code is already
 // here, and React then holds the fallback for up to 300 ms. A page whose code
@@ -170,7 +171,9 @@ function Shell({ authMode }: { authMode: string }) {
           <Suspense fallback={null}>{page}</Suspense>
         </div>
       </main>
-      <SearchPalette open={searching} onOpenChange={setSearching} commands={commands} />
+      <Suspense fallback={null}>
+        <SearchPalette open={searching} onOpenChange={setSearching} commands={commands} />
+      </Suspense>
       <DownloadsDrawer open={downloads} onOpenChange={setDownloads} />
       <ShortcutsDialog open={shortcuts} onOpenChange={setShortcuts} />
     </ShellCtx.Provider>

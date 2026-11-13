@@ -30,6 +30,8 @@ export const pages = {
   activity: chunk(() => import("../pages/Activity")),
   requests: chunk(() => import("../pages/Requests")),
   settings: chunk(() => import("../pages/Settings")),
+  // Not a page: the search palette loads right after the first paint instead of with it.
+  palette: chunk(() => import("../components/SearchPalette")),
 };
 
 /** Loads every page's code once the browser is idle, so no click waits on a chunk. */
