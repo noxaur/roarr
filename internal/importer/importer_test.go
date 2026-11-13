@@ -43,6 +43,21 @@ func TestClassify(t *testing.T) {
 		"Movie.2010/Movie.2010.nfo":              ClassOther,
 		"Show.S01E02.mkv.!qB":                    ClassVideo,
 		"Samuel.Jackson.Story.2019.mkv":          ClassVideo, // "Sam..." is not a sample
+		// A marker word in the title is not an extra.
+		"Trailer.Park.Boys.S01E01.720p.WEB.mkv":              ClassVideo,
+		"Interview.with.the.Vampire.S01E01.1080p.WEB.mkv":    ClassVideo,
+		"The.Interview.2014.1080p.BluRay.x264-GRP.mkv":       ClassVideo,
+		"Extras.S01E01.DVDRip.mkv":                           ClassVideo,
+		"Bonus.Family.S01E01.SWEDISH.1080p.WEB.mkv":          ClassVideo,
+		"Trailer.Park.Boys.S01/Trailer.Park.Boys.S01E02.mkv": ClassVideo,
+		"Show - S02E03 - The Interview.mkv":                  ClassVideo, // episode title
+		// Real extras: a trailing marker, or the folder.
+		"Movie (2014)/Movie (2014)-trailer.mkv":                     ClassExtra,
+		"Movie.2010/Movie.2010.Deleted.Scenes.mkv":                  ClassExtra,
+		"Movie.2010/Movie.2010.Trailer.2.mkv":                       ClassExtra,
+		"Movie.2010/Behind the Scenes.mkv":                          ClassExtra,
+		"Trailer.Park.Boys.S01/Extras/Trailer.Park.Boys.S01E01.mkv": ClassExtra,
+		"The.Interview.2014/The.Interview.2014-featurette.mkv":      ClassExtra,
 	}
 	for rel, want := range cases {
 		if got := Classify(rel); got != want {
