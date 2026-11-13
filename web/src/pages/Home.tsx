@@ -3,6 +3,7 @@ import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, FolderSync, Layo
 import { toast } from "sonner";
 import { api, type LibraryItem } from "@/lib/api";
 import { autoGet, run } from "@/lib/actions";
+import { copyText } from "@/lib/copy";
 import { bytes, fold } from "@/lib/format";
 import { libraryHref } from "@/lib/rank";
 import { Link, useRouter } from "@/lib/router";
@@ -275,7 +276,7 @@ export function Home({ kind }: { kind?: Kind }) {
     }
   };
 
-  const copyTitle = (it: LibraryItem) => navigator.clipboard?.writeText(it.title).then(() => toast(`Copied “${it.title}”`), () => {});
+  const copyTitle = (it: LibraryItem) => copyText(it.title, `Copied “${it.title}”`);
 
   const toggle = (key: string, range = false) => {
     const n = new Set(selected);
