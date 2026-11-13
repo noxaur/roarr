@@ -66,12 +66,15 @@ the search engine:
   show-wide query, then prefetching of other seasons (seasons with missing
   episodes first). A query already queued at low priority is bumped when a
   page asks for it.
-- **Abandoned prefetch is dropped.** If nobody waits for a prefetch query by
-  the time its turn comes, it is skipped instead of spending indexer quota.
+- **Abandoned queries are dropped.** If nobody waits for a queued query by
+  the time its turn comes, it is skipped, whatever its priority, so the next
+  click does not wait behind it. A query already sent runs to the end and
+  fills the cache.
 - **Per-episode queries only for 1–3 episodes.** For more, the season query
   already returns them.
 
-These rules are covered by `internal/search/engine_test.go`.
+The queue rules are covered by `internal/search/engine_test.go`. The
+per-episode rule lives in `internal/app`.
 
 ## 2. End-to-end through roarr
 
@@ -91,8 +94,8 @@ Two follow-ups came out of this:
 - **Auto mode does not wait for everything.** It grabs once every wanted
   episode is covered and the plan has not changed for 2 s, with at least
   2.5 s elapsed. Measured: a three-movie collection decided after 8.6 s,
-  and a whole show (62 episodes) after 2.6 s. The slow indexers keep filling
-  the cache in the background.
+  and a whole show (62 episodes) after 2.6 s. Queries already sent to slow
+  indexers still fill the cache; the ones still queued are dropped.
 
 ## 3. Watch-first: the download order for a season pack
 
