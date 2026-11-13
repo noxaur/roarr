@@ -574,10 +574,8 @@ function Row({
             </span>
           )}
           {r.infoUrl && (
-            <Button asChild variant="ghost" size="sm">
-              <a href={r.infoUrl} target="_blank" rel="noreferrer noopener">
-                <ExternalLink /> Indexer page
-              </a>
+            <Button render={<a href={r.infoUrl} target="_blank" rel="noreferrer noopener" />} variant="ghost" size="sm">
+              <ExternalLink /> Indexer page
             </Button>
           )}
           {failed && (

@@ -1,5 +1,5 @@
+@layer ui-sdk;
 @import "tailwindcss";
-@import "tw-animate-css";
 @import "@fontsource-variable/inter/opsz.css";
 @import "@fontsource/dm-mono/400.css";
 @import "@fontsource/dm-mono/500.css";
@@ -237,6 +237,17 @@
   border: 1px solid var(--live);
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--live) 12%, transparent);
+}
+
+/* The selection bar rises into place. */
+@utility rise-in {
+  animation: rise-in 150ms ease-out;
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    translate: 0 12px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

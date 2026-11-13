@@ -134,7 +134,7 @@ export function Num({
         min={min}
         max={max}
         step={step}
-        value={draft ?? value}
+        value={draft ?? String(value)}
         disabled={disabled}
         onChange={(e) => {
           setDraft(e.target.value);

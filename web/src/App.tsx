@@ -3,8 +3,7 @@ import { api, setUnauthorizedHandler } from "./lib/api";
 import { Router, match, useRouter } from "./lib/router";
 import { StoreProvider, forgetLocalCopy } from "./lib/store";
 import { pages, warmPages, type Chunk } from "./lib/prefetch";
-import { Toaster } from "./components/ui/sonner";
-import { TooltipProvider } from "./components/ui/tooltip";
+import { Toaster } from "./components/ui/toast";
 import { ConfirmProvider } from "./components/Confirm";
 import { DownloadsDrawer } from "./components/Downloads";
 import { Nav, isAdminPath, isDownloadsPath } from "./components/Nav";
@@ -75,7 +74,7 @@ export function App() {
 
   if (!me) return null;
   return (
-    <TooltipProvider delayDuration={300}>
+    <>
       {me.authenticated ? (
         <Router>
           <StoreProvider user={me.user}>
@@ -87,8 +86,8 @@ export function App() {
       ) : (
         <Login mode={me.authMode} onDone={check} />
       )}
-      <Toaster position="bottom-right" />
-    </TooltipProvider>
+      <Toaster />
+    </>
   );
 }
 

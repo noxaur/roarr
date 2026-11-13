@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Download } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@ui-sdk/react/toast";
 import { api, type RequestItem } from "@/lib/api";
 import { autoGet, errText } from "@/lib/actions";
 import { ago } from "@/lib/format";
@@ -85,9 +85,9 @@ export function RequestsPage() {
   };
 
   return (
-    <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)} className="gap-0">
+    <Tabs value={filter} onValueChange={(v) => v && setFilter(v as Filter)} className="gap-0">
       <PageHeader title="Requests">
-        <TabsList>
+        <TabsList aria-label="Show requests">
           {FILTERS.map(([v, name]) => (
             <TabsTrigger key={v} value={v} className="flex-none">
               {name}
@@ -156,8 +156,8 @@ export function RequestsPage() {
                         )}
                       </>
                     ) : (
-                      <Button asChild variant="outline" size="sm">
-                        <Link to={href(r)}>Open</Link>
+                      <Button render={<Link to={href(r)} />} variant="outline" size="sm">
+                        Open
                       </Button>
                     )}
                   </div>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, RefreshCw, RotateCcw } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@ui-sdk/react/toast";
 import { api, type VerifyRecord } from "@/lib/api";
 import { errText } from "@/lib/actions";
 import { useStore } from "@/lib/store";
@@ -133,17 +133,19 @@ const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 export function VerdictBadge({ r, className }: { r: VerifyRecord; className?: string }) {
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          onClick={stop}
-          onPointerDown={stop}
-          onMouseDown={stop}
-          className={cn("shrink-0 cursor-pointer rounded-[2px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60", className)}
-          aria-label={`${r.title}: ${tag(r)}`}
-        >
-          <Spec tone={verdictTone(r)}>{tag(r)}</Spec>
-        </button>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            onClick={stop}
+            onPointerDown={stop}
+            onMouseDown={stop}
+            className={cn("shrink-0 cursor-pointer rounded-[2px] outline-none focus-visible:ring-2 focus-visible:ring-ring/60", className)}
+            aria-label={`${r.title}: ${tag(r)}`}
+          />
+        }
+      >
+        <Spec tone={verdictTone(r)}>{tag(r)}</Spec>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(92vw,380px)] p-4" onClick={stop} onPointerDown={stop} onMouseDown={stop}>
         <VerdictCard r={r} />

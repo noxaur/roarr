@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Lock, Plus, RefreshCw, X } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@ui-sdk/react/toast";
 import { api, type ServiceStatus, type Settings } from "@/lib/api";
 import { errText } from "@/lib/actions";
 import { cached, peek, put } from "@/lib/cache";
@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SectionHead, Spinner } from "@/components/kit";
@@ -36,6 +36,12 @@ const SIZES = [
   ["ignore", "Doesn't matter", "Size only counts for the max-size limit."],
   ["larger", "Larger", "Favour higher bitrates, up to the max size."],
 ] as const;
+
+const AUTH_MODES = [
+  { value: "jellyfin", label: "Jellyfin accounts" },
+  { value: "password", label: "One shared password" },
+  { value: "none", label: "Anyone (trusted network only)" },
+];
 
 type SettingsAnswer = { settings: Settings; locked: Record<string, boolean> };
 
@@ -108,6 +114,7 @@ export function SettingsPage() {
     <Tabs
       value={tab}
       onValueChange={(v) => {
+        if (!v) return;
         setTab(v);
         history.replaceState(null, "", `#${v}`);
       }}
@@ -117,7 +124,7 @@ export function SettingsPage() {
       <div>
         <h1 className="text-[24px] leading-8 font-semibold">Admin</h1>
         <p className="meta mt-1 font-mono">roarr {version}</p>
-        <TabsList className="mt-6 h-auto! w-full flex-row flex-wrap items-stretch gap-1 rounded-none bg-transparent p-0 md:flex-col">
+        <TabsList aria-label="Admin sections" className="mt-6 h-auto! w-full flex-row flex-wrap items-stretch gap-1 rounded-none bg-transparent p-0 md:flex-col">
           {(
             [
               ["picking", "Release rules", ""],
@@ -132,7 +139,7 @@ export function SettingsPage() {
             <TabsTrigger
               key={v}
               value={v}
-              className="h-9 flex-none justify-between rounded-[2px] border-0 px-3 text-[14px] font-normal text-muted-foreground data-[state=active]:bg-card! data-[state=active]:text-foreground data-[state=active]:shadow-none md:w-full"
+              className="h-9 flex-none justify-between rounded-[2px] border-0 px-3 text-[14px] font-normal text-muted-foreground data-selected:bg-card! data-selected:text-foreground data-selected:shadow-none md:w-full"
             >
               {name}
             </TabsTrigger>
@@ -236,14 +243,19 @@ export function SettingsPage() {
         <TabsContent value="signin" className="space-y-1">
           <SectionHead title="Sign-in" className="mb-3" />
           <Field label="Who can sign in">
-            <Select value={s.authMode} disabled={locked.AUTH_MODE} onValueChange={(v) => update((x) => (x.authMode = v))}>
-              <SelectTrigger className="h-9 w-64 bg-card">
-                <SelectValue />
-              </SelectTrigger>
+            <Select
+              items={AUTH_MODES}
+              value={s.authMode}
+              disabled={locked.AUTH_MODE}
+              onValueChange={(v) => v && update((x) => (x.authMode = v))}
+            >
+              <SelectTrigger className="h-9 w-64 bg-card" />
               <SelectContent>
-                <SelectItem value="jellyfin">Jellyfin accounts</SelectItem>
-                <SelectItem value="password">One shared password</SelectItem>
-                <SelectItem value="none">Anyone (trusted network only)</SelectItem>
+                {AUTH_MODES.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </Field>

@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, FolderSync, LayoutGrid, List, ListChecks, Pin, Radar, Search, Trash2, X } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@ui-sdk/react/toast";
 import { api, type LibraryItem } from "@/lib/api";
 import { autoGet, run } from "@/lib/actions";
 import { copyText } from "@/lib/copy";
@@ -13,22 +13,9 @@ import { isActive, useStore } from "@/lib/store";
 import { done } from "@/lib/undo";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuLabel,
-  ContextMenuRadioGroup,
-  ContextMenuRadioItem,
-  ContextMenuSeparator,
-  ContextMenuShortcut,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+import { Menu, MenuContextTrigger, MenuRadioGroup, MenuSub, MenuTrigger } from "@ui-sdk/react/menu";
+import { MenuContent, MenuItem, MenuLabel, MenuRadioItem, MenuSeparator, MenuShortcut, MenuSubContent, MenuSubTrigger } from "@/components/ui/menu";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useConfirm } from "@/components/Confirm";
@@ -411,125 +398,125 @@ export function Home({ kind }: { kind?: Kind }) {
 
   const titleMenu = (
     <>
-      <ContextMenuLabel className="truncate text-xs font-normal text-muted-foreground">
+      <MenuLabel className="truncate text-xs font-normal text-muted-foreground">
         {menuOne ? [menuOne.title, menuOne.year].filter(Boolean).join(" ") : `${menuTargets.length} selected`}
-      </ContextMenuLabel>
+      </MenuLabel>
       {menuOne && (
         <>
-          <ContextMenuItem onSelect={() => navigate(libraryHref(menuOne))}>
-            <ExternalLink /> Open <ContextMenuShortcut>↵</ContextMenuShortcut>
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => setPeek(menuOne)}>
-            <Eye /> Quick look <ContextMenuShortcut>Space</ContextMenuShortcut>
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => open(libraryHref(menuOne), "_blank")}>
+          <MenuItem onSelect={() => navigate(libraryHref(menuOne))}>
+            <ExternalLink /> Open <MenuShortcut>↵</MenuShortcut>
+          </MenuItem>
+          <MenuItem onSelect={() => setPeek(menuOne)}>
+            <Eye /> Quick look <MenuShortcut>Space</MenuShortcut>
+          </MenuItem>
+          <MenuItem onSelect={() => open(libraryHref(menuOne), "_blank")}>
             <ExternalLink /> Open in new tab
-          </ContextMenuItem>
+          </MenuItem>
         </>
       )}
-      <ContextMenuSeparator />
+      <MenuSeparator />
       {menuTargets.some((i) => missingOf(i) > 0) && (
-        <ContextMenuItem onSelect={() => getMissing(menuTargets)}>
+        <MenuItem onSelect={() => getMissing(menuTargets)}>
           <Download /> {menuOne ? (menuOne.kind === "movie" ? "Get it" : `Get ${plural(missingOf(menuOne), "missing episode")}`) : "Get everything missing"}
-          <ContextMenuShortcut>G</ContextMenuShortcut>
-        </ContextMenuItem>
+          <MenuShortcut>G</MenuShortcut>
+        </MenuItem>
       )}
       {menuOne && (
-        <ContextMenuItem onSelect={() => navigate(`${libraryHref(menuOne)}?pick=1`)}>
+        <MenuItem onSelect={() => navigate(`${libraryHref(menuOne)}?pick=1`)}>
           <ListChecks /> {menuOne.have > 0 && missingOf(menuOne) === 0 ? "Pick a replacement manually…" : menuOne.kind === "movie" ? "Pick release manually…" : "Pick releases manually…"}
-        </ContextMenuItem>
+        </MenuItem>
       )}
-      <ContextMenuItem onSelect={() => command(menuTargets, "search")}>
+      <MenuItem onSelect={() => command(menuTargets, "search")}>
         <Radar /> {menuOne ? appOf(menuOne) : "Sonarr/Radarr"} search
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={() => command(menuTargets, "refresh")}>
+      </MenuItem>
+      <MenuItem onSelect={() => command(menuTargets, "refresh")}>
         <FolderSync /> Rescan disk
-      </ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem onSelect={() => toggleMonitor(menuTargets)}>
-        <Eye /> {menuTargets.every((i) => i.monitored) ? "Stop monitoring" : "Monitor"} <ContextMenuShortcut>M</ContextMenuShortcut>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={() => togglePin(menuTargets)}>
-        <Pin /> {menuTargets.every((i) => pinned.has(i.key)) ? "Unpin" : "Pin to top"} <ContextMenuShortcut>P</ContextMenuShortcut>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={() => (menuTargets.length > 1 ? setSelected(new Set()) : menuOne && toggle(menuOne.key))}>
-        <Check /> {menuTargets.length > 1 ? "Deselect all" : menuOne && selected.has(menuOne.key) ? "Deselect" : "Select"} <ContextMenuShortcut>X</ContextMenuShortcut>
-      </ContextMenuItem>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem onSelect={() => toggleMonitor(menuTargets)}>
+        <Eye /> {menuTargets.every((i) => i.monitored) ? "Stop monitoring" : "Monitor"} <MenuShortcut>M</MenuShortcut>
+      </MenuItem>
+      <MenuItem onSelect={() => togglePin(menuTargets)}>
+        <Pin /> {menuTargets.every((i) => pinned.has(i.key)) ? "Unpin" : "Pin to top"} <MenuShortcut>P</MenuShortcut>
+      </MenuItem>
+      <MenuItem onSelect={() => (menuTargets.length > 1 ? setSelected(new Set()) : menuOne && toggle(menuOne.key))}>
+        <Check /> {menuTargets.length > 1 ? "Deselect all" : menuOne && selected.has(menuOne.key) ? "Deselect" : "Select"} <MenuShortcut>X</MenuShortcut>
+      </MenuItem>
       {menuOne && (
-        <ContextMenuItem onSelect={() => copyTitle(menuOne)}>
-          <Copy /> Copy title <ContextMenuShortcut>⌘C</ContextMenuShortcut>
-        </ContextMenuItem>
+        <MenuItem onSelect={() => copyTitle(menuOne)}>
+          <Copy /> Copy title <MenuShortcut>⌘C</MenuShortcut>
+        </MenuItem>
       )}
-      <ContextMenuSeparator />
-      <ContextMenuItem variant="destructive" onSelect={() => remove(menuTargets)}>
-        <Trash2 /> {menuOne ? `Remove from ${appOf(menuOne)}` : `Remove ${menuTargets.length}`} <ContextMenuShortcut>⌫</ContextMenuShortcut>
-      </ContextMenuItem>
+      <MenuSeparator />
+      <MenuItem destructive onSelect={() => remove(menuTargets)}>
+        <Trash2 /> {menuOne ? `Remove from ${appOf(menuOne)}` : `Remove ${menuTargets.length}`} <MenuShortcut>⌫</MenuShortcut>
+      </MenuItem>
     </>
   );
 
   const libraryMenu = (
     <>
-      <ContextMenuLabel className="text-xs font-normal text-muted-foreground">Library</ContextMenuLabel>
-      <ContextMenuItem onSelect={openSearch}>
-        <Search /> Find a title <ContextMenuShortcut>⌘K</ContextMenuShortcut>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={() => run("Refreshing from Sonarr & Radarr…", () => reloadLibrary(true), "Library is up to date")}>
+      <MenuLabel className="text-xs font-normal text-muted-foreground">Library</MenuLabel>
+      <MenuItem onSelect={openSearch}>
+        <Search /> Find a title <MenuShortcut>⌘K</MenuShortcut>
+      </MenuItem>
+      <MenuItem onSelect={() => run("Refreshing from Sonarr & Radarr…", () => reloadLibrary(true), "Library is up to date")}>
         <FolderSync /> Refresh library
-      </ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuSub>
-        <ContextMenuSubTrigger>View as</ContextMenuSubTrigger>
-        <ContextMenuSubContent>
-          <ContextMenuRadioGroup value={view} onValueChange={(v) => setView(v as View)}>
-            <ContextMenuRadioItem value="grid">Grid</ContextMenuRadioItem>
-            <ContextMenuRadioItem value="list">List</ContextMenuRadioItem>
-          </ContextMenuRadioGroup>
-        </ContextMenuSubContent>
-      </ContextMenuSub>
-      <ContextMenuSub>
-        <ContextMenuSubTrigger>Sort by</ContextMenuSubTrigger>
-        <ContextMenuSubContent>
-          <ContextMenuRadioGroup value={sort} onValueChange={(v) => setSort(v as Sort)}>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuSub>
+        <MenuSubTrigger>View as</MenuSubTrigger>
+        <MenuSubContent>
+          <MenuRadioGroup value={view} onValueChange={(v) => setView(v as View)}>
+            <MenuRadioItem value="grid">Grid</MenuRadioItem>
+            <MenuRadioItem value="list">List</MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuSubContent>
+      </MenuSub>
+      <MenuSub>
+        <MenuSubTrigger>Sort by</MenuSubTrigger>
+        <MenuSubContent>
+          <MenuRadioGroup value={sort} onValueChange={(v) => setSort(v as Sort)}>
             {SORTS.map(([k, l]) => (
-              <ContextMenuRadioItem key={k} value={k}>
+              <MenuRadioItem key={k} value={k}>
                 {l}
-              </ContextMenuRadioItem>
+              </MenuRadioItem>
             ))}
-          </ContextMenuRadioGroup>
-        </ContextMenuSubContent>
-      </ContextMenuSub>
-      <ContextMenuSub>
-        <ContextMenuSubTrigger>Show</ContextMenuSubTrigger>
-        <ContextMenuSubContent>
-          <ContextMenuRadioGroup value={filter} onValueChange={(v) => setFilter(v as Filter)}>
+          </MenuRadioGroup>
+        </MenuSubContent>
+      </MenuSub>
+      <MenuSub>
+        <MenuSubTrigger>Show</MenuSubTrigger>
+        <MenuSubContent>
+          <MenuRadioGroup value={filter} onValueChange={(v) => setFilter(v as Filter)}>
             {FILTERS.map(([k, l], n) => (
-              <ContextMenuRadioItem key={k} value={k}>
-                {l} <ContextMenuShortcut>{n + 1}</ContextMenuShortcut>
-              </ContextMenuRadioItem>
+              <MenuRadioItem key={k} value={k}>
+                {l} <MenuShortcut>{n + 1}</MenuShortcut>
+              </MenuRadioItem>
             ))}
-          </ContextMenuRadioGroup>
-        </ContextMenuSubContent>
-      </ContextMenuSub>
-      <ContextMenuSub>
-        <ContextMenuSubTrigger>Poster size</ContextMenuSubTrigger>
-        <ContextMenuSubContent>
-          <ContextMenuRadioGroup value={size} onValueChange={(v) => setSize(v as Size)}>
-            <ContextMenuRadioItem value="s">Small</ContextMenuRadioItem>
-            <ContextMenuRadioItem value="m">Medium</ContextMenuRadioItem>
-            <ContextMenuRadioItem value="l">Large</ContextMenuRadioItem>
-          </ContextMenuRadioGroup>
-        </ContextMenuSubContent>
-      </ContextMenuSub>
-      <ContextMenuSeparator />
-      <ContextMenuItem onSelect={selectAll}>
-        <Check /> Select all <ContextMenuShortcut>⌘A</ContextMenuShortcut>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={toggleDownloads}>
-        <Download /> Downloads panel <ContextMenuShortcut>D</ContextMenuShortcut>
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={openShortcuts}>
-        Keyboard shortcuts <ContextMenuShortcut>?</ContextMenuShortcut>
-      </ContextMenuItem>
+          </MenuRadioGroup>
+        </MenuSubContent>
+      </MenuSub>
+      <MenuSub>
+        <MenuSubTrigger>Poster size</MenuSubTrigger>
+        <MenuSubContent>
+          <MenuRadioGroup value={size} onValueChange={(v) => setSize(v as Size)}>
+            <MenuRadioItem value="s">Small</MenuRadioItem>
+            <MenuRadioItem value="m">Medium</MenuRadioItem>
+            <MenuRadioItem value="l">Large</MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuSubContent>
+      </MenuSub>
+      <MenuSeparator />
+      <MenuItem onSelect={selectAll}>
+        <Check /> Select all <MenuShortcut>⌘A</MenuShortcut>
+      </MenuItem>
+      <MenuItem onSelect={toggleDownloads}>
+        <Download /> Downloads panel <MenuShortcut>D</MenuShortcut>
+      </MenuItem>
+      <MenuItem onSelect={openShortcuts}>
+        Keyboard shortcuts <MenuShortcut>?</MenuShortcut>
+      </MenuItem>
     </>
   );
 
@@ -582,22 +569,20 @@ export function Home({ kind }: { kind?: Kind }) {
             ]}
             disabled={view === "list"}
           />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 font-normal">
-                {SORTS.find((s) => s[0] === sort)?.[1]} <ChevronDown className="opacity-60" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuRadioGroup value={sort} onValueChange={(v) => setSort(v as Sort)}>
+          <Menu>
+            <MenuTrigger render={<Button variant="outline" size="sm" className="h-8 font-normal" />}>
+              {SORTS.find((s) => s[0] === sort)?.[1]} <ChevronDown className="opacity-60" />
+            </MenuTrigger>
+            <MenuContent align="end">
+              <MenuRadioGroup value={sort} onValueChange={(v) => setSort(v as Sort)}>
                 {SORTS.map(([k, l]) => (
-                  <DropdownMenuRadioItem key={k} value={k}>
+                  <MenuRadioItem key={k} value={k}>
                     {l}
-                  </DropdownMenuRadioItem>
+                  </MenuRadioItem>
                 ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              </MenuRadioGroup>
+            </MenuContent>
+          </Menu>
           <Segmented
             label="View"
             size="sm"
@@ -635,145 +620,143 @@ export function Home({ kind }: { kind?: Kind }) {
         ))}
       </div>
 
-      <ContextMenu onOpenChange={(o) => !o && setMenuFor(null)}>
-        <ContextMenuTrigger asChild>
-          <div ref={shelf} onMouseDown={pointer.onMouseDown} onContextMenuCapture={onMenuCapture} className="min-h-[50vh] select-none">
-            {!libraryLoaded ? (
-              <Grid min={MIN[size]}>
-                {Array.from({ length: 12 }, (_, i) => (
-                  <div key={i}>
-                    <Skeleton className="aspect-[2/3]" />
-                    <Skeleton className="mt-3 h-4 w-3/4" />
-                  </div>
-                ))}
-              </Grid>
-            ) : items.length === 0 ? (
-              <Empty>
-                {libraryErrors.library ? (
-                  "The library could not be loaded."
-                ) : library.length === 0 ? (
-                  <>
-                    Nothing in Sonarr or Radarr yet. <Kbd>⌘K</Kbd> finds a title.
-                  </>
-                ) : (
-                  <>
-                    Nothing matches.{" "}
-                    <button
-                      className="cursor-pointer font-medium text-foreground underline-offset-4 hover:underline"
-                      onClick={() => {
-                        setFilter("all");
-                        setFind("");
-                      }}
-                    >
-                      Show everything
-                    </button>
-                  </>
-                )}
-              </Empty>
-            ) : view === "grid" ? (
-              <Grid min={MIN[size]}>
-                {items.map((it) => {
-                  const sel = selected.has(it.key);
-                  const p = progress.get(libraryHref(it));
-                  return (
-                    <Link
-                      key={it.key}
-                      to={libraryHref(it)}
-                      data-sel={it.key}
-                      draggable={false}
-                      onClick={(e) => onItemClick(e, it)}
-                      onFocus={() => setCursor(it.key)}
-                      className={cn("group -m-2 block min-w-0 rounded-[2px] p-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/60", cursor === it.key && "bg-card")}
-                    >
-                      <div className={cn("relative aspect-[2/3] overflow-hidden rounded-[2px] bg-muted", sel && "ring-2 ring-white ring-offset-2 ring-offset-background")}>
-                        <PosterImg src={it.poster} title={it.title} year={it.year} />
-                        <span
-                          data-tick
-                          aria-hidden
-                          className={cn(
-                            "absolute top-2 right-2 grid size-5 place-items-center rounded-[2px] border-2 border-white/80 bg-black/40 text-transparent opacity-0 transition-opacity group-hover:opacity-100",
-                            selected.size > 0 && "opacity-100",
-                            sel && "border-white bg-white text-black opacity-100",
-                          )}
-                        >
-                          <Check className="size-3" strokeWidth={3} />
-                        </span>
-                        {pinned.has(it.key) && (
-                          <span className="absolute top-2 left-2 grid size-5 place-items-center rounded-[2px] bg-black/60 text-white" title="Pinned">
-                            <Pin className="size-3" fill="currentColor" />
-                          </span>
-                        )}
-                        {p !== undefined && <Bar label="Downloading" value={Math.max(0.05, p)} segments={12} stretch className="absolute inset-x-2 bottom-2" />}
-                      </div>
-                      <div className="mt-2 truncate text-[14px] font-medium" title={it.title}>
-                        {it.title}
-                      </div>
-                      <CellStrip cells={libraryCells(it, p !== undefined, 26)} className="mt-2" />
-                      {sel && <span className="sr-only">, selected</span>}
-                    </Link>
-                  );
-                })}
-              </Grid>
-            ) : (
-              <div role="table" className="border-t">
-                <div role="row" className="meta hidden h-9 grid-cols-[minmax(0,1fr)_80px_60px_200px_100px_148px] items-center gap-4 border-b px-3 sm:grid">
-                  <span>Title</span>
-                  <span>Type</span>
-                  <span>Year</span>
-                  <span>Have</span>
-                  <span>Size</span>
-                  <span>Status</span>
+      <Menu onOpenChange={(o) => !o && setMenuFor(null)}>
+        <MenuContextTrigger ref={shelf} onMouseDown={pointer.onMouseDown} onContextMenuCapture={onMenuCapture} className="min-h-[50vh] select-none">
+          {!libraryLoaded ? (
+            <Grid min={MIN[size]}>
+              {Array.from({ length: 12 }, (_, i) => (
+                <div key={i}>
+                  <Skeleton className="aspect-[2/3]" />
+                  <Skeleton className="mt-3 h-4 w-3/4" />
                 </div>
-                {items.map((it) => {
-                  const [label, dot] = status(it);
-                  const sel = selected.has(it.key);
-                  return (
-                    <Link
-                      key={it.key}
-                      to={libraryHref(it)}
-                      data-sel={it.key}
-                      draggable={false}
-                      aria-selected={sel}
-                      role="row"
-                      onClick={(e) => onItemClick(e, it)}
-                      onFocus={() => setCursor(it.key)}
-                      className={cn(
-                        "grid h-12 grid-cols-[minmax(0,1fr)_112px] items-center gap-4 border-b px-3 outline-none hover:bg-card focus-visible:bg-accent sm:grid-cols-[minmax(0,1fr)_80px_60px_200px_100px_148px]",
-                        cursor === it.key && "bg-accent",
-                        sel && "bg-card",
+              ))}
+            </Grid>
+          ) : items.length === 0 ? (
+            <Empty>
+              {libraryErrors.library ? (
+                "The library could not be loaded."
+              ) : library.length === 0 ? (
+                <>
+                  Nothing in Sonarr or Radarr yet. <Kbd>⌘K</Kbd> finds a title.
+                </>
+              ) : (
+                <>
+                  Nothing matches.{" "}
+                  <button
+                    className="cursor-pointer font-medium text-foreground underline-offset-4 hover:underline"
+                    onClick={() => {
+                      setFilter("all");
+                      setFind("");
+                    }}
+                  >
+                    Show everything
+                  </button>
+                </>
+              )}
+            </Empty>
+          ) : view === "grid" ? (
+            <Grid min={MIN[size]}>
+              {items.map((it) => {
+                const sel = selected.has(it.key);
+                const p = progress.get(libraryHref(it));
+                return (
+                  <Link
+                    key={it.key}
+                    to={libraryHref(it)}
+                    data-sel={it.key}
+                    draggable={false}
+                    onClick={(e) => onItemClick(e, it)}
+                    onFocus={() => setCursor(it.key)}
+                    className={cn("group -m-2 block min-w-0 rounded-[2px] p-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/60", cursor === it.key && "bg-card")}
+                  >
+                    <div className={cn("relative aspect-[2/3] overflow-hidden rounded-[2px] bg-muted", sel && "ring-2 ring-white ring-offset-2 ring-offset-background")}>
+                      <PosterImg src={it.poster} title={it.title} year={it.year} />
+                      <span
+                        data-tick
+                        aria-hidden
+                        className={cn(
+                          "absolute top-2 right-2 grid size-5 place-items-center rounded-[2px] border-2 border-white/80 bg-black/40 text-transparent opacity-0 transition-opacity group-hover:opacity-100",
+                          selected.size > 0 && "opacity-100",
+                          sel && "border-white bg-white text-black opacity-100",
+                        )}
+                      >
+                        <Check className="size-3" strokeWidth={3} />
+                      </span>
+                      {pinned.has(it.key) && (
+                        <span className="absolute top-2 left-2 grid size-5 place-items-center rounded-[2px] bg-black/60 text-white" title="Pinned">
+                          <Pin className="size-3" fill="currentColor" />
+                        </span>
                       )}
-                    >
-                      <span className="flex min-w-0 items-center gap-3">
-                        <span
-                          data-tick
-                          aria-hidden
-                          className={cn("grid size-4 shrink-0 place-items-center rounded-[2px] border border-muted-foreground/70 text-transparent", sel && "border-white bg-white text-black")}
-                        >
-                          <Check className="size-3" strokeWidth={3} />
-                        </span>
-                        <span className="h-8 w-5 shrink-0 overflow-hidden rounded-[2px] bg-muted">
-                          <PosterImg src={it.poster} title={it.title} />
-                        </span>
-                        <span className="truncate text-sm font-medium">{it.title}</span>
-                        {pinned.has(it.key) && <Pin className="size-3 shrink-0 text-muted-foreground" fill="currentColor" />}
-                      </span>
-                      <span className="hidden text-[13px] text-muted-foreground sm:block">{it.kind === "tv" ? "Show" : "Movie"}</span>
-                      <span className="hidden font-mono text-xs text-muted-foreground sm:block">{it.year ?? ""}</span>
-                      <CellStrip cells={libraryCells(it, isDownloading(it), 16)} className="hidden sm:flex" />
-                      <span className="hidden font-mono text-xs text-muted-foreground tabular sm:block">{bytes(it.sizeOnDisk ?? 0)}</span>
-                      <span className="flex items-center gap-2 text-[13px] text-muted-foreground">
-                        <Dot tone={dot} />
-                        <span className="truncate">{label}</span>
-                      </span>
-                    </Link>
-                  );
-                })}
+                      {p !== undefined && <Bar label="Downloading" value={Math.max(0.05, p)} segments={12} stretch className="absolute inset-x-2 bottom-2" />}
+                    </div>
+                    <div className="mt-2 truncate text-[14px] font-medium" title={it.title}>
+                      {it.title}
+                    </div>
+                    <CellStrip cells={libraryCells(it, p !== undefined, 26)} className="mt-2" />
+                    {sel && <span className="sr-only">, selected</span>}
+                  </Link>
+                );
+              })}
+            </Grid>
+          ) : (
+            <div role="table" className="border-t">
+              <div role="row" className="meta hidden h-9 grid-cols-[minmax(0,1fr)_80px_60px_200px_100px_148px] items-center gap-4 border-b px-3 sm:grid">
+                <span>Title</span>
+                <span>Type</span>
+                <span>Year</span>
+                <span>Have</span>
+                <span>Size</span>
+                <span>Status</span>
               </div>
-            )}
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent className="w-64">{menuFor ? titleMenu : libraryMenu}</ContextMenuContent>
-      </ContextMenu>
+              {items.map((it) => {
+                const [label, dot] = status(it);
+                const sel = selected.has(it.key);
+                return (
+                  <Link
+                    key={it.key}
+                    to={libraryHref(it)}
+                    data-sel={it.key}
+                    draggable={false}
+                    aria-selected={sel}
+                    role="row"
+                    onClick={(e) => onItemClick(e, it)}
+                    onFocus={() => setCursor(it.key)}
+                    className={cn(
+                      "grid h-12 grid-cols-[minmax(0,1fr)_112px] items-center gap-4 border-b px-3 outline-none hover:bg-card focus-visible:bg-accent sm:grid-cols-[minmax(0,1fr)_80px_60px_200px_100px_148px]",
+                      cursor === it.key && "bg-accent",
+                      sel && "bg-card",
+                    )}
+                  >
+                    <span className="flex min-w-0 items-center gap-3">
+                      <span
+                        data-tick
+                        aria-hidden
+                        className={cn("grid size-4 shrink-0 place-items-center rounded-[2px] border border-muted-foreground/70 text-transparent", sel && "border-white bg-white text-black")}
+                      >
+                        <Check className="size-3" strokeWidth={3} />
+                      </span>
+                      <span className="h-8 w-5 shrink-0 overflow-hidden rounded-[2px] bg-muted">
+                        <PosterImg src={it.poster} title={it.title} />
+                      </span>
+                      <span className="truncate text-sm font-medium">{it.title}</span>
+                      {pinned.has(it.key) && <Pin className="size-3 shrink-0 text-muted-foreground" fill="currentColor" />}
+                    </span>
+                    <span className="hidden text-[13px] text-muted-foreground sm:block">{it.kind === "tv" ? "Show" : "Movie"}</span>
+                    <span className="hidden font-mono text-xs text-muted-foreground sm:block">{it.year ?? ""}</span>
+                    <CellStrip cells={libraryCells(it, isDownloading(it), 16)} className="hidden sm:flex" />
+                    <span className="hidden font-mono text-xs text-muted-foreground tabular sm:block">{bytes(it.sizeOnDisk ?? 0)}</span>
+                    <span className="flex items-center gap-2 text-[13px] text-muted-foreground">
+                      <Dot tone={dot} />
+                      <span className="truncate">{label}</span>
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </MenuContextTrigger>
+        <MenuContent className="w-64">{menuFor ? titleMenu : libraryMenu}</MenuContent>
+      </Menu>
 
       {pointer.box && <div className="marquee" style={{ left: pointer.box.x, top: pointer.box.y, width: pointer.box.w, height: pointer.box.h }} />}
 

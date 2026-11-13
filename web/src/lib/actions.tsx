@@ -1,4 +1,4 @@
-import { toast } from "sonner";
+import { toast } from "@ui-sdk/react/toast";
 import { api, type AutoResult } from "./api";
 
 type AutoBody = Parameters<typeof api.auto>[0];

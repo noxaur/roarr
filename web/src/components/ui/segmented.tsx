@@ -1,5 +1,5 @@
-import type { ReactNode } from "react"
-import { RadioGroup as RadioGroupPrimitive } from "radix-ui"
+import { Fragment, type ReactNode } from "react"
+import { SegmentedControl, SegmentedControlItem } from "@ui-sdk/react/segmented-control"
 import { cn } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
@@ -26,38 +26,34 @@ function Segmented<T extends string>({
   onChange: (v: T) => void
 }) {
   return (
-    <RadioGroupPrimitive.Root
-      data-slot="segmented"
+    <SegmentedControl<T>
       aria-label={label}
       value={value}
       disabled={disabled}
-      onValueChange={(v) => onChange(v as T)}
+      onValueChange={(v) => v !== null && onChange(v)}
       className={cn("inline-flex max-w-full flex-wrap gap-1 rounded-[2px] bg-card p-1", disabled && "opacity-60", className)}
     >
       {options.map(([v, content, title]) => {
-        // Styled on aria-checked: a tooltip trigger overwrites the item's data-state.
         const item = (
-          <RadioGroupPrimitive.Item
-            key={v}
+          <SegmentedControlItem
             value={v}
-            aria-label={title}
             className={cn(
-              "cursor-pointer rounded-[2px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:hover:text-muted-foreground aria-checked:bg-accent aria-checked:text-foreground aria-checked:disabled:hover:text-foreground",
+              "cursor-pointer rounded-[2px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 data-disabled:cursor-not-allowed data-disabled:hover:text-muted-foreground data-checked:bg-accent data-checked:text-foreground data-checked:data-disabled:hover:text-foreground",
               size === "sm" ? "grid min-w-6 place-items-center px-1 font-mono text-[11px]" : "h-8 px-3 text-sm"
             )}
           >
             {content}
-          </RadioGroupPrimitive.Item>
+          </SegmentedControlItem>
         )
-        if (!title) return item
+        if (!title) return <Fragment key={v}>{item}</Fragment>
         return (
-          <Tooltip key={v}>
-            <TooltipTrigger asChild>{item}</TooltipTrigger>
+          <Tooltip key={v} type="label">
+            <TooltipTrigger render={item} />
             <TooltipContent>{title}</TooltipContent>
           </Tooltip>
         )
       })}
-    </RadioGroupPrimitive.Root>
+    </SegmentedControl>
   )
 }
 

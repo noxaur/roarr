@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { toast } from "sonner";
+import { toast } from "@ui-sdk/react/toast";
 import { copyText } from "./copy";
 
-vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
+vi.mock("@ui-sdk/react/toast", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 
 afterEach(() => {
   vi.unstubAllGlobals();

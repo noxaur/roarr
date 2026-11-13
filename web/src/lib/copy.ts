@@ -1,4 +1,4 @@
-import { toast } from "sonner";
+import { toast } from "@ui-sdk/react/toast";
 import { errText } from "./actions";
 
 /** Copies text to the clipboard and says so, or says why it could not. */

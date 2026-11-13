@@ -113,12 +113,12 @@ export function GetCard({
   return (
     <div className="rounded-[2px] bg-card p-4">
       {options.length > 1 && (
-        <RadioGroup value={value} onValueChange={onValueChange} className="mb-4 gap-1">
+        <RadioGroup value={value} onValueChange={(v) => v !== null && onValueChange(v)} className="mb-4 gap-1">
           {options.map((o) => (
             <label
               key={o.value}
               className={cn(
-                "flex h-9 cursor-pointer items-center gap-3 rounded-[2px] px-3 text-[14px] hover:bg-accent/60 has-[[data-state=checked]]:bg-accent",
+                "flex h-9 cursor-pointer items-center gap-3 rounded-[2px] px-3 text-[14px] hover:bg-accent/60 has-data-checked:bg-accent",
                 o.disabled && "pointer-events-none opacity-40",
               )}
             >
