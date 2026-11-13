@@ -322,6 +322,7 @@ export interface Settings {
   authMode: string;
   authPassword?: string;
   jellyfinAdminOnly: boolean;
+  trustedProxies?: string;
   prefs: Prefs;
   behaviour: {
     watchFirst: boolean;

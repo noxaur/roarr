@@ -57,6 +57,7 @@ services:
       # jellyfin (default when JELLYFIN_URL is set) | password | none
       # AUTH_MODE: jellyfin
       # AUTH_PASSWORD: something-long
+      # TRUSTED_PROXIES: 172.16.0.0/12   # your reverse proxy, for sign-in throttling
       TZ: Etc/UTC
     # Optional: let Watchtower keep roarr up to date.
     # labels:

@@ -66,6 +66,7 @@ environment variable is locked there.
 | `QBIT_URL`, `QBIT_USERNAME`, `QBIT_PASSWORD` | host/user from Sonarr | Watch-first packs and "download anyway". Sonarr hides the password, so set `QBIT_PASSWORD`. |
 | `AUTH_MODE` | `jellyfin` if `JELLYFIN_URL` set, else `none` | `jellyfin`, `password` (with `AUTH_PASSWORD`), or `none`. |
 | `JELLYFIN_ADMIN_ONLY` | `true` | Only Jellyfin admins may sign in. |
+| `TRUSTED_PROXIES` | — | Reverse proxies (IPs or CIDRs, comma separated) whose `X-Forwarded-For` roarr believes when it throttles failed sign-ins. Without it, every client behind the proxy shares one limit. |
 | `WATCH_FIRST` | `true` | Download packs in episode order and import as each finishes. |
 | `PREFETCH` | `true` | Start searching a show as soon as its page opens. |
 | `SEERR_AUTO_FETCH` | `false` | Grab newly approved Seerr requests automatically. Turn on Seerr's "prevent search" for its Sonarr/Radarr servers so they don't search too. |

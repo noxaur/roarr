@@ -167,7 +167,9 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if err := s.auth.throttle(r); err != nil {
+	st := s.app.Settings.Get()
+	client := clientIP(r, st.TrustedProxies)
+	if err := s.auth.throttle(client); err != nil {
 		writeErr(w, http.StatusTooManyRequests, err)
 		return
 	}
@@ -179,13 +181,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	st := s.app.Settings.Get()
 	switch st.AuthMode {
 	case "none":
 		writeJSON(w, 200, map[string]any{"ok": true})
 	case "password":
 		if !passwordOK(body.Password, st.AuthPassword) {
-			s.auth.fail(r)
+			s.auth.fail(client)
 			writeErr(w, http.StatusUnauthorized, errors.New("wrong password"))
 			return
 		}
@@ -198,7 +199,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			var he *httpx.Error
 			if errors.As(err, &he) && (he.Status == 401 || he.Status == 400) {
-				s.auth.fail(r)
+				s.auth.fail(client)
 				writeErr(w, http.StatusUnauthorized, errors.New("wrong username or password"))
 				return
 			}
