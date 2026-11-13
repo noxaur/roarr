@@ -21,7 +21,7 @@ Thank you for your help. This page tells you how to set up, check and submit a c
 
 ## Check your change
 
-- Run `make test`. It runs `go vet`, the Go tests, the TypeScript check and Vitest. The `image` GitHub Actions workflow runs the same checks on each push and pull request.
+- Run `make test`. It runs `go vet`, the Go tests, the TypeScript check and Vitest. The `image` GitHub Actions workflow runs it on each pull request and on each push to `main` or a version tag.
 - For a change that can affect search speed, run `make lab`, then `make bench`, and compare the result with `main`. [docs/experiments.md](docs/experiments.md) tells what each column measures.
 - For a change to watch-first downloads, run `make lab`, then `make swarm`. `lab/README.md` tells what it needs.
 
