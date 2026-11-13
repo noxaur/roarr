@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Ban, ExternalLink, ListChecks, MoreHorizontal, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type ActivityItem, type VerifyRecord, type WatchJob } from "@/lib/api";
@@ -23,21 +23,13 @@ const withPick = (href: string) => `${href}${href.includes("?") ? "&" : "?"}pick
  * pick again, remove it, or remove it and blocklist that release.
  */
 export function ActivityPage() {
-  const { activity, reloadActivity, reloadLibrary, verify } = useStore();
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const { activity, activityErrors, reloadActivity, reloadLibrary, verify } = useStore();
   const confirm = useConfirm();
 
   // Faster refresh while this page is open.
   useEffect(() => {
-    const tick = () => {
-      reloadActivity();
-      api
-        .activity()
-        .then((r) => setErrors(r.errors))
-        .catch(() => {});
-    };
-    tick();
-    const t = setInterval(tick, 2000);
+    reloadActivity();
+    const t = setInterval(reloadActivity, 2000);
     return () => clearInterval(t);
   }, [reloadActivity]);
 
@@ -106,7 +98,7 @@ export function ActivityPage() {
     <div className="space-y-8">
       <PageHeader title="Downloads" />
 
-      {Object.entries(errors).map(([k, v]) => (
+      {Object.entries(activityErrors).map(([k, v]) => (
         <Notice key={k} tone="bad">
           <b className="capitalize">{k}</b>: {v}
         </Notice>

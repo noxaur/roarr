@@ -19,6 +19,8 @@ interface Store {
   /** Changes titles in the browser at once, before the server confirms. */
   patchLibrary: (keys: Iterable<string>, patch: Partial<LibraryItem>) => void;
   activity: ActivityItem[];
+  /** Upstreams whose queue could not be read. */
+  activityErrors: Record<string, string>;
   reloadActivity: () => void;
   /** Download check records, newest first. Empty when checks are off. */
   verify: VerifyRecord[];
@@ -74,6 +76,7 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
   const [libraryLoaded, setLoaded] = useState(!!snapshot);
   const [libraryFailure, setLibraryFailure] = useState("");
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [activityErrors, setActivityErrors] = useState<Record<string, string>>({});
   const [verify, setVerify] = useState<VerifyRecord[]>([]);
   const [pendingRequests, setPending] = useState<number | null>(null);
   const etag = useRef<string | null>(snapshot?.etag ?? null);
@@ -112,7 +115,10 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
   const reloadActivity = useCallback(() => {
     api
       .activity()
-      .then((r) => setActivity(r.items))
+      .then((r) => {
+        setActivity(r.items);
+        setActivityErrors(r.errors ?? {});
+      })
       .catch(() => {});
   }, []);
 
@@ -153,7 +159,7 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
 
   const errors = libraryFailure ? { ...libraryErrors, library: libraryFailure } : libraryErrors;
   return (
-    <Ctx.Provider value={{ user, library, libraryErrors: errors, libraryLoaded, reloadLibrary, patchLibrary, activity, reloadActivity, verify, reloadVerify, pendingRequests, reloadRequests }}>
+    <Ctx.Provider value={{ user, library, libraryErrors: errors, libraryLoaded, reloadLibrary, patchLibrary, activity, activityErrors, reloadActivity, verify, reloadVerify, pendingRequests, reloadRequests }}>
       {children}
     </Ctx.Provider>
   );
