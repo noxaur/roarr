@@ -135,7 +135,7 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
   );
 }
 
-/** Compact mono spec tag. `tone` tints it; `dim` is for "unknown". */
+/** Compact mono spec tag. `tone` is the state it reports, never emphasis; `dim` is for "unknown". */
 export function Spec({ children, tone, dim, title, className }: { children: ReactNode; tone?: Tone; dim?: boolean; title?: string; className?: string }) {
   return (
     <span

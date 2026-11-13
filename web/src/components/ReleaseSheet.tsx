@@ -390,7 +390,7 @@ function LangSpecs({ r }: { r: Release }) {
   return (
     <>
       {l.audio.map((a) => (
-        <Spec key={a} tone={a === "English" || a === "Multi" ? "have" : undefined} title={a}>
+        <Spec key={a} title={a}>
           {langCode(a)}
         </Spec>
       ))}
@@ -410,7 +410,7 @@ function SubSpecs({ r }: { r: Release }) {
     return (
       <>
         {l.subs.map((s) => (
-          <Spec key={s} tone={s === "English" || s === "Multi" ? "have" : undefined} title={s}>
+          <Spec key={s} title={s}>
             {langCode(s)}
           </Spec>
         ))}
@@ -511,7 +511,7 @@ function Row({
         </span>
         <span className="flex flex-wrap gap-1">
           {tags.map((v) => (
-            <Spec key={v} tone={v === "DV" || v.startsWith("HDR") ? "live" : r.rejected && /CAM|TS|TC/i.test(v) ? "bad" : undefined}>
+            <Spec key={v} tone={r.rejected && /CAM|TS|TC/i.test(v) ? "bad" : undefined}>
               {v}
             </Spec>
           ))}
