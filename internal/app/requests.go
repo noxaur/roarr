@@ -134,8 +134,7 @@ func (a *App) RequestAction(ctx context.Context, id int, action string) error {
 }
 
 // seerrLoop grabs newly approved Seerr requests with roarr's fast search
-// when SEERR_AUTO_FETCH is on. Each request is handled once (remembered in
-// the data dir), and only if its media is not available yet.
+// when SEERR_AUTO_FETCH is on.
 func (a *App) seerrLoop(ctx context.Context) {
 	path := filepath.Join(a.DataDir, "seerr-handled.json")
 	handled := map[int]time.Time{}
@@ -157,41 +156,49 @@ func (a *App) seerrLoop(ctx context.Context) {
 		if c.Seerr == nil {
 			continue
 		}
-		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		reqs, err := c.Seerr.Requests(rctx, "approved", 30)
-		cancel()
-		if err != nil {
-			slog.Warn("seerr auto-fetch: listing requests failed", "err", err)
-			continue
-		}
-		changed := false
-		for _, r := range reqs {
-			if _, done := handled[r.ID]; done || r.Media.Status >= 4 || time.Since(r.CreatedAt) > 7*24*time.Hour {
-				continue
-			}
-			handled[r.ID] = time.Now()
-			changed = true
-			ar := AutoRequest{Kind: r.Type, TvdbID: r.Media.TvdbID, TmdbID: r.Media.TmdbID}
-			if r.Type == "movie" {
-				ar.MovieTmdb = []int{r.Media.TmdbID}
-			} else {
-				for _, s := range r.Seasons {
-					ar.Seasons = append(ar.Seasons, s.SeasonNumber)
-				}
-			}
-			actx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-			res, err := a.Auto(actx, ar)
-			cancel()
-			if err != nil {
-				slog.Warn("seerr auto-fetch failed", "request", r.ID, "err", err)
-				continue
-			}
-			slog.Info("seerr auto-fetch", "request", r.ID, "result", res.Message)
-		}
-		if changed {
+		if a.seerrPass(ctx, c.Seerr, handled) {
 			if b, err := json.Marshal(handled); err == nil {
 				_ = os.WriteFile(path, b, 0o600)
 			}
 		}
 	}
+}
+
+// seerrPass fetches every approved request that is not handled yet and
+// whose media is not available, and reports whether handled changed. A
+// request is handled once Auto has answered for it; one whose Auto failed
+// is tried again on the next pass.
+func (a *App) seerrPass(ctx context.Context, s *seerr.Client, handled map[int]time.Time) bool {
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	reqs, err := s.Requests(rctx, "approved", 30)
+	cancel()
+	if err != nil {
+		slog.Warn("seerr auto-fetch: listing requests failed", "err", err)
+		return false
+	}
+	changed := false
+	for _, r := range reqs {
+		if _, done := handled[r.ID]; done || r.Media.Status >= 4 || time.Since(r.CreatedAt) > 7*24*time.Hour {
+			continue
+		}
+		ar := AutoRequest{Kind: r.Type, TvdbID: r.Media.TvdbID, TmdbID: r.Media.TmdbID}
+		if r.Type == "movie" {
+			ar.MovieTmdb = []int{r.Media.TmdbID}
+		} else {
+			for _, s := range r.Seasons {
+				ar.Seasons = append(ar.Seasons, s.SeasonNumber)
+			}
+		}
+		actx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		res, err := a.Auto(actx, ar)
+		cancel()
+		if err != nil {
+			slog.Warn("seerr auto-fetch failed, will retry", "request", r.ID, "err", err)
+			continue
+		}
+		handled[r.ID] = time.Now()
+		changed = true
+		slog.Info("seerr auto-fetch", "request", r.ID, "result", res.Message)
+	}
+	return changed
 }
