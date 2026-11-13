@@ -79,18 +79,24 @@ func TestAutoRefusesWhenQueueUnknown(t *testing.T) {
 		"movie": {Kind: "movie", MovieTmdb: []int{603}},
 	}
 	for name, req := range reqs {
+		f.queueDown.Store(true)
+		if _, err := a.Auto(context.Background(), req); !errors.Is(err, errQueueUnknown) {
+			t.Fatalf("%s, queue down: Auto went on to search for what is already queued: %v", name, err)
+		}
+		// The answer without a queue is not cached: Auto sees it come back.
 		f.queueDown.Store(false)
 		res, err := a.Auto(context.Background(), req)
 		if err != nil || res.Message != "Nothing is missing." {
 			t.Fatalf("%s, queue loaded: %+v, %v", name, res, err)
 		}
-		f.queueDown.Store(true)
-		if _, err := a.Auto(context.Background(), req); !errors.Is(err, errQueueUnknown) {
-			t.Fatalf("%s, queue down: Auto went on to search for what is already queued: %v", name, err)
-		}
 	}
-	// The show page still loads.
+	// The pages still load.
+	f.queueDown.Store(true)
 	if d, err := a.Series(context.Background(), 7, true); err != nil || len(d.Seasons) != 1 {
 		t.Fatalf("series page with the queue down: %+v, %v", d, err)
+	}
+	a.forget(GrabRequest{MovieID: 5})
+	if d, err := a.Movie(context.Background(), 5); err != nil || d.Queued {
+		t.Fatalf("movie page with the queue down: %+v, %v", d, err)
 	}
 }

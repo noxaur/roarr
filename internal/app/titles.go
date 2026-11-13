@@ -327,10 +327,17 @@ func (a *App) SeriesByTvdb(ctx context.Context, tvdbID, tmdbID int) (*SeriesDeta
 	return d, nil
 }
 
-// Movie loads a library movie.
+// Movie loads a library movie with its queue state and collection.
 func (a *App) Movie(ctx context.Context, id int) (*MovieDetail, error) {
 	if a.nativeLib("movie") {
 		return a.nativeMovieDetail(ctx, id)
+	}
+	key := "movie:" + strconv.Itoa(id)
+	a.detailMu.Lock()
+	cd, ok := a.details[key]
+	a.detailMu.Unlock()
+	if ok && cd.movie != nil && time.Since(cd.at) < 20*time.Second {
+		return cd.movie, nil
 	}
 	c := a.C()
 	if c.Radarr == nil {
@@ -351,9 +358,7 @@ func (a *App) Movie(ctx context.Context, id int) (*MovieDetail, error) {
 		return nil, err
 	}
 	d := movieDetail(m, true)
-	if d.queueErr = errQ; errQ != nil {
-		slog.Warn("radarr: movie loaded without its queue", "movie", id, "err", errQ)
-	}
+	d.queueErr = errQ
 	for _, q := range queue {
 		if q.MovieID == id {
 			d.Queued = true
@@ -370,6 +375,14 @@ func (a *App) Movie(ctx context.Context, id int) (*MovieDetail, error) {
 			}
 		}
 	}
+	// The page still renders without queue state, but that answer is not kept.
+	if errQ != nil {
+		slog.Warn("radarr: movie loaded without its queue", "movie", id, "err", errQ)
+		return d, nil
+	}
+	a.detailMu.Lock()
+	a.details[key] = cachedDetail{at: time.Now(), movie: d}
+	a.detailMu.Unlock()
 	return d, nil
 }
 
@@ -402,17 +415,63 @@ func (a *App) MovieByTmdb(ctx context.Context, tmdbID int) (*MovieDetail, error)
 		}
 		return a.movieFromSeerr(ctx, m), nil
 	}
-	raw, err := c.Radarr.Lookup(ctx, fmt.Sprintf("tmdb:%d", tmdbID))
+	m, err := lookupMovie(ctx, c.Radarr, tmdbID)
 	if err != nil {
 		return nil, err
 	}
+	d := movieDetail(m, false)
+	if m.Collection != nil && m.Collection.TmdbID != 0 {
+		d.Collection = a.collection(ctx, m.Collection.TmdbID, m.Collection.Title)
+	}
+	return d, nil
+}
+
+func lookupMovie(ctx context.Context, r *arr.Radarr, tmdbID int) (arr.Movie, error) {
+	raw, err := r.Lookup(ctx, fmt.Sprintf("tmdb:%d", tmdbID))
+	if err != nil {
+		return arr.Movie{}, err
+	}
 	if len(raw) == 0 {
-		return nil, fmt.Errorf("radarr found nothing for tmdb:%d", tmdbID)
+		return arr.Movie{}, fmt.Errorf("radarr found nothing for tmdb:%d", tmdbID)
 	}
-	d := movieDetail(raw[0], false)
-	if raw[0].Collection != nil && raw[0].Collection.TmdbID != 0 {
-		d.Collection = a.collection(ctx, raw[0].Collection.TmdbID, raw[0].Collection.Title)
+	return raw[0], nil
+}
+
+// MovieTarget loads what a search needs of a movie: its titles, ids and
+// runtime. The queue and the collection a movie page shows are left out,
+// because every request made here delays the first search result.
+func (a *App) MovieTarget(ctx context.Context, tmdbID int) (*MovieDetail, error) {
+	key := "search:movie:" + strconv.Itoa(tmdbID)
+	a.detailMu.Lock()
+	cd, ok := a.details[key]
+	a.detailMu.Unlock()
+	if ok && cd.movie != nil && time.Since(cd.at) < 10*time.Minute {
+		return cd.movie, nil
 	}
+	c := a.C()
+	var d *MovieDetail
+	if it, inLib := a.Library.FindTmdbMovie(tmdbID); c.Radarr == nil {
+		// Seerr or the native library: MovieByTmdb is the only source.
+		var err error
+		if d, err = a.MovieByTmdb(ctx, tmdbID); err != nil {
+			return nil, err
+		}
+	} else if inLib {
+		m, err := c.Radarr.Movie(ctx, it.ID)
+		if err != nil {
+			return nil, err
+		}
+		d = movieDetail(m, true)
+	} else {
+		m, err := lookupMovie(ctx, c.Radarr, tmdbID)
+		if err != nil {
+			return nil, err
+		}
+		d = movieDetail(m, false)
+	}
+	a.detailMu.Lock()
+	a.details[key] = cachedDetail{at: time.Now(), movie: d}
+	a.detailMu.Unlock()
 	return d, nil
 }
 

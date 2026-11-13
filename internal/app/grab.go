@@ -86,6 +86,9 @@ func (a *App) forget(g GrabRequest) {
 	if g.SeriesID != 0 {
 		delete(a.details, fmt.Sprintf("tv:%d", g.SeriesID))
 	}
+	if g.MovieID != 0 {
+		delete(a.details, fmt.Sprintf("movie:%d", g.MovieID))
+	}
 }
 
 // ensureSeries returns the Sonarr series id, adding the show if needed.
