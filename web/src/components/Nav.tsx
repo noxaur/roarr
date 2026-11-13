@@ -14,7 +14,7 @@ import { Mark } from "./Mark";
 /** The mark, then the name in Inter Black. */
 export function Wordmark({ className, markClassName }: { className?: string; markClassName?: string }) {
   return (
-    <span className={cn("display inline-flex items-center gap-2 text-[22px] leading-none text-white", className)}>
+    <span className={cn("display inline-flex items-center gap-2 text-[22px] leading-none text-paper", className)}>
       <Mark className={cn("size-6", markClassName)} />
       roarr
     </span>
@@ -43,7 +43,7 @@ function Item({ to, active, icon, sub, count, children }: { to: string; active: 
       )}
     >
       <i aria-hidden className={cn("absolute inset-y-0 right-0 rounded-[2px] group-hover:bg-accent/60", sub ? "left-8" : "left-0", active && "bg-accent group-hover:bg-accent")} />
-      {active && <i aria-hidden className={cn("absolute top-1/2 h-4 w-1 -translate-y-1/2 bg-white", sub ? "left-8" : "left-0")} />}
+      {active && <i aria-hidden className={cn("absolute top-1/2 h-4 w-1 -translate-y-1/2 bg-paper", sub ? "left-8" : "left-0")} />}
       {icon && <span className="relative shrink-0 [&_svg]:size-4">{icon}</span>}
       <span className="relative min-w-0 flex-1 truncate">{children}</span>
       {count && <span className="relative">{count}</span>}
@@ -159,7 +159,7 @@ export function Nav({ authMode }: { authMode: string }) {
 function MobileTabs({ path, problems, pendingRequests }: { path: string; problems: number; pendingRequests: number | null }) {
   const item = "relative flex flex-1 flex-col items-center gap-1 py-2 text-[11px] text-muted-foreground aria-[current=page]:text-foreground";
   const onLibrary = path === "/" || isShowsPath(path) || isMoviesPath(path);
-  const mark = (on: boolean) => on && <i aria-hidden className="absolute inset-x-6 top-0 h-1 bg-white" />;
+  const mark = (on: boolean) => on && <i aria-hidden className="absolute inset-x-6 top-0 h-1 bg-paper" />;
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 flex bg-sidebar pb-[env(safe-area-inset-bottom)] md:hidden">
       <Link to="/" className={item} aria-current={onLibrary ? "page" : undefined}>
