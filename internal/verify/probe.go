@@ -248,8 +248,7 @@ func parseClock(s string) float64 {
 }
 
 // DolbyVision reports whether the stream carries Dolby Vision side data.
-// ffprobe's label for it has changed between versions, so any that names
-// it counts.
+// Any label that names it counts, not one exact string.
 func (s Stream) DolbyVision() bool {
 	for _, sd := range s.SideData {
 		if t, _ := sd["side_data_type"].(string); strings.Contains(strings.ToLower(t), "dovi") || strings.Contains(strings.ToLower(t), "dolby vision") {
