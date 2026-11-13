@@ -113,8 +113,9 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
       if (p.kind === "tv" && shape !== "all" && ((r.covers?.length ?? 0) > 1) !== (shape === "packs")) return false;
       return true;
     });
+    const fit = new Map(sort.key === "best" ? xs.map((r) => [r.key, fitScore(r, want, p.kind)]) : []);
     const by: Record<SortKey, (a: Release, b: Release) => number> = {
-      best: (a, b) => fitScore(a, want, p.kind) - fitScore(b, want, p.kind) || a.seeders - b.seeders,
+      best: (a, b) => fit.get(a.key)! - fit.get(b.key)! || a.seeders - b.seeders,
       score: (a, b) => a.score - b.score,
       res: (a, b) => (a.info.resolution ?? 0) - (b.info.resolution ?? 0),
       size: (a, b) => a.size - b.size,
@@ -271,6 +272,7 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
               key={r.key}
               r={r}
               p={p}
+              want={want}
               cols={cols}
               cells={cells}
               fills={picks.get(r.key)}
@@ -423,6 +425,7 @@ function SubSpecs({ r }: { r: Release }) {
 function Row({
   r,
   p,
+  want,
   cols,
   cells,
   fills,
@@ -437,6 +440,7 @@ function Row({
 }: {
   r: Release;
   p: ReleaseSheetProps;
+  want: Set<number>;
   cols: string;
   cells: { id: number; tone: Tone }[];
   fills?: number[];
@@ -451,7 +455,6 @@ function Row({
 }) {
   const i = r.info;
   const picked = !!fills;
-  const want = new Set(p.wanted);
   const nFills = (r.covers ?? []).filter((id) => want.has(id)).length;
   const extras = (r.covers?.length ?? 0) - nFills;
   const cover = coverLabel(r, p);
