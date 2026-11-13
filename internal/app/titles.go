@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -91,6 +92,9 @@ type SeriesDetail struct {
 	// Synthetic is true when episodes come from TMDB counts rather than
 	// Sonarr (title not in the library yet). Episode IDs are then negative.
 	Synthetic bool `json:"synthetic,omitempty"`
+	// queueErr is set when the queue could not be loaded: Queued is then
+	// unknown, not false.
+	queueErr error
 }
 
 // MovieDetail is everything a movie page needs.
@@ -107,6 +111,9 @@ type MovieDetail struct {
 	File       *FileInfo       `json:"file,omitempty"`
 	Path       string          `json:"path,omitempty"`
 	ProfileID  int             `json:"qualityProfileId,omitempty"`
+	// queueErr is set when the queue could not be loaded: Queued is then
+	// unknown, not false.
+	queueErr error
 }
 
 // CollectionInfo lists the movies of a collection.
@@ -163,13 +170,15 @@ func (a *App) Series(ctx context.Context, id int, fresh bool) (*SeriesDetail, er
 		files []arr.MediaFile
 		errS  error
 		errE  error
+		errQ  error
+		errF  error
 		wg    sync.WaitGroup
 	)
 	wg.Add(4)
-	go func() { defer wg.Done(); files, _ = c.Sonarr.EpisodeFiles(ctx, id) }()
+	go func() { defer wg.Done(); files, errF = c.Sonarr.EpisodeFiles(ctx, id) }()
 	go func() { defer wg.Done(); s, errS = c.Sonarr.Series(ctx, id) }()
 	go func() { defer wg.Done(); eps, errE = c.Sonarr.Episodes(ctx, id) }()
-	go func() { defer wg.Done(); queue, _ = c.Sonarr.Queue(ctx, "") }()
+	go func() { defer wg.Done(); queue, errQ = c.Sonarr.Queue(ctx, "") }()
 	wg.Wait()
 	if errS != nil {
 		return nil, errS
@@ -187,7 +196,7 @@ func (a *App) Series(ctx context.Context, id int, fresh bool) (*SeriesDetail, er
 	for i := range files {
 		byFile[files[i].ID] = &files[i]
 	}
-	d := &SeriesDetail{LibraryItem: seriesItem(s), InLibrary: true, Overview: s.Overview, Fanart: arr.Fanart(s.Images), Genres: s.Genres, Runtime: s.Runtime, Path: s.Path, ProfileID: s.QualityProfile}
+	d := &SeriesDetail{LibraryItem: seriesItem(s), InLibrary: true, Overview: s.Overview, Fanart: arr.Fanart(s.Images), Genres: s.Genres, Runtime: s.Runtime, Path: s.Path, ProfileID: s.QualityProfile, queueErr: errQ}
 	seasonMon := map[int]bool{}
 	for _, sn := range s.Seasons {
 		seasonMon[sn.SeasonNumber] = sn.Monitored
@@ -209,6 +218,12 @@ func (a *App) Series(ctx context.Context, id int, fresh bool) (*SeriesDetail, er
 		d.Seasons = append(d.Seasons, SeasonDetail{Number: n, Monitored: seasonMon[n], Episodes: list})
 	}
 	sortSeasons(d.Seasons)
+	// The page still renders without queue state or file details, but that
+	// answer is not kept.
+	if errQ != nil || errF != nil {
+		slog.Warn("sonarr: show loaded without its queue or files", "series", id, "queue", errQ, "files", errF)
+		return d, nil
+	}
 	a.detailMu.Lock()
 	a.details[key] = cachedDetail{at: time.Now(), series: d}
 	a.detailMu.Unlock()
@@ -324,17 +339,21 @@ func (a *App) Movie(ctx context.Context, id int) (*MovieDetail, error) {
 	var (
 		m     arr.Movie
 		err   error
+		errQ  error
 		queue []arr.QueueRecord
 		wg    sync.WaitGroup
 	)
 	wg.Add(2)
 	go func() { defer wg.Done(); m, err = c.Radarr.Movie(ctx, id) }()
-	go func() { defer wg.Done(); queue, _ = c.Radarr.Queue(ctx, "") }()
+	go func() { defer wg.Done(); queue, errQ = c.Radarr.Queue(ctx, "") }()
 	wg.Wait()
 	if err != nil {
 		return nil, err
 	}
 	d := movieDetail(m, true)
+	if d.queueErr = errQ; errQ != nil {
+		slog.Warn("radarr: movie loaded without its queue", "movie", id, "err", errQ)
+	}
 	for _, q := range queue {
 		if q.MovieID == id {
 			d.Queued = true

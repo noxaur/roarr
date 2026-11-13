@@ -40,6 +40,10 @@ type AutoGrab struct {
 	Error   string     `json:"error,omitempty"`
 }
 
+// errQueueUnknown stops Auto from choosing what is missing while it cannot
+// see what is already downloading: it would grab those titles again.
+var errQueueUnknown = errors.New("the download queue could not be loaded, so nothing was grabbed")
+
 // Auto searches, waits until the best plan is stable, and grabs it.
 //
 // It does not wait for the slowest indexer when it does not have to: once
@@ -66,6 +70,9 @@ func (a *App) Auto(ctx context.Context, r AutoRequest) (AutoResult, error) {
 		seasonSet[s] = true
 	}
 	if len(wanted) == 0 {
+		if d.queueErr != nil {
+			return AutoResult{}, fmt.Errorf("%w: %w", errQueueUnknown, d.queueErr)
+		}
 		for _, s := range d.Seasons {
 			if s.Number == 0 || (len(seasonSet) > 0 && !seasonSet[s.Number]) {
 				continue
@@ -146,6 +153,9 @@ func (a *App) autoMovies(ctx context.Context, r AutoRequest, start time.Time) (A
 		m, err := a.MovieByTmdb(ctx, id)
 		if err != nil {
 			return AutoResult{}, err
+		}
+		if m.queueErr != nil {
+			return AutoResult{}, fmt.Errorf("%w: %w", errQueueUnknown, m.queueErr)
 		}
 		if !m.HasFile && !m.Queued {
 			movies = append(movies, m)
