@@ -8,8 +8,7 @@ show, a movie or a whole collection. Let roarr pick the best release, or pick
 it yourself. Season packs download episode by episode, and each episode lands
 in Jellyfin as soon as it is done.
 
-One Docker image (~17 MB, or ~17 MB + ffmpeg if you want the optional AV1
-converter), one port, one volume.
+One Docker image, one port, one volume.
 
 ## Quick start
 
@@ -137,8 +136,8 @@ existing install, give the config volume to that uid once:
 The torrent's own hard-linked copy is not touched, so seeding goes on, but the
 old data stays on disk until that torrent is removed.
 
-The image includes a static ffmpeg, which adds roughly 100-150 MB (estimate).
-Leave it out with `docker build --build-arg FFMPEG=false .`; the converter
+The image includes a static ffmpeg and ffprobe, which are most of its size.
+Leave them out with `docker build --build-arg FFMPEG=false .`; the converter
 then reports itself as unavailable.
 
 Bind-mounting a host folder on `/config` instead of a named volume? The image
