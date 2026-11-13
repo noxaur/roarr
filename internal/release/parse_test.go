@@ -46,6 +46,63 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// Dots are separators, so a tag split by one is the same tag.
+func TestParseSourceAndAudioSeparators(t *testing.T) {
+	sources := map[string]Source{
+		"Show.S01E01.1080p.WEB.DL.H264-GRP":    SourceWEBDL,
+		"Show.S01E01.1080p.WEB-DL.H264-GRP":    SourceWEBDL,
+		"Show S01E01 1080p WEB DL H264-GRP":    SourceWEBDL,
+		"Show.S01E01.1080p.WEBDL.H264-GRP":     SourceWEBDL,
+		"Show.S01E01.1080p.WEB.RIP.x264-GRP":   SourceWEBRip,
+		"Show.S01E01.1080p.WEBRip.x264-GRP":    SourceWEBRip,
+		"Show.S01E01.1080p.WEB.x264-GRP":       SourceWEB,
+		"Movie.2010.1080p.Blu.Ray.x264-GRP":    SourceBluRay,
+		"Movie.2010.1080p.Blu-Ray.x264-GRP":    SourceBluRay,
+		"Movie.2010.720p.BR.Rip.x264-GRP":      SourceBluRay,
+		"Movie.2010.720p.BD.Rip.x264-GRP":      SourceBluRay,
+		"Movie.2010.DVD.Rip.XviD-GRP":          SourceDVD,
+		"Movie.2010.CAM.Rip.x264-GRP":          SourceCam,
+		"Movie.2010.TS.Rip.x264-GRP":           SourceTS,
+		"Blu.S01E01.720p.HDTV.x264-GRP":        SourceHDTV,
+		"Movie.2010.1080p.Blu.Ray.REMUX.AVC-X": SourceRemux,
+	}
+	for in, want := range sources {
+		if got := Parse(in).Source; got != want {
+			t.Errorf("Parse(%q).Source = %q, want %q", in, got, want)
+		}
+	}
+	audio := map[string]string{
+		"Movie.2010.1080p.BluRay.DTS.HD.MA.5.1.x264-GRP": "DTS-HD MA",
+		"Movie.2010.1080p.BluRay.DTS-HD.MA.5.1.x264-GRP": "DTS-HD MA",
+		"Movie.2010.1080p.BluRay.DTS-HD MA 5.1 x264-GRP": "DTS-HD MA",
+		"Movie.2010.1080p.BluRay.DTS.X.7.1.x265-GRP":     "DTS-HD MA",
+		"Movie.2010.1080p.BluRay.DTS.5.1.x264-GRP":       "DTS",
+		"Movie.2010.1080p.BluRay.DTS.x264-GRP":           "DTS",
+		"Movie.2010.1080p.BluRay.True.HD.7.1.x264-GRP":   "TrueHD",
+		"Movie.2010.1080p.WEB-DL.E.AC.3.5.1.x264-GRP":    "DDP",
+		"Movie.2010.1080p.WEB-DL.AC.3.5.1.x264-GRP":      "DD",
+	}
+	for in, want := range audio {
+		if got := Parse(in).Audio; got != want {
+			t.Errorf("Parse(%q).Audio = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The order decides which release replaces a library file, and the numbers
+// are stored in library.json.
+func TestSourceRank(t *testing.T) {
+	order := []Source{SourceUnknown, SourceCam, SourceTS, SourceScreen, SourceDVD, SourceHDTV, SourceWEBRip, SourceWEBDL, SourceBluRay, SourceRemux}
+	for i, s := range order {
+		if got := SourceRank(s); got != i {
+			t.Errorf("SourceRank(%q) = %d, want %d", s, got, i)
+		}
+	}
+	if SourceRank(SourceWEB) != SourceRank(SourceWEBDL) {
+		t.Errorf("WEB ranks %d, WEB-DL %d: a scene WEB release is a WEB-DL", SourceRank(SourceWEB), SourceRank(SourceWEBDL))
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	cases := map[string]string{
 		"The Expanse":                   "expanse",

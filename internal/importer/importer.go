@@ -96,10 +96,7 @@ func (im *Importer) Destination(t Title, p Placement) (string, error) {
 // already renamed to "Show - S01E02.mkv").
 func QualityRank(name string) int {
 	i := release.Parse(name)
-	src := map[release.Source]int{
-		release.SourceCam: 1, release.SourceTS: 2, release.SourceScreen: 3, release.SourceDVD: 4, release.SourceHDTV: 5,
-		release.SourceWEBRip: 6, release.SourceWEB: 7, release.SourceWEBDL: 7, release.SourceBluRay: 8, release.SourceRemux: 9,
-	}[i.Source]
+	src := release.SourceRank(i.Source)
 	if i.Resolution == 0 && src == 0 {
 		return -1
 	}

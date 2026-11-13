@@ -67,6 +67,22 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestQualityRankUsesTheReleaseSourceOrder(t *testing.T) {
+	rank := func(source string) int { return QualityRank("Show.S01E01.1080p." + source + ".x264-GRP.mkv") }
+	order := []string{"HDTV", "WEB.RIP", "WEB.DL", "Blu.Ray", "BluRay.REMUX"}
+	for i := 1; i < len(order); i++ {
+		if rank(order[i-1]) >= rank(order[i]) {
+			t.Errorf("%s ranks %d, %s ranks %d", order[i-1], rank(order[i-1]), order[i], rank(order[i]))
+		}
+	}
+	if rank("WEB") != rank("WEB-DL") {
+		t.Errorf("WEB ranks %d, WEB-DL %d: one must not replace the other", rank("WEB"), rank("WEB-DL"))
+	}
+	if got := QualityRank("The Show - S01E01.mkv"); got != -1 {
+		t.Errorf("no quality in the name: rank %d, want -1", got)
+	}
+}
+
 func TestParseSubtitle(t *testing.T) {
 	cases := []struct {
 		rel, video string
