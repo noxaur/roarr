@@ -401,3 +401,29 @@ func mustJSON(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+func TestSkippedPictureCheckIsNotAPass(t *testing.T) {
+	v, _, file := newFake(t, "multi.json", func(at float64) image.Image { return scene(int(at)) })
+	v.Tools.FFmpeg = "" // not installed
+	vd := v.Verify(context.Background(), Target{
+		Release:    "Movie.2024.1080p.BluRay.x265-GRP",
+		Kind:       "movie",
+		RuntimeMin: 44,
+		Files:      []File{{Name: "Movie/movie.mkv", Path: file, Size: 1 << 30}},
+	})
+	if c, _ := checkByName(vd.Checks, "picture"); c.Level != Skip {
+		t.Fatalf("picture: %s %s", c.Level, c.Reason)
+	}
+	if vd.Level != Skip || !strings.Contains(vd.Summary, "ffmpeg is not installed") {
+		t.Fatalf("verdict %s: %s", vd.Level, vd.Summary)
+	}
+	// What was checked still counts when it is worse than "unknown".
+	vd = v.Verify(context.Background(), Target{
+		Release: "Movie.2024.2160p.BluRay.x265-GRP",
+		Kind:    "movie",
+		Files:   []File{{Name: "Movie/movie.mkv", Path: file, Size: 1 << 30}},
+	})
+	if vd.Level != Warn {
+		t.Fatalf("verdict %s: %s\n%+v", vd.Level, vd.Summary, vd.Checks)
+	}
+}
