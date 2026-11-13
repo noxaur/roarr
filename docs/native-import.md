@@ -188,11 +188,15 @@ Limits:
   (for example, a new episode that TMDB does not list yet) is still
   placed. roarr keeps all episode numbers from the name. The placement
   has the flag `unverified`.
-- **Two files for one episode:** roarr keeps the larger file.
+- **Two files for one episode:** roarr keeps the larger file. A
+  multi-episode file is dropped only when every one of its episodes has a
+  larger copy.
 - **Samples:** `sample` in the name, or a `Sample/` folder.
-- **Extras:** featurettes, trailers, behind the scenes, deleted scenes,
-  interviews and similar names, or folders such as `Extras/` and
-  `Featurettes/`. roarr does not download or import them.
+- **Extras:** a file in a folder such as `Extras/` or `Featurettes/`, or a
+  file whose name ends in a marker such as `-trailer`, `.Featurette` or
+  `Deleted Scenes`. The same word earlier in the name is part of the
+  title, and a name with an episode number is never an extra. roarr does
+  not download or import extras.
 - **Movies:** roarr imports the largest video that is not a sample. It
   skips the other videos as extras.
 - **Subtitles** belong to a video when one of these is true:
