@@ -79,7 +79,7 @@ environment variable is locked there.
 | `INDEXER_TIMEOUT` | `30` | Seconds before giving up on a slow indexer. |
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |
 | `PORT` | `3847` | |
-| `VERIFY_MEDIA` | `auto` | Check finished downloads with ffprobe/ffmpeg. `auto` is on when `ffprobe` is installed (`FFPROBE_PATH`, `FFMPEG_PATH` override the lookup). |
+| `VERIFY_MEDIA` | `auto` | Check finished downloads with ffprobe/ffmpeg. `auto` is on when `ffprobe` is installed (`FFPROBE_PATH`, `FFMPEG_PATH` override the lookup, for the AV1 converter too). |
 | `VERIFY_AUTO_REGRAB` | `false` | When a download fails the checks, blocklist it and grab the next best release. |
 | `VERIFY_PATH_MAP` | — | `client=roarr` path prefixes, comma-separated, when roarr sees qBittorrent's files under another path (`/downloads=/data/downloads`). |
 
