@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -745,8 +746,13 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
 	var in config.Settings
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	if err := json.Unmarshal(body, &in); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
@@ -759,7 +765,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			*next = prev
 		}
 	}
-	_, err := s.app.Settings.Update(func(cur *config.Settings) {
+	_, err = s.app.Settings.Update(func(cur *config.Settings) {
 		pairs := []struct{ next, prev *config.Service }{
 			{&in.Sonarr, &cur.Sonarr}, {&in.Radarr, &cur.Radarr}, {&in.Prowlarr, &cur.Prowlarr},
 			{&in.Seerr, &cur.Seerr}, {&in.Jellyfin, &cur.Jellyfin}, {&in.QBit, &cur.QBit},
@@ -769,9 +775,13 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			keep(&p.next.Password, p.prev.Password)
 		}
 		keep(&in.AuthPassword, cur.AuthPassword)
-		if in.Import == (config.Import{}) {
-			in.Import = cur.Import // a client that does not know these settings
-		}
+		// A client that does not know an import setting leaves it out: read
+		// the request over the stored values, so only what it sent changes.
+		imp := struct {
+			Import config.Import `json:"import"`
+		}{cur.Import}
+		_ = json.Unmarshal(body, &imp) // the same bytes decoded above
+		in.Import = imp.Import
 		*cur = in
 	})
 	if err != nil {
