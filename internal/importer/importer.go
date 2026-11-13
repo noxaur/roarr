@@ -205,6 +205,12 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 		if oi, err := os.Stat(old); err == nil && os.SameFile(si, oi) {
 			return Result{Path: old, Skipped: true, Reason: "already in the library"}, nil
 		}
+		// The planner already chose between the files of one download. Two
+		// of them overlap only when a multi-episode file is the sole copy of
+		// one of its episodes, and then both belong in the library.
+		if r, ok := im.store.Record(old); ok && req.Hash != "" && r.Hash == req.Hash && old != dest {
+			continue
+		}
 		if t.Kind == "tv" {
 			if extra := extraEpisodes(old, p.Season, p.Episodes); extra != "" {
 				return Result{Skipped: true, Reason: fmt.Sprintf("%s also holds %s; not replacing it", filepath.Base(old), extra)}, nil

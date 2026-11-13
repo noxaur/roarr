@@ -55,12 +55,14 @@ func TestClassify(t *testing.T) {
 		"Trailer.Park.Boys.S01/Trailer.Park.Boys.S01E02.mkv": ClassVideo,
 		"Show - S02E03 - The Interview.mkv":                  ClassVideo, // episode title
 		// Real extras: a trailing marker, or the folder.
-		"Movie (2014)/Movie (2014)-trailer.mkv":                     ClassExtra,
-		"Movie.2010/Movie.2010.Deleted.Scenes.mkv":                  ClassExtra,
-		"Movie.2010/Movie.2010.Trailer.2.mkv":                       ClassExtra,
-		"Movie.2010/Behind the Scenes.mkv":                          ClassExtra,
-		"Trailer.Park.Boys.S01/Extras/Trailer.Park.Boys.S01E01.mkv": ClassExtra,
-		"The.Interview.2014/The.Interview.2014-featurette.mkv":      ClassExtra,
+		"Movie (2014)/Movie (2014)-trailer.mkv":                       ClassExtra,
+		"Movie.2010/Movie.2010.Deleted.Scenes.mkv":                    ClassExtra,
+		"Movie.2010/Movie.2010.Trailer.2.mkv":                         ClassExtra,
+		"Movie.2010/Behind the Scenes.mkv":                            ClassExtra,
+		"Trailer.Park.Boys.S01/Extras/Trailer.Park.Boys.S01E01.mkv":   ClassExtra,
+		"The.Interview.2014/The.Interview.2014-featurette.mkv":        ClassExtra,
+		"Inception.2010/Inception.2010.Trailer.1080p.mkv":             ClassExtra,
+		"Inception.2010/Inception.2010.Trailer.2.720p.BluRay-GRP.mkv": ClassExtra,
 	}
 	for rel, want := range cases {
 		if got := Classify(rel); got != want {
@@ -779,5 +781,33 @@ func TestImportMovieAndBeforeHook(t *testing.T) {
 	}
 	if want := filepath.Join(dir, "movies", "Inception (2010)", "Inception (2010).mkv"); res.Path != want {
 		t.Fatalf("path %s, want %s", res.Path, want)
+	}
+}
+
+func TestImportKeepsBothFilesOfOneDownloadThatShareAnEpisode(t *testing.T) {
+	for _, order := range [][]int{{0, 1}, {1, 0}} {
+		im, dir, _ := newImporter(t)
+		ti := showTitle(8)
+		var pls []Placement
+		for _, f := range []struct {
+			name string
+			eps  []int
+		}{{"The.Show.S01E01.1080p.WEB-DL.mkv", []int{1}}, {"The.Show.S01E01E02.720p.WEB-DL.mkv", []int{1, 2}}} {
+			src := filepath.Join(dir, "dl", f.name)
+			write(t, src, f.name)
+			pls = append(pls, Placement{Video: SourceFile{Rel: f.name, Path: src}, Season: 1, Episodes: f.eps})
+		}
+		for _, i := range order {
+			res, err := im.Import(context.Background(), Request{Title: ti, Placement: pls[i], Release: "The.Show.S01.WEB-DL", Hash: "h1", Replace: true})
+			if err != nil || res.Skipped {
+				t.Fatalf("order %v: import %s: %+v %v", order, pls[i].Video.Rel, res, err)
+			}
+		}
+		season := filepath.Join(dir, "tv", "The Show (2020)", "Season 01")
+		for _, n := range []string{"The Show - S01E01.mkv", "The Show - S01E01-E02.mkv"} {
+			if _, err := os.Stat(filepath.Join(season, n)); err != nil {
+				t.Errorf("order %v: %s is gone", order, n)
+			}
+		}
 	}
 }
