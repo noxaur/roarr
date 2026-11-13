@@ -160,8 +160,9 @@ seeder held them. roarr imports whatever completes, in any order.
 
 - **An approved `/release/push` is not a grab.** Sonarr approved a release
   and then failed to hand it to qBittorrent (a magnet without trackers). It
-  only logged that failure. roarr confirms through the "grabbed" history
-  event before it reports success.
+  only logged that failure. roarr waits for a new "grabbed"
+  history event before it says the download started. When history cannot
+  be read, it says the grab could not be checked.
 - **Sonarr declines multi-season and complete-series packs on push**
   ("Multi-season releases are not supported"). With qBittorrent configured,
   roarr adds those straight to qBittorrent in Sonarr's category and imports
