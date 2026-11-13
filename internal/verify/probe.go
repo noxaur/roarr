@@ -65,29 +65,33 @@ func FindTools() Tools {
 	return Tools{FFprobe: find("FFPROBE_PATH", "ffprobe"), FFmpeg: find("FFMPEG_PATH", "ffmpeg")}
 }
 
-// Probe is the part of `ffprobe -show_format -show_streams` output roarr
-// reads.
+// Probe is the part of ffprobe's output roarr reads. It is the one parsed
+// model of a media file: internal/transcode decides on it too.
 type Probe struct {
-	Streams []Stream `json:"streams"`
-	Format  Format   `json:"format"`
+	Streams  []Stream          `json:"streams"`
+	Chapters []json.RawMessage `json:"chapters"`
+	Format   Format            `json:"format"`
 }
 
 // Stream is one ffprobe stream.
 type Stream struct {
-	Index         int               `json:"index"`
-	CodecType     string            `json:"codec_type"`
-	CodecName     string            `json:"codec_name"`
-	Width         int               `json:"width"`
-	Height        int               `json:"height"`
-	PixFmt        string            `json:"pix_fmt"`
-	ColorTransfer string            `json:"color_transfer"`
-	Channels      int               `json:"channels"`
-	Duration      string            `json:"duration"`
-	NbFrames      string            `json:"nb_frames"`
-	NbReadPackets string            `json:"nb_read_packets"`
-	Disposition   map[string]int    `json:"disposition"`
-	Tags          map[string]string `json:"tags"`
-	SideData      []map[string]any  `json:"side_data_list"`
+	Index          int               `json:"index"`
+	CodecType      string            `json:"codec_type"`
+	CodecName      string            `json:"codec_name"`
+	Width          int               `json:"width"`
+	Height         int               `json:"height"`
+	PixFmt         string            `json:"pix_fmt"`
+	ColorRange     string            `json:"color_range"`
+	ColorSpace     string            `json:"color_space"`
+	ColorTransfer  string            `json:"color_transfer"`
+	ColorPrimaries string            `json:"color_primaries"`
+	Channels       int               `json:"channels"`
+	Duration       string            `json:"duration"`
+	NbFrames       string            `json:"nb_frames"`
+	NbReadPackets  string            `json:"nb_read_packets"`
+	Disposition    map[string]int    `json:"disposition"`
+	Tags           map[string]string `json:"tags"`
+	SideData       []map[string]any  `json:"side_data_list"`
 }
 
 // Format is the ffprobe container section.
@@ -97,6 +101,16 @@ type Format struct {
 	Size       string            `json:"size"`
 	BitRate    string            `json:"bit_rate"`
 	Tags       map[string]string `json:"tags"`
+}
+
+// RunProbe runs ffprobe on a file and parses its answer.
+func RunProbe(ctx context.Context, r Runner, ffprobe, file string) (*Probe, error) {
+	out, err := r.Output(ctx, ffprobe, "-v", "error", "-print_format", "json",
+		"-show_format", "-show_streams", "-show_chapters", file)
+	if err != nil {
+		return nil, err
+	}
+	return ParseProbe(out)
 }
 
 // ParseProbe decodes ffprobe JSON.
@@ -142,7 +156,8 @@ func (s Stream) Lang() string {
 // Is reports a disposition flag ("forced", "attached_pic", "comment").
 func (s Stream) Is(flag string) bool { return s.Disposition[flag] == 1 }
 
-// IsPicture reports a real video stream, not cover art.
+// IsPicture reports a real video stream, not cover art. Cover art is not
+// always flagged attached_pic, so still-image codecs are left out as well.
 func (s Stream) IsPicture() bool {
 	if s.CodecType != "video" || s.Is("attached_pic") {
 		return false
@@ -232,17 +247,26 @@ func parseClock(s string) float64 {
 	return float64(h*3600+m*60) + sec
 }
 
+// DolbyVision reports whether the stream carries Dolby Vision side data.
+// ffprobe's label for it has changed between versions, so any that names
+// it counts.
+func (s Stream) DolbyVision() bool {
+	for _, sd := range s.SideData {
+		if t, _ := sd["side_data_type"].(string); strings.Contains(strings.ToLower(t), "dovi") || strings.Contains(strings.ToLower(t), "dolby vision") {
+			return true
+		}
+	}
+	return false
+}
+
 // HDR reports whether the video stream carries an HDR transfer function or
 // Dolby Vision metadata.
 func (s Stream) HDR() (bool, bool) {
-	known := s.ColorTransfer != "" && s.ColorTransfer != "unknown"
-	hdr := s.ColorTransfer == "smpte2084" || s.ColorTransfer == "arib-std-b67"
-	for _, sd := range s.SideData {
-		if t, _ := sd["side_data_type"].(string); strings.Contains(strings.ToLower(t), "dovi") || strings.Contains(strings.ToLower(t), "dolby vision") {
-			return true, true
-		}
+	if s.DolbyVision() {
+		return true, true
 	}
-	return hdr, known
+	known := s.ColorTransfer != "" && s.ColorTransfer != "unknown"
+	return s.ColorTransfer == "smpte2084" || s.ColorTransfer == "arib-std-b67", known
 }
 
 // summarize describes a probe for the verdict.

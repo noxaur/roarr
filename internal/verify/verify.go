@@ -92,12 +92,8 @@ func (v *Verifier) Verify(ctx context.Context, t Target) Verdict {
 	}
 
 	pctx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	out, err := v.Run.Output(pctx, v.Tools.FFprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", primary.Path)
+	p, err := RunProbe(pctx, v.Run, v.Tools.FFprobe, primary.Path)
 	cancel()
-	var p *Probe
-	if err == nil {
-		p, err = ParseProbe(out)
-	}
 	if err != nil {
 		if ctx.Err() != nil {
 			vd.add(Check{Name: "streams", Level: Skip, Reason: "cancelled"})

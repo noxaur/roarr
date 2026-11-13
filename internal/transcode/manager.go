@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/noxaur/roarr/internal/verify"
 )
 
 // Job states.
@@ -88,11 +90,10 @@ type Status struct {
 
 // Manager owns the queue.
 type Manager struct {
-	run     Runner
-	path    string // state file
-	ffmpeg  string
-	ffprobe string
-	onDone  func(Job)
+	run    Runner
+	path   string // state file
+	tools  verify.Tools
+	onDone func(Job)
 
 	mu       sync.Mutex
 	opts     Options
@@ -123,12 +124,13 @@ type active struct {
 	stopping bool // cancelled because it could not be suspended
 }
 
-// New builds a manager; state is kept in dir/transcode.json.
-func New(r Runner, dir string) *Manager {
+// New builds a manager that runs the given ffmpeg and ffprobe; state is kept
+// in dir/transcode.json.
+func New(r Runner, tools verify.Tools, dir string) *Manager {
 	if r == nil {
 		r = ExecRunner{}
 	}
-	m := &Manager{run: r, path: filepath.Join(dir, "transcode.json"), ffmpeg: "ffmpeg", ffprobe: "ffprobe", kick: make(chan struct{}, 1), active: map[*Job]*active{}, stopped: make(chan struct{}), now: time.Now}
+	m := &Manager{run: r, path: filepath.Join(dir, "transcode.json"), tools: tools, kick: make(chan struct{}, 1), active: map[*Job]*active{}, stopped: make(chan struct{}), now: time.Now}
 	m.load()
 	return m
 }
@@ -194,7 +196,7 @@ func (m *Manager) wake() {
 // Detect finds ffmpeg, ffprobe and an AV1 encoder: SVT-AV1 first, libaom
 // only when SVT-AV1 is missing.
 func (m *Manager) Detect(ctx context.Context) {
-	enc, err := detectEncoder(ctx, m.run, m.ffmpeg, m.ffprobe)
+	enc, err := detectEncoder(ctx, m.run, m.tools)
 	m.mu.Lock()
 	m.detected, m.enc = true, enc
 	m.encErr = ""
@@ -210,12 +212,15 @@ func (m *Manager) Detect(ctx context.Context) {
 	m.wake()
 }
 
-func detectEncoder(ctx context.Context, r Runner, ffmpeg, ffprobe string) (string, error) {
-	out, err := r.Output(ctx, ffmpeg, "-hide_banner", "-encoders")
+func detectEncoder(ctx context.Context, r Runner, t verify.Tools) (string, error) {
+	if t.FFmpeg == "" || t.FFprobe == "" {
+		return "", errors.New("ffmpeg or ffprobe not found (looked at FFMPEG_PATH / FFPROBE_PATH, then $PATH)")
+	}
+	out, err := r.Output(ctx, t.FFmpeg, "-hide_banner", "-encoders")
 	if err != nil {
 		return "", fmt.Errorf("ffmpeg not found: %w", err)
 	}
-	if _, err := r.Output(ctx, ffprobe, "-version"); err != nil {
+	if _, err := r.Output(ctx, t.FFprobe, "-version"); err != nil {
 		return "", fmt.Errorf("ffprobe not found: %w", err)
 	}
 	return pickEncoder(string(out))
@@ -399,7 +404,7 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 		m.finish(j, Failed, "cannot read file (is the media folder mounted in roarr at the same path as in Sonarr/Radarr?): "+err.Error())
 		return
 	}
-	src, err := Probe(ctx, m.run, m.ffprobe, path)
+	src, err := Probe(ctx, m.run, m.tools.FFprobe, path)
 	if ctx.Err() != nil {
 		requeue()
 		return
@@ -420,6 +425,7 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 	m.update(j, func(j *Job) { j.SrcBytes, j.CRF, j.Encoder = src.Size, CRFFor(opts, src), enc })
 
 	args := BuildArgs(opts, enc, src, path, tmp)
+	dur := src.Duration()
 	jctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m.mu.Lock()
@@ -433,15 +439,15 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 		m.applyHoldLocked() // a hold set while the file was probed
 		m.mu.Unlock()
 	}
-	err = m.run.Run(jctx, opts.Nice, m.ffmpeg, args, func(line string) {
+	err = m.run.Run(jctx, opts.Nice, m.tools.FFmpeg, args, func(line string) {
 		k, v, ok := strings.Cut(line, "=")
 		if !ok {
 			return
 		}
 		switch k {
 		case "out_time_us":
-			if us, err := strconv.ParseInt(v, 10, 64); err == nil && src.Duration > 0 {
-				p := min(float64(us)/1e6/src.Duration*100, 99.9)
+			if us, err := strconv.ParseInt(v, 10, 64); err == nil && dur > 0 {
+				p := min(float64(us)/1e6/dur*100, 99.9)
 				m.update(j, func(j *Job) { j.Percent = p })
 			}
 		case "speed":
@@ -467,7 +473,7 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 		m.finish(j, Failed, "ffmpeg produced no output")
 		return
 	}
-	out, err := Probe(ctx, m.run, m.ffprobe, tmp)
+	out, err := Probe(ctx, m.run, m.tools.FFprobe, tmp)
 	if ctx.Err() != nil {
 		requeue()
 		return

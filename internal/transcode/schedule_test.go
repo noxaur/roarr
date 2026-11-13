@@ -127,13 +127,13 @@ func TestHeldQueueStartsNothing(t *testing.T) {
 
 func TestPauseSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
-	m := New(&fakeRunner{}, dir)
+	m := New(&fakeRunner{}, testTools, dir)
 	m.SetPaused(true)
-	if !New(&fakeRunner{}, dir).Status().Paused {
+	if !New(&fakeRunner{}, testTools, dir).Status().Paused {
 		t.Error("pause lost on reload")
 	}
 	m.SetPaused(false)
-	if New(&fakeRunner{}, dir).Status().Paused {
+	if New(&fakeRunner{}, testTools, dir).Status().Paused {
 		t.Error("resume lost on reload")
 	}
 }

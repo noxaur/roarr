@@ -37,7 +37,7 @@ func transcodeOptions(s config.Settings) transcode.Options {
 }
 
 func (a *App) startTranscode(ctx context.Context) {
-	a.Transcode = transcode.New(nil, a.DataDir)
+	a.Transcode = transcode.New(nil, a.Verify.Tools(), a.DataDir)
 	a.Transcode.SetOptions(transcodeOptions(a.Settings.Get()))
 	a.Settings.Subscribe(func(s config.Settings) { a.Transcode.SetOptions(transcodeOptions(s)) })
 	a.Transcode.OnDone(a.afterTranscode)

@@ -80,7 +80,7 @@ func BuildArgs(opts Options, enc string, info Info, in, out string) []string {
 		}
 		i := strconv.Itoa(ord)
 		ord++
-		if s.Disposition.AttachedPic != 0 {
+		if !s.IsPicture() {
 			continue // cover art stays as it is
 		}
 		crf := opts.CRF

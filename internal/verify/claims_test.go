@@ -159,3 +159,47 @@ func TestStreamLang(t *testing.T) {
 		t.Fatal("untagged should be empty")
 	}
 }
+
+// These rules are shared with internal/transcode.
+func TestProbeRules(t *testing.T) {
+	pic := func(codec string, attached int) Stream {
+		return Stream{CodecType: "video", CodecName: codec, Disposition: map[string]int{"attached_pic": attached}}
+	}
+	for _, c := range []struct {
+		s    Stream
+		want bool
+	}{
+		{pic("hevc", 0), true},
+		{pic("hevc", 1), false},  // flagged cover art
+		{pic("mjpeg", 0), false}, // cover art without the flag
+		{pic("png", 0), false},
+		{Stream{CodecType: "audio", CodecName: "aac"}, false},
+	} {
+		if got := c.s.IsPicture(); got != c.want {
+			t.Errorf("IsPicture(%s, attached %d) = %v", c.s.CodecName, c.s.Disposition["attached_pic"], got)
+		}
+	}
+	for label, want := range map[string]bool{
+		"DOVI configuration record":    true,
+		"Dolby Vision Metadata":        true,
+		"Mastering display metadata":   false,
+		"Content light level metadata": false,
+	} {
+		s := Stream{SideData: []map[string]any{{"side_data_type": label}}}
+		if got := s.DolbyVision(); got != want {
+			t.Errorf("DolbyVision(%q) = %v", label, got)
+		}
+		if hdr, known := s.HDR(); want && !(hdr && known) {
+			t.Errorf("HDR(%q) = %v, %v", label, hdr, known)
+		}
+	}
+	// The container's duration wins; without one, the longest stream's.
+	p := &Probe{Format: Format{Duration: "100.5"}, Streams: []Stream{{Duration: "90"}}}
+	if d := p.Duration(); d != 100.5 {
+		t.Errorf("duration = %v, want the container's", d)
+	}
+	p = &Probe{Streams: []Stream{{Duration: "90"}, {Tags: map[string]string{"DURATION": "00:01:40.500000000"}}}}
+	if d := p.Duration(); d != 100.5 {
+		t.Errorf("duration = %v, want the longest stream's", d)
+	}
+}

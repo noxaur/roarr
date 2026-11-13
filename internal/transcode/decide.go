@@ -19,10 +19,11 @@ func Skip(info Info, path string) string {
 			return "already AV1"
 		}
 		if v.DolbyVision() {
+			// Re-encoding would silently drop the Dolby layer.
 			return "Dolby Vision (converting would drop the Dolby layer)"
 		}
 	}
-	if info.Duration <= 0 {
+	if info.Duration() <= 0 {
 		return "unknown duration"
 	}
 	return ""
@@ -51,11 +52,11 @@ func Verify(src, out Info) error {
 	if out.Size <= 0 {
 		return fmt.Errorf("output is empty")
 	}
-	if d := math.Abs(src.Duration - out.Duration); d > 1 || math.IsNaN(d) {
-		return fmt.Errorf("duration differs: %.1fs before, %.1fs after", src.Duration, out.Duration)
+	if d := math.Abs(src.Duration() - out.Duration()); d > 1 || math.IsNaN(d) {
+		return fmt.Errorf("duration differs: %.1fs before, %.1fs after", src.Duration(), out.Duration())
 	}
 	for _, t := range []string{"video", "audio", "subtitle"} {
-		if a, b := src.Count(t), out.Count(t); a != b {
+		if a, b := len(src.Kind(t)), len(out.Kind(t)); a != b {
 			return fmt.Errorf("%s stream count differs: %d before, %d after", t, a, b)
 		}
 	}
