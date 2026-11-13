@@ -109,9 +109,11 @@ How it works:
   (the Dolby layer would be lost), are skipped.
 - The result is written next to the original under a temporary name and
   checked with ffprobe: duration within 1 s, same number of video, audio and
-  subtitle streams, same chapters, AV1 video. Only then does it replace the
-  original with an atomic rename. If anything fails, or the result is not
-  `TRANSCODE_MIN_SAVINGS` smaller, the original stays as it was.
+  subtitle streams, same chapters, AV1 video. Only then is it swapped in: the
+  original is moved aside, the result is put in its place without overwriting
+  anything, and the original is deleted last. If roarr stops in the middle, it
+  puts the original back at the next start. If anything fails, or the result
+  is not `TRANSCODE_MIN_SAVINGS` smaller, the original stays as it was.
 - Afterwards roarr asks Sonarr/Radarr to rescan and Jellyfin to refresh.
 - `GET /api/transcode` shows the queue, progress and bytes saved.
 

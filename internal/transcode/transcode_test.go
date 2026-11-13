@@ -182,7 +182,8 @@ type fakeRunner struct {
 	outSize  int               // bytes ffmpeg "writes"
 	outProbe []byte            // ffprobe json of the written file
 	runErr   error
-	onRun    func() // runs while ffmpeg "encodes"
+	onRun    func()       // runs while ffmpeg "encodes"
+	onProbe  func(string) // runs before a file is probed
 	proc     *fakeProc
 	ran      [][]string
 }
@@ -206,9 +207,15 @@ func (p *fakeProc) Resume() error {
 	return nil
 }
 
-func (f *fakeRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
-	if strings.HasSuffix(name, "ffprobe") && len(args) > 0 {
+func (f *fakeRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if strings.HasSuffix(name, "ffprobe") && len(args) > 1 {
 		p := args[len(args)-1]
+		if f.onProbe != nil {
+			f.onProbe(p)
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if b, ok := f.probes[p]; ok {
 			return b, nil
 		}
@@ -217,7 +224,7 @@ func (f *fakeRunner) Output(_ context.Context, name string, args ...string) ([]b
 		}
 		return nil, fmt.Errorf("no such file")
 	}
-	return nil, nil
+	return []byte(" V..... libsvtav1            SVT-AV1\n"), nil
 }
 
 func (f *fakeRunner) Run(ctx context.Context, _ int, _ string, args []string, line func(string), started func(Proc)) error {
@@ -573,5 +580,139 @@ func TestSwapRefusesWhenBackupExists(t *testing.T) {
 	}
 	if size(t, backupPath(path)) != 555 || size(t, path) != 1000 {
 		t.Error("backup or original touched")
+	}
+}
+
+// stopInSwap runs the job until it calls stop, which arm puts somewhere
+// inside the swap, and holds it there: the disk then looks as it would had
+// roarr died at that point.
+func stopInSwap(t *testing.T, m *Manager, j *Job, arm func(stop func())) {
+	t.Helper()
+	reached, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	arm(func() { close(reached); <-release })
+	go func() {
+		defer close(done)
+		m.process(context.Background(), j, m.opts, EncSVT)
+	}()
+	<-reached
+	t.Cleanup(func() { close(release); <-done })
+}
+
+// restart loads the state m saved into a new manager and runs its startup.
+func restart(m *Manager, f *fakeRunner) *Manager {
+	again := New(f, filepath.Dir(m.path))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	again.Loop(ctx)
+	return again
+}
+
+func TestRecoveryRestoresOriginalAfterCrashInSwap(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	stopInSwap(t, m, j, func(stop func()) { m.afterBackup = stop })
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatal("the original should be moved aside at this point")
+	}
+	again := restart(m, f)
+	if size(t, path) != 1000 {
+		t.Fatalf("original not restored, size %d", size(t, path))
+	}
+	for _, p := range []string{tempPath(path), backupPath(path)} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s left behind", p)
+		}
+	}
+	if s := again.jobs[0].State; s != Queued {
+		t.Errorf("state %s (%s), want queued", s, again.jobs[0].Message)
+	}
+}
+
+func TestRecoveryDropsBackupBehindFinishedEncode(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	stopInSwap(t, m, j, func(stop func()) {
+		m.linkFn = func(a, b string) error {
+			err := os.Link(a, b)
+			if a == tempPath(path) {
+				stop()
+			}
+			return err
+		}
+	})
+	if size(t, backupPath(path)) != 1000 || size(t, path) != 300 {
+		t.Fatal("the result should be linked in with the backup still there")
+	}
+	again := restart(m, f)
+	if size(t, path) != 300 {
+		t.Fatalf("result not kept, size %d", size(t, path))
+	}
+	for _, p := range []string{tempPath(path), backupPath(path)} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s left behind", p)
+		}
+	}
+	if aj := again.jobs[0]; aj.State != Done || aj.SavedBytes != 700 || again.Status().BytesSaved != 700 {
+		t.Errorf("state %s (%s), saved %d", aj.State, aj.Message, aj.SavedBytes)
+	}
+}
+
+func TestRecoveryKeepsBackupBesideUnknownFile(t *testing.T) {
+	f := &fakeRunner{}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	if err := os.WriteFile(backupPath(path), make([]byte, 555), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	m.Loop(ctx)
+	if size(t, backupPath(path)) != 555 || size(t, path) != 1000 {
+		t.Error("backup or file in place touched")
+	}
+	if j.State != Failed || !strings.Contains(j.Message, backupPath(path)) {
+		t.Errorf("state %s (%s)", j.State, j.Message)
+	}
+}
+
+func TestCancelDuringResultProbeRequeues(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	ctx, cancel := context.WithCancel(context.Background())
+	f.onProbe = func(p string) {
+		if p == tempPath(path) {
+			cancel() // shutdown while the result is checked
+		}
+	}
+	m.process(ctx, j, m.opts, EncSVT)
+	if j.State != Queued || size(t, path) != 1000 {
+		t.Fatalf("state %s (%s), size %d", j.State, j.Message, size(t, path))
+	}
+	if _, err := os.Lstat(tempPath(path)); !os.IsNotExist(err) {
+		t.Error("temp file left behind")
+	}
+}
+
+func TestLoopWaitsForSwap(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, _, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	inSwap, release, returned := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	m.beforeSwap = func() { close(inSwap); <-release }
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		m.Loop(ctx)
+		close(returned)
+	}()
+	<-inSwap
+	cancel()
+	select {
+	case <-returned:
+		close(release)
+		t.Fatal("Loop returned while a worker was swapping")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	<-returned
+	if st := m.Status(); st.Counts.Done != 1 || size(t, path) != 300 {
+		t.Fatalf("the swap did not finish: %+v, size %d", st.Counts, size(t, path))
 	}
 }
