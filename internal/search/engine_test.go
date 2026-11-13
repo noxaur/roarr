@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,13 +15,21 @@ import (
 )
 
 // fakeProwlarr serves two indexers and records the order of search terms
-// per indexer. Each search takes `delay`.
+// per indexer. Each search takes `delay`; on an indexer with a gate it also
+// waits for one token.
 type fakeProwlarr struct {
 	mu    sync.Mutex
 	order map[string][]string
 	calls int
 	delay time.Duration
 	fail  bool
+	gate  map[string]chan struct{}
+}
+
+func (f *fakeProwlarr) ran(ix string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.order[ix])
 }
 
 func (f *fakeProwlarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +48,9 @@ func (f *fakeProwlarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail := f.fail
 		f.mu.Unlock()
 		time.Sleep(f.delay)
+		if g := f.gate[ix]; g != nil {
+			<-g
+		}
 		if fail {
 			http.Error(w, "boom", 500)
 			return
@@ -49,12 +61,179 @@ func (f *fakeProwlarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func newTestEngine(t *testing.T, f *fakeProwlarr) *Engine {
+func newTestEngine(t testing.TB, f *fakeProwlarr) *Engine {
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
 	e := NewEngine(arr.NewProwlarr(srv.URL, "k"))
 	t.Cleanup(e.Close)
+	for _, g := range f.gate {
+		t.Cleanup(func() { close(g) })
+	}
 	return e
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); time.Sleep(time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// queuedWaiters reports how many requests wait for a query queued on
+// indexer 1, or -1 when it is not queued.
+func queuedWaiters(e *Engine, term string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if q := e.queues[1]; q != nil {
+		for _, en := range q.pending {
+			if en.j.q.Term == term {
+				return en.waiters
+			}
+		}
+	}
+	return -1
+}
+
+const (
+	s01 = "{TvdbId:1}{Season:01}"
+	s02 = "{TvdbId:1}{Season:02}"
+	s03 = "{TvdbId:1}{Season:03}"
+)
+
+func seasonReq(n int) Request {
+	return Request{Kind: "tv", Title: "Show", TvdbID: 1, Seasons: []int{n}}
+}
+
+// busyEngine returns an engine whose indexer 1 is held on the season 3 query
+// until the gate gets a token.
+func busyEngine(t *testing.T) (*Engine, *fakeProwlarr) {
+	f := &fakeProwlarr{order: map[string][]string{}, gate: map[string]chan struct{}{"1": make(chan struct{}, 8)}}
+	e := newTestEngine(t, f)
+	go e.Run(context.Background(), seasonReq(3), nil, func(Batch) {})
+	waitFor(t, "indexer 1 to be busy", func() bool { return len(f.ran("1")) == 1 })
+	return e, f
+}
+
+func TestAbandonedFocusQueryIsDropped(t *testing.T) {
+	e, f := busyEngine(t)
+	bg := context.Background()
+
+	ctx, cancel := context.WithCancel(bg)
+	go e.Run(ctx, seasonReq(1), nil, func(Batch) {})
+	waitFor(t, "season 1 to queue", func() bool { return queuedWaiters(e, s01) == 1 })
+	cancel()
+	waitFor(t, "season 1 to lose its waiter", func() bool { return queuedWaiters(e, s01) == 0 })
+
+	for i := 0; i < 3; i++ {
+		f.gate["1"] <- struct{}{}
+	}
+	e.Run(bg, seasonReq(2), nil, func(Batch) {})
+	if got, want := f.ran("1"), []string{s03, s02}; !slices.Equal(got, want) {
+		t.Fatalf("indexer 1 ran %v, want %v", got, want)
+	}
+
+	// Asking for the dropped query again runs it fresh.
+	var again Batch
+	e.Run(bg, seasonReq(1), nil, func(b Batch) {
+		if b.IndexerID == 1 {
+			again = b
+		}
+	})
+	if got, want := f.ran("1"), []string{s03, s02, s01}; !slices.Equal(got, want) {
+		t.Fatalf("indexer 1 ran %v, want %v", got, want)
+	}
+	if again.Error != "" || again.Cached || len(again.Results) != 1 {
+		t.Fatalf("re-requested season 1 = %+v, want a fresh answer", again)
+	}
+}
+
+func TestQueryWithRemainingWaiterRuns(t *testing.T) {
+	e, f := busyEngine(t)
+	bg := context.Background()
+
+	ctx, cancel := context.WithCancel(bg)
+	go e.Run(ctx, seasonReq(1), nil, func(Batch) {})
+	waitFor(t, "season 1 to queue", func() bool { return queuedWaiters(e, s01) == 1 })
+	done := make(chan struct{})
+	go func() {
+		e.Run(bg, seasonReq(1), nil, func(Batch) {})
+		close(done)
+	}()
+	waitFor(t, "second waiter", func() bool { return queuedWaiters(e, s01) == 2 })
+	cancel()
+	waitFor(t, "first waiter to leave", func() bool { return queuedWaiters(e, s01) == 1 })
+
+	f.gate["1"] <- struct{}{}
+	f.gate["1"] <- struct{}{}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("season 1 never ran for its remaining waiter")
+	}
+	if got, want := f.ran("1"), []string{s03, s01}; !slices.Equal(got, want) {
+		t.Fatalf("indexer 1 ran %v, want %v", got, want)
+	}
+}
+
+func TestQueueRunsFocusThenShowThenPrefetch(t *testing.T) {
+	e, f := busyEngine(t)
+	bg := context.Background()
+
+	go e.Run(bg, Request{Kind: "tv", Title: "Show", TvdbID: 1, PrefetchSeasons: []int{1, 2}}, nil, func(Batch) {})
+	waitFor(t, "prefetch to queue", func() bool { return queuedWaiters(e, s02) == 1 })
+	go e.Run(bg, Request{Kind: "tv", Title: "Show", TvdbID: 1, Broad: true, BroadPriority: PShow}, nil, func(Batch) {})
+	waitFor(t, "show query to queue", func() bool { return queuedWaiters(e, "{TvdbId:1}") == 1 })
+	go e.Run(bg, seasonReq(5), nil, func(Batch) {})
+	waitFor(t, "focus query to queue", func() bool { return queuedWaiters(e, "{TvdbId:1}{Season:05}") == 1 })
+
+	for i := 0; i < 5; i++ {
+		f.gate["1"] <- struct{}{}
+	}
+	want := []string{s03, "{TvdbId:1}{Season:05}", "{TvdbId:1}", s01, s02}
+	waitFor(t, "the queue to drain", func() bool { return len(f.ran("1")) == len(want) })
+	got := f.ran("1")
+	slices.Sort(got[3:]) // the two prefetch seasons queue in either order
+	if !slices.Equal(got, want) {
+		t.Fatalf("indexer 1 ran %v, want %v", got, want)
+	}
+}
+
+func TestStuckIndexerDoesNotBlockOthers(t *testing.T) {
+	f := &fakeProwlarr{order: map[string][]string{}, gate: map[string]chan struct{}{"2": make(chan struct{})}}
+	e := newTestEngine(t, f)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	start := time.Now()
+	got := make(chan Batch, 2)
+	go e.Run(ctx, seasonReq(1), nil, func(b Batch) { got <- b })
+	select {
+	case b := <-got:
+		if b.IndexerID != 1 || len(b.Results) != 1 {
+			t.Fatalf("first batch = %+v, want indexer 1's results", b)
+		}
+		if d := time.Since(start); d > 500*time.Millisecond {
+			t.Fatalf("first results took %v with indexer 2 stuck", d)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("indexer 1 waited for stuck indexer 2")
+	}
+}
+
+// BenchmarkRunCached is the hot path of a repeat search: a warm indexer list
+// and every query answered from the cache.
+func BenchmarkRunCached(b *testing.B) {
+	e := newTestEngine(b, &fakeProwlarr{order: map[string][]string{}})
+	req := Request{Kind: "tv", Title: "Show", TvdbID: 1, Broad: true, Seasons: []int{1}, PrefetchSeasons: []int{2, 3, 4, 5, 6}}
+	run := func() { e.Run(context.Background(), req, nil, func(Batch) {}) }
+	run()
+	b.ReportAllocs()
+	for b.Loop() {
+		run()
+	}
 }
 
 func TestFocusJumpsAheadOfPrefetch(t *testing.T) {

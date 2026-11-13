@@ -426,9 +426,9 @@ func (e *Engine) worker(q *queue) {
 		en := q.next()
 		if en != nil {
 			en.queued = false
-			// Nobody is waiting for background prefetch any more (the user
-			// left the page): drop it instead of spending indexer quota.
-			if en.waiters == 0 && en.prio == PPrefetch {
+			// Nobody is waiting for it any more (the user moved on): drop it
+			// instead of making the next click wait behind it.
+			if en.waiters == 0 {
 				delete(e.cache, en.j.q.Key())
 				en.err = errAbandoned
 				close(en.done)
