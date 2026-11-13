@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SectionHead, Spinner } from "@/components/kit";
-import { Field, FieldLabel, LockedInput, Num, Segmented, Sub, Toggle } from "@/components/AdminFields";
+import { Field, LockedInput, Num, Segmented, Sub, Toggle } from "@/components/AdminFields";
 import { ChecksTab, ImportTab, TranscodeTab } from "./AdminMedia";
 
 type ServiceKey = "prowlarr" | "sonarr" | "radarr" | "seerr" | "jellyfin" | "qbittorrent";
@@ -170,13 +170,10 @@ export function SettingsPage() {
             <Input value={p.language} onChange={(e) => update((x) => (x.prefs.language = e.target.value))} placeholder="English" className="max-w-60" />
           </Field>
           <Field label="Max size" hint="Gigabytes per hour of video. 0 means no limit.">
-            <div className="flex items-center gap-2">
-              <Input type="number" min={0} step={0.5} value={p.maxGbPerHour} onChange={(e) => update((x) => (x.prefs.maxGbPerHour = +e.target.value))} className="w-24" />
-              <span className="font-mono text-xs text-muted-foreground">GB / hour</span>
-            </div>
+            <Num min={0} step={0.5} unit="GB / hour" value={p.maxGbPerHour} onChange={(v) => update((x) => (x.prefs.maxGbPerHour = v))} />
           </Field>
           <Field label="Min seeders">
-            <Input type="number" min={0} value={p.minSeeders} onChange={(e) => update((x) => (x.prefs.minSeeders = +e.target.value))} className="w-24" />
+            <Num min={0} value={p.minSeeders} onChange={(v) => update((x) => (x.prefs.minSeeders = v))} />
           </Field>
           <Field label="Prefer">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -328,8 +325,8 @@ function ServiceRow({
       </div>
       {open && !allLocked && (
         <div className="grid gap-x-4 gap-y-3 pb-4 sm:grid-cols-[110px_minmax(0,1fr)] sm:items-center sm:pl-6">
-          <FieldLabel>URL</FieldLabel>
           <LockedInput
+            label="URL"
             locked={lockedUrl}
             placeholder={status?.url && !cfg.url ? `${status.url} (found automatically)` : "http://host:port"}
             value={cfg.url}
@@ -337,16 +334,11 @@ function ServiceRow({
           />
           {svc.user ? (
             <>
-              <FieldLabel>Username</FieldLabel>
-              <LockedInput locked={locked[`${svc.env}_USERNAME`]} value={cfg.username ?? ""} onChange={(v) => update((x) => (x[svc.key].username = v))} />
-              <FieldLabel>Password</FieldLabel>
-              <LockedInput type="password" locked={locked[`${svc.env}_PASSWORD`]} value={cfg.password ?? ""} onChange={(v) => update((x) => (x[svc.key].password = v))} />
+              <LockedInput label="Username" locked={locked[`${svc.env}_USERNAME`]} value={cfg.username ?? ""} onChange={(v) => update((x) => (x[svc.key].username = v))} />
+              <LockedInput label="Password" type="password" locked={locked[`${svc.env}_PASSWORD`]} value={cfg.password ?? ""} onChange={(v) => update((x) => (x[svc.key].password = v))} />
             </>
           ) : (
-            <>
-              <FieldLabel>API key</FieldLabel>
-              <LockedInput type="password" locked={locked[`${svc.env}_API_KEY`]} value={cfg.apiKey ?? ""} onChange={(v) => update((x) => (x[svc.key].apiKey = v))} />
-            </>
+            <LockedInput label="API key" type="password" locked={locked[`${svc.env}_API_KEY`]} value={cfg.apiKey ?? ""} onChange={(v) => update((x) => (x[svc.key].apiKey = v))} />
           )}
         </div>
       )}

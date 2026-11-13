@@ -60,7 +60,7 @@ export function PosterCard({
       <div className="relative aspect-[2/3] overflow-hidden rounded-[2px] bg-muted ring-ring/60 group-focus-visible:ring-2">
         <PosterImg src={poster} title={title} year={year} />
         {corner && <div className="absolute top-2 right-2">{corner}</div>}
-        {progress !== undefined && progress > 0 && progress < 1 && <Bar value={progress} segments={12} stretch className="absolute inset-x-2 bottom-2" />}
+        {progress !== undefined && progress > 0 && progress < 1 && <Bar label="Downloading" value={progress} segments={12} stretch className="absolute inset-x-2 bottom-2" />}
       </div>
       <div className="mt-2 truncate text-[14px] font-medium" title={title}>
         {title}

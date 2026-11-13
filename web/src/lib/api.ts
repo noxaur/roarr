@@ -581,7 +581,7 @@ export const api = {
   activity: () => call<{ items: ActivityItem[]; errors: Record<string, string> }>("GET", "/api/activity"),
   removeActivity: (id: string, blocklist: boolean) =>
     call<{ ok: boolean }>("DELETE", `/api/activity/${encodeURIComponent(id)}${blocklist ? "?blocklist=1" : ""}`),
-  requests: (filter: string) => call<{ items: RequestItem[] }>("GET", `/api/requests?filter=${filter}`),
+  requests: (filter: string) => call<{ items: RequestItem[]; configured: boolean }>("GET", `/api/requests?filter=${filter}`),
   requestAction: (id: number, action: "approve" | "decline") => call<{ ok: boolean }>("POST", `/api/requests/${id}/${action}`, {}),
   episodes: (seriesId: number, action: EpisodeAction, episodeIds: number[]) =>
     call<ActionResult>("POST", `/api/tv/${seriesId}/episodes`, { action, episodeIds }),

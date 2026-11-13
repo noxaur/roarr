@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -690,6 +691,11 @@ func (s *Server) requests(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	items, err := s.app.Requests(ctx, r.URL.Query().Get("filter"))
+	// Seerr is optional: the UI asks on every load and hides Requests.
+	if errors.Is(err, app.ErrNotConfigured) {
+		writeJSON(w, 200, map[string]any{"items": []app.RequestItem{}, "configured": false})
+		return
+	}
 	if err != nil {
 		writeErr(w, statusFor(err), err)
 		return
@@ -697,7 +703,7 @@ func (s *Server) requests(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []app.RequestItem{}
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	writeJSON(w, 200, map[string]any{"items": items, "configured": true})
 }
 
 func (s *Server) requestAction(w http.ResponseWriter, r *http.Request) {
@@ -789,6 +795,12 @@ func (s *Server) static() http.Handler {
 				if !serveEncoded(w, r, s.ui, p) {
 					files.ServeHTTP(w, r)
 				}
+				return
+			}
+			// A missing file (robots.txt, /.well-known/…) is a 404. Answering
+			// with the app would tell crawlers and agents it exists.
+			if path.Ext(p) != "" || strings.HasPrefix(p, ".well-known/") {
+				http.NotFound(w, r)
 				return
 			}
 		}

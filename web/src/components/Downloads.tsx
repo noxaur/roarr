@@ -96,7 +96,7 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
                 {rec ? "failed check" : a.status === "warning" ? "stuck" : a.status}
               </span>
             </div>
-            <Bar className="mt-3" value={a.progress} segments={24} stretch tone={bad ? "bad" : "live"} />
+            <Bar label={a.title} className="mt-3" value={a.progress} segments={24} stretch tone={bad ? "bad" : "live"} />
             <div className="meta mt-2 flex justify-between font-mono tabular">
               <span>
                 {pct(a.progress)} of {bytes(a.size)}

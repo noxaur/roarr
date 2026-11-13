@@ -434,7 +434,7 @@ function handle(req, res) {
   }
   if (p === "/api/imports") return json(res, importsStatus());
   if (p === "/api/status") return json(res, { version: "mock", services: { prowlarr: { configured: true, ok: true, version: "2.0", ms: 12 }, sonarr: { configured: true, ok: true, version: "4.0", ms: 20 }, radarr: { configured: true, ok: true, version: "6.0", ms: 18 }, seerr: { configured: false, ok: false }, jellyfin: { configured: false, ok: false }, qbittorrent: { configured: true, ok: false, error: "connection refused" } } });
-  if (p === "/api/requests") return json(res, { error: "seerr not configured" }, 400);
+  if (p === "/api/requests") return json(res, { items: [], configured: false });
   if (p.startsWith("/api/profiles")) return json(res, { profiles: [{ id: 1, name: "HD-1080p" }, { id: 2, name: "Ultra-HD" }] });
   if (p === "/api/discover") return json(res, { results: [{ kind: "movie", title: "Dune", year: 2021, tmdbId: 438631, inLibrary: false }, { kind: "tv", title: "Severance", year: 2022, tmdbId: 95396, tvdbId: 70001, inLibrary: true, libraryId: 1 }] });
   if ((m = p.match(/^\/api\/tv\/(\d+)$/))) return json(res, series.find((s) => s.id === +m[1]) ?? { error: "not found" });

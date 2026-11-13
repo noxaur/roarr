@@ -79,10 +79,10 @@ export function State({ tone, children, className }: { tone: Tone; children: Rea
  * Never a smooth bar. Segments are 4 px with 4 px gaps; `stretch` lets them
  * share the width instead.
  */
-export function Bar({ value, className, tone = "live", segments = 20, stretch }: { value: number; className?: string; tone?: Tone; segments?: number; stretch?: boolean }) {
+export function Bar({ value, label, className, tone = "live", segments = 20, stretch }: { value: number; label: string; className?: string; tone?: Tone; segments?: number; stretch?: boolean }) {
   const lit = Math.round(Math.max(0, Math.min(1, value)) * segments);
   return (
-    <div className={cn("flex h-2 gap-1", className)} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value * 100)}>
+    <div className={cn("flex h-2 gap-1", className)} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value * 100)}>
       {Array.from({ length: segments }, (_, i) => (
         <i key={i} className={cn("block h-full rounded-[1px]", stretch ? "flex-1" : "w-1", i < lit ? fill[tone === "none" ? "live" : tone] : "bg-unlit")} />
       ))}

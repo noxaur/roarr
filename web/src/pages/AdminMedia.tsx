@@ -78,10 +78,8 @@ export function ImportTab({ s, locked, update }: Edit) {
         <>
           <Field label="Library roots">
             <div className="grid gap-2 sm:grid-cols-[60px_minmax(0,1fr)] sm:items-center">
-              <span className="meta">Shows</span>
-              <LockedInput mono locked={locked.TV_ROOT} value={im.tvRoot ?? ""} placeholder="/media/tv" onChange={(v) => set((i) => (i.tvRoot = v))} />
-              <span className="meta">Movies</span>
-              <LockedInput mono locked={locked.MOVIES_ROOT} value={im.movieRoot ?? ""} placeholder="/media/movies" onChange={(v) => set((i) => (i.movieRoot = v))} />
+              <LockedInput label="Shows" mono locked={locked.TV_ROOT} value={im.tvRoot ?? ""} placeholder="/media/tv" onChange={(v) => set((i) => (i.tvRoot = v))} />
+              <LockedInput label="Movies" mono locked={locked.MOVIES_ROOT} value={im.movieRoot ?? ""} placeholder="/media/movies" onChange={(v) => set((i) => (i.movieRoot = v))} />
             </div>
           </Field>
           <Field label="Transfer" hint={im.transfer === "move" ? "Stops seeding." : "Copies when a link is impossible."}>
@@ -92,10 +90,8 @@ export function ImportTab({ s, locked, update }: Edit) {
           </Field>
           <Field label="qBittorrent">
             <div className="grid gap-2 sm:grid-cols-[60px_minmax(0,1fr)] sm:items-center">
-              <span className="meta">Category</span>
-              <LockedInput mono locked={locked.QBIT_CATEGORY} value={im.category ?? ""} placeholder="roarr" onChange={(v) => set((i) => (i.category = v))} className="max-w-60" />
-              <span className="meta">Save to</span>
-              <LockedInput mono locked={locked.QBIT_SAVE_PATH} value={im.savePath ?? ""} placeholder="client default" onChange={(v) => set((i) => (i.savePath = v))} />
+              <LockedInput label="Category" mono locked={locked.QBIT_CATEGORY} value={im.category ?? ""} placeholder="roarr" onChange={(v) => set((i) => (i.category = v))} className="max-w-60" />
+              <LockedInput label="Save to" mono locked={locked.QBIT_SAVE_PATH} value={im.savePath ?? ""} placeholder="client default" onChange={(v) => set((i) => (i.savePath = v))} />
             </div>
           </Field>
         </>
@@ -401,7 +397,7 @@ function TranscodeRow({ j }: { j: TranscodeJob }) {
               <span className="text-muted-foreground">{j.paused ? "paused" : (j.speed ?? "")}</span>
               <span>{j.percent.toFixed(0)}%</span>
             </div>
-            <Bar value={j.percent / 100} segments={32} stretch className="mt-2" />
+            <Bar label="Encoding" value={j.percent / 100} segments={32} stretch className="mt-2" />
           </>
         ) : j.state === "done" ? (
           <span className="text-have">
