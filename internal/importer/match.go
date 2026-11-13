@@ -147,7 +147,7 @@ func PlanTV(files []SourceFile, releaseTitle string, t Title) ([]Placement, []Sk
 		case ClassOther:
 			continue
 		}
-		season, eps, verified := episodesOf(f.Rel, pack, show, t.Anime)
+		season, eps, verified := EpisodesOf(f.Rel, pack, show, t.Anime)
 		if len(eps) == 0 {
 			skips = append(skips, Skip{f, "matches no episode of " + t.Title})
 			continue
@@ -201,11 +201,14 @@ func dedupe(ps []Placement) ([]Placement, []Skip) {
 	return out, skips
 }
 
-// episodesOf works out which episodes a file in a TV download holds. It
-// tries the file name, then the parent folders ("Season 2/05.mkv"), then
-// the pack's season. verified is false when the episode is taken from the
-// name although the metadata does not list it.
-func episodesOf(rel string, pack release.Info, show release.Show, anime bool) (season int, eps []int, verified bool) {
+// EpisodesOf works out which episodes a file in a TV download holds: the
+// season and the episode numbers in it. rel is the file's path inside the
+// torrent and pack the parsed torrent name. It tries the file name, then
+// the parent folders ("Season 2/05.mkv"), then the pack's season. verified
+// is false when the episode is taken from the name although show does not
+// list it. Episodes are matched by season and number, so show may carry
+// any ids (Sonarr's as well as EpisodeID's).
+func EpisodesOf(rel string, pack release.Info, show release.Show, anime bool) (season int, eps []int, verified bool) {
 	rel = strings.TrimSuffix(strings.ReplaceAll(rel, `\`, "/"), ".!qB")
 	base := path.Base(rel)
 	info := release.Parse(base)
@@ -244,7 +247,7 @@ func episodesOf(rel string, pack release.Info, show release.Show, anime bool) (s
 		season = info.Seasons[0]
 		known := map[int]bool{}
 		for _, e := range show.Episodes {
-			known[e.ID] = true
+			known[EpisodeID(e.Season, e.Number)] = true
 		}
 		verified = true
 		seen := map[int]bool{}
@@ -272,12 +275,17 @@ func episodesOf(rel string, pack release.Info, show release.Show, anime bool) (s
 	if len(ids) == 0 {
 		return 0, nil, false
 	}
-	season = ids[0] / 10000
+	byID := map[int]release.Episode{}
+	for _, e := range show.Episodes {
+		byID[e.ID] = e
+	}
+	season = byID[ids[0]].Season
 	for _, id := range ids {
-		if id/10000 == season {
-			eps = append(eps, id%10000)
+		if e := byID[id]; e.Season == season {
+			eps = append(eps, e.Number)
 		}
 	}
+	sort.Ints(eps)
 	return season, eps, true
 }
 
@@ -392,7 +400,7 @@ func attachSubtitles(ps []Placement, subs []SourceFile, pack release.Info, show 
 			}
 		}
 		if owner < 0 && show.Episodes != nil {
-			if season, eps, _ := episodesOf(rel, pack, show, anime); len(eps) > 0 {
+			if season, eps, _ := EpisodesOf(rel, pack, show, anime); len(eps) > 0 {
 				for i, p := range ps {
 					if p.Season == season && sameInts(p.Episodes, eps) {
 						owner = i

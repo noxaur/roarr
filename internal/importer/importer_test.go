@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/noxaur/roarr/internal/release"
 )
 
 func TestNaming(t *testing.T) {
@@ -264,6 +266,46 @@ func TestPathMap(t *testing.T) {
 	}
 	if _, err := ParsePathMap("/nope"); err == nil {
 		t.Error("want error for a rule without =")
+	}
+}
+
+// Callers outside the package bring their own episode ids (Sonarr's), so
+// the matcher must not read anything into them.
+func TestEpisodesOfWithForeignEpisodeIDs(t *testing.T) {
+	show := release.Show{Titles: []string{"The Show"}}
+	id := 9000
+	for season := 1; season <= 2; season++ {
+		for n := 1; n <= 12; n++ {
+			id += 7
+			show.Episodes = append(show.Episodes, release.Episode{ID: id, Season: season, Number: n, Absolute: (season-1)*12 + n, Aired: true})
+		}
+	}
+	multi := release.Parse("The.Show.S01-S02.1080p.BluRay.x265-GRP")
+	single := release.Parse("The.Show.S02.1080p.BluRay.x265-GRP")
+	cases := []struct {
+		rel      string
+		pack     release.Info
+		anime    bool
+		season   int
+		eps      []int
+		verified bool
+	}{
+		{"The.Show.S01-S02/The.Show.S02E03.1080p.mkv", multi, false, 2, []int{3}, true},
+		{"The.Show.S01-S02/The.Show.S02E03E04.1080p.m2ts", multi, false, 2, []int{3, 4}, true},
+		{"The.Show.S01-S02/Season 2/Episode 05.mkv", multi, false, 2, []int{5}, true},
+		{"The.Show.S01-S02/Season 2/05.mkv", multi, false, 2, []int{5}, true},
+		{`The.Show.S01-S02\Season 1\E07.mpg.!qB`, multi, false, 1, []int{7}, true},
+		{"The.Show.S02/E05.mkv", single, false, 2, []int{5}, true},
+		{"The.Show.S01-S02/E05.mkv", multi, false, 0, nil, false}, // no season to borrow
+		{"The.Show.S02/The.Show.S02E13.mkv", single, false, 2, []int{13}, false},
+		{"[Grp] The Show (01-24)/[Grp] The Show - 14 (1080p).mkv", release.Parse("[Grp] The Show (01-24) (1080p)"), true, 2, []int{2}, true},
+		{"The.Show.S02/Featurette.mkv", single, false, 0, nil, false},
+	}
+	for _, c := range cases {
+		season, eps, verified := EpisodesOf(c.rel, c.pack, show, c.anime)
+		if season != c.season || !reflect.DeepEqual(eps, c.eps) || verified != c.verified {
+			t.Errorf("EpisodesOf(%q) = S%d %v verified=%v, want S%d %v verified=%v", c.rel, season, eps, verified, c.season, c.eps, c.verified)
+		}
 	}
 }
 
