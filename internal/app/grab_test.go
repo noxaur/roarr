@@ -8,11 +8,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/noxaur/roarr/internal/arr"
 	"github.com/noxaur/roarr/internal/config"
+	"github.com/noxaur/roarr/internal/qbit"
 )
 
 // fakeRadarr declines every push unless the movie sits on the bypass profile.
@@ -187,6 +189,37 @@ func TestGrabConfirmsThroughNewHistoryRow(t *testing.T) {
 		srv.Close()
 		if err != nil || res.OK != tc.ok || !strings.Contains(res.Message, tc.want) || (name == "history unreadable" && strings.Contains(res.Message, "is downloading")) {
 			t.Errorf("%s: res=%+v err=%v, want ok=%v and %q", name, res, err, tc.ok, tc.want)
+		}
+	}
+}
+
+// An error listing the torrent says nothing about whether qBittorrent has it.
+func TestAddToQBitListErrorIsNotPresence(t *testing.T) {
+	defer func(w, p time.Duration) { qbitListWait, qbitListPoll = w, p }(qbitListWait, qbitListPoll)
+	qbitListWait, qbitListPoll = 50*time.Millisecond, time.Millisecond
+	magnet := "magnet:?xt=urn:btih:" + strings.Repeat("ab", 20)
+
+	for name, failures := range map[string]int32{"always failing": 1 << 30, "failing once": 1} {
+		var lists int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v2/torrents/add":
+				_, _ = w.Write([]byte("Ok."))
+			case "/api/v2/torrents/info":
+				if atomic.AddInt32(&lists, 1) <= failures {
+					http.Error(w, "database is locked", 500)
+					return
+				}
+				_, _ = w.Write([]byte(`[{"hash":"` + strings.Repeat("ab", 20) + `"}]`))
+			}
+		}))
+		hash, err := testApp(t, &Clients{QBit: qbit.New(srv.URL, "", "")}).addToQBit(context.Background(), qbit.Add{}, Release{MagnetURL: magnet})
+		srv.Close()
+		if failures == 1 && (err != nil || hash != strings.Repeat("ab", 20)) {
+			t.Errorf("%s: hash=%q err=%v, want the hash after a retry", name, hash, err)
+		}
+		if failures > 1 && (err == nil || !strings.Contains(err.Error(), "database is locked")) {
+			t.Errorf("%s: hash=%q err=%v, want the list error", name, hash, err)
 		}
 	}
 }

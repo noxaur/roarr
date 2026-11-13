@@ -748,23 +748,33 @@ func (a *App) addToQBit(ctx context.Context, add qbit.Add, r Release) (string, e
 	}
 	// Adding is asynchronous for magnets and links; make sure it landed.
 	if hash != "" {
-		deadline := time.Now().Add(6 * time.Second)
+		deadline := time.Now().Add(qbitListWait)
 		for {
-			if ts, err := c.QBit.Torrents(ctx, hash); err != nil || len(ts) > 0 {
+			ts, err := c.QBit.Torrents(ctx, hash)
+			if err == nil && len(ts) > 0 {
 				break
 			}
 			if time.Now().After(deadline) {
+				if err != nil {
+					return "", fmt.Errorf("qBittorrent accepted the torrent but could not list it: %w", err)
+				}
 				return "", errors.New("qBittorrent accepted the torrent but it never showed up in its list")
 			}
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
-			case <-time.After(300 * time.Millisecond):
+			case <-time.After(qbitListPoll):
 			}
 		}
 	}
 	return hash, nil
 }
+
+// How long an add waits for qBittorrent to list the new torrent.
+var (
+	qbitListWait = 6 * time.Second
+	qbitListPoll = 300 * time.Millisecond
+)
 
 var btihRe = regexp.MustCompile(`(?i)xt=urn:btih:([0-9a-z]{32,40})`)
 
