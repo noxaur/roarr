@@ -116,7 +116,7 @@ const settings = {
     behaviour: { watchFirst: true, prefetch: true, indexerTimeout: 30, cacheMinutes: 20, seerrAutoFetch: false },
     transcode: { enabled: true, concurrency: 1, nice: 10, crf: 0, preset: 8, filmGrain: 0, minSavings: 15, pathMap: "/tv=/media/tv,/movies=/media/movies", schedule: [{ days: [1, 2, 3, 4, 5], from: "22:00", to: "07:00" }, { days: [6, 0], from: "00:00", to: "24:00" }] },
     verify: { autoRegrab: false, pathMap: "/downloads=/data/downloads" },
-    import: { mode: "arr", transfer: "hardlink", category: "roarr" },
+    import: { mode: "arr", transfer: "hardlink", category: "roarr", missingSearchHours: 12 },
   },
   locked: { PROWLARR_URL: true, PROWLARR_API_KEY: true, TRANSCODE_NICE: true },
 };

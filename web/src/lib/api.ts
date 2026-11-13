@@ -377,6 +377,8 @@ export interface ImportSettings {
   pathMap?: string;
   category?: string;
   savePath?: string;
+  /** Hours between searches for monitored items that are not on disk (native library only); 0 or absent = off. */
+  missingSearchHours?: number;
 }
 
 export type VerifyLevel = "pass" | "warn" | "fail" | "skip";
