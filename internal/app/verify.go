@@ -20,6 +20,7 @@ import (
 	"github.com/noxaur/roarr/internal/arr"
 	"github.com/noxaur/roarr/internal/config"
 	"github.com/noxaur/roarr/internal/httpx"
+	"github.com/noxaur/roarr/internal/importer"
 	"github.com/noxaur/roarr/internal/qbit"
 	"github.com/noxaur/roarr/internal/verify"
 )
@@ -412,7 +413,7 @@ func (v *Verification) torrentFiles(ctx context.Context, c *Clients, t qbit.Torr
 		name := strings.TrimSuffix(filepath.ToSlash(f.Name), ".!qB")
 		// Episodes watch-first skipped are never downloaded; judge the rest.
 		// Other skipped files still count: a deselected .exe is still junk.
-		if f.Priority == qbit.PrioSkip && videoExt[strings.ToLower(path.Ext(name))] {
+		if f.Priority == qbit.PrioSkip && importer.IsVideo(name) {
 			continue
 		}
 		files = append(files, verify.File{Name: name, Size: f.Size, Path: mapVerifyPath(pm, joinClientPath(t.SavePath, name))})

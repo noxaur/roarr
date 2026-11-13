@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/noxaur/roarr/internal/arr"
+	"github.com/noxaur/roarr/internal/importer"
 	"github.com/noxaur/roarr/internal/qbit"
 	"github.com/noxaur/roarr/internal/release"
 )
@@ -373,8 +375,6 @@ func (w *WatchFirst) setMsg(j *WatchJob, msg string) {
 	w.mu.Unlock()
 }
 
-var videoExt = map[string]bool{".mkv": true, ".mp4": true, ".avi": true, ".m4v": true, ".ts": true, ".wmv": true, ".mov": true, ".webm": true}
-
 // plan maps torrent files to episodes and decides which to skip.
 func (w *WatchFirst) plan(ctx context.Context, c *Clients, j *WatchJob, files []qbit.File) {
 	d, err := w.app.Series(ctx, j.SeriesID, true)
@@ -394,37 +394,31 @@ func (w *WatchFirst) plan(ctx context.Context, c *Clients, j *WatchJob, files []
 	var wf []WatchFile
 	var skip []int
 	for _, f := range files {
-		// qBittorrent marks unfinished files "name.mkv.!qB" until each completes.
-		name := strings.TrimSuffix(f.Name, ".!qB")
-		base := path.Base(name)
-		ext := strings.ToLower(path.Ext(base))
-		if !videoExt[ext] {
-			continue
-		}
-		info := release.Parse(base)
-		if info.Sample || strings.Contains(strings.ToLower(name), "/sample") {
+		switch importer.Classify(f.Name) {
+		case importer.ClassSample, importer.ClassExtra:
+			// Never imported, so never needed: safe to leave out for good.
 			skip = append(skip, f.Index)
 			continue
+		case importer.ClassVideo:
+		default:
+			continue
 		}
-		// Files inside a season folder often carry only "E05"; borrow the
-		// season from the pack name.
-		if len(info.Seasons) == 0 && len(info.Absolute) == 0 && len(packInfo.Seasons) == 1 {
-			if n := episodeOnly(base); n > 0 {
-				info.Seasons, info.Episodes = packInfo.Seasons, []int{n}
-			}
-		}
-		ids := release.Covers(info, show)
-		if len(ids) == 0 {
-			continue // extras, featurettes
-		}
-		file := WatchFile{Index: f.Index, Name: name, Size: f.Size, EpisodeIDs: ids}
+		season, eps, _ := importer.EpisodesOf(f.Name, packInfo, show, show.Anime)
+		// qBittorrent marks unfinished files "name.mkv.!qB" until each completes.
+		file := WatchFile{Index: f.Index, Name: strings.TrimSuffix(f.Name, ".!qB"), Size: f.Size, Season: season}
 		for _, e := range show.Episodes {
-			if e.ID == ids[0] {
-				file.Season, file.Episode = e.Season, e.Number
+			if e.Season == season && slices.Contains(eps, e.Number) {
+				if len(file.EpisodeIDs) == 0 {
+					file.Episode = e.Number
+				}
+				file.EpisodeIDs = append(file.EpisodeIDs, e.ID)
 			}
+		}
+		if len(file.EpisodeIDs) == 0 {
+			continue // names no episode Sonarr lists
 		}
 		need := false
-		for _, id := range ids {
+		for _, id := range file.EpisodeIDs {
 			if wanted[id] || !have[id] {
 				need = true
 			}
@@ -450,22 +444,6 @@ func (w *WatchFirst) plan(ctx context.Context, c *Clients, j *WatchJob, files []
 	w.mu.Lock()
 	j.Files = wf
 	w.mu.Unlock()
-}
-
-func episodeOnly(name string) int {
-	l := strings.ToLower(name)
-	for i := 0; i+2 < len(l); i++ {
-		if l[i] == 'e' && (i == 0 || l[i-1] < 'a' || l[i-1] > 'z') && l[i+1] >= '0' && l[i+1] <= '9' {
-			n := 0
-			k := i + 1
-			for k < len(l) && l[k] >= '0' && l[k] <= '9' && k < i+5 {
-				n = n*10 + int(l[k]-'0')
-				k++
-			}
-			return n
-		}
-	}
-	return 0
 }
 
 func (w *WatchFirst) syncProgress(j *WatchJob, files []qbit.File) {
