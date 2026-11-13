@@ -154,25 +154,14 @@ func (a *App) autoMovies(ctx context.Context, r AutoRequest, start time.Time) (A
 	if len(movies) == 0 {
 		return AutoResult{Message: "Nothing is missing."}, nil
 	}
-	pick := func(rels []Release) any {
-		best := map[int]string{}
-		bestScore := map[int]float64{}
-		for _, rel := range rels {
-			if rel.Rejected || rel.MovieID == 0 {
-				continue
-			}
-			if rel.Score > bestScore[rel.MovieID] {
-				best[rel.MovieID], bestScore[rel.MovieID] = rel.Key, rel.Score
-			}
-		}
-		return best
-	}
-	sess, waited, err := a.searchUntilStable(ctx, Target{Kind: "movie", Movies: movies}, Scope{}, pick)
+	sess, waited, err := a.searchUntilStable(ctx, Target{Kind: "movie", Movies: movies}, Scope{}, func(rels []Release) any {
+		return pickMovies(len(movies), rels)
+	})
 	if err != nil {
 		return AutoResult{}, err
 	}
 	rels := sess.All()
-	best := pick(rels).(map[int]string)
+	best := pickMovies(len(movies), rels).best
 	byKey := map[string]Release{}
 	for _, rel := range rels {
 		byKey[rel.Key] = rel
@@ -194,6 +183,27 @@ func (a *App) autoMovies(ctx context.Context, r AutoRequest, start time.Time) (A
 	}
 	res.Message = summarize(res)
 	return res, nil
+}
+
+// moviePicks is the movie decision: the best release for each movie that has
+// one, and how many movies were asked for.
+type moviePicks struct {
+	wanted int
+	best   map[int]string
+}
+
+func pickMovies(wanted int, rels []Release) moviePicks {
+	p := moviePicks{wanted: wanted, best: map[int]string{}}
+	score := map[int]float64{}
+	for _, rel := range rels {
+		if rel.Rejected || rel.MovieID == 0 {
+			continue
+		}
+		if rel.Score > score[rel.MovieID] {
+			p.best[rel.MovieID], score[rel.MovieID] = rel.Key, rel.Score
+		}
+	}
+	return p
 }
 
 // episodeLevel reports whether *arr rejections are about the episodes rather
@@ -339,8 +349,8 @@ func complete(d any) bool {
 	switch v := d.(type) {
 	case release.Plan:
 		return len(v.Picks) > 0 && len(v.Missing) == 0
-	case map[int]string:
-		return len(v) > 0
+	case moviePicks:
+		return len(v.best) == v.wanted
 	}
 	return false
 }
