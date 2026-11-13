@@ -28,6 +28,7 @@ roarr is one Go binary that embeds the React UI. Searching fans out to Prowlarr 
 
 - Before you change an area, read its doc in `docs/`. Read `lab/README.md` before you change the lab or a benchmark.
 - The theme tokens and the rules for state colours are in the header comment of `web/src/styles.css`. Read it before you change UI.
+- Before you use ui-sdk, follow the `ui-sdk` skill (`.agents/skills/ui-sdk/SKILL.md`) and read `web/node_modules/@ui-sdk/react/docs/llms.txt`. To build a new component, also search `web/node_modules/@ui-sdk/react/docs/core.md` by heading, and read `rendering.md` next to it.
 - When a large feature adds or reshapes an area, write or update its doc in `docs/` in the same change. The code shows what it does, so the doc records why: each architectural decision, the alternative you rejected and the constraint that decided it. Leave out how-to steps, code tours, test results and dated verification runs. User-facing setup belongs in `README.md`. Recipes belong in a skill.
 - Keep docs tight. State each fact once, in the doc that owns it, and delete what has gone stale in the same change that made it stale.
 
