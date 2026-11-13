@@ -23,19 +23,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useConfirm } from "./Confirm";
 
-/** "WEBDL-1080p  x265  HDR10  1.4 GB  NTb" */
-export function fileBits(f: FileInfo, withSize = true): string[] {
-  return [f.quality, f.codec, f.hdr, withSize && bytes(f.size), f.group].filter((x): x is string => !!x);
-}
-
-export function FileLine({ file, className }: { file: FileInfo; className?: string }) {
-  return (
-    <span className={cn("block truncate font-mono text-[11px] text-muted-foreground", className)} title={file.path}>
-      {fileBits(file).join("  ")}
-    </span>
-  );
-}
-
 /** A labelled list of a file's properties, for a title's "on disk" card. */
 export function FileFacts({ file }: { file: FileInfo }) {
   const rows: [string, string | undefined][] = [
