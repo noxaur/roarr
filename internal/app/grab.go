@@ -203,7 +203,7 @@ func realEpisodes(d *SeriesDetail, g GrabRequest) (wanted, covers []int) {
 	return wanted, covers
 }
 
-func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, error) {
+func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (res GrabResult, err error) {
 	d, err := a.ensureSeries(ctx, &g)
 	if err != nil {
 		return GrabResult{}, err
@@ -247,7 +247,7 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 		slog.Warn("could not monitor seasons", "err", err)
 	}
 
-	res := GrabResult{SeriesID: d.ID}
+	res = GrabResult{SeriesID: d.ID}
 	watch := a.Settings.Get().Behaviour.WatchFirst
 	if g.WatchFirst != nil {
 		watch = *g.WatchFirst
@@ -285,7 +285,8 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 		}
 		bypassed := false
 		if ok, _ := approved(decisions); !ok {
-			decisions, err = a.withAnyQuality(ctx, c.Sonarr.Client,
+			var stuck string
+			decisions, stuck, err = a.withAnyQuality(ctx, c.Sonarr.Client,
 				func(ctx context.Context) (int, error) {
 					s, err := c.Sonarr.Series(ctx, d.ID)
 					return s.QualityProfile, err
@@ -296,6 +297,9 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 				return GrabResult{}, err
 			}
 			bypassed = true
+			if stuck != "" {
+				defer func() { res.Message += " " + stuck }()
+			}
 		}
 		forced := false
 		if ok, rej := approved(decisions); !ok {
@@ -340,7 +344,7 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 	return res, nil
 }
 
-func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) {
+func (a *App) grabMovie(ctx context.Context, g GrabRequest) (res GrabResult, err error) {
 	c := a.C()
 	if c.Radarr == nil {
 		return GrabResult{}, fmt.Errorf("radarr %w", ErrNotConfigured)
@@ -367,7 +371,7 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 	} else if err := c.Radarr.Monitor(ctx, g.MovieID); err != nil {
 		slog.Warn("could not monitor movie", "err", err)
 	}
-	res := GrabResult{MovieID: g.MovieID}
+	res = GrabResult{MovieID: g.MovieID}
 	if g.Force {
 		hash, err := a.directAdd(ctx, c.Radarr.Client, "movieCategory", g.Release, false)
 		if err != nil {
@@ -387,7 +391,8 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 	}
 	bypassed := false
 	if ok, _ := approved(decisions); !ok {
-		decisions, err = a.withAnyQuality(ctx, c.Radarr.Client,
+		var stuck string
+		decisions, stuck, err = a.withAnyQuality(ctx, c.Radarr.Client,
 			func(ctx context.Context) (int, error) {
 				m, err := c.Radarr.Movie(ctx, g.MovieID)
 				return m.QualityProfileID, err
@@ -398,6 +403,9 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 			return GrabResult{}, err
 		}
 		bypassed = true
+		if stuck != "" {
+			defer func() { res.Message += " " + stuck }()
+		}
 	}
 	forced := false
 	if ok, rej := approved(decisions); !ok {
@@ -487,33 +495,45 @@ func (a *App) grabAnyway(ctx context.Context, c *arr.Client, q url.Values, extra
 
 // withAnyQuality runs push with the title moved to the permissive bypass
 // profile and moves it back afterwards. The *arr hands an approved push to
-// its download client inside the push request, and imports do not check
-// the profile's allowed qualities, so the original profile is back in place
-// before anything else looks at it.
-func (a *App) withAnyQuality(ctx context.Context, c *arr.Client, current func(context.Context) (int, error), set func(context.Context, int) error, push func(context.Context) ([]arr.PushDecision, error)) ([]arr.PushDecision, error) {
+// its download client inside the push request, and imports do not check the
+// profile's allowed qualities, so the bypass only has to last for the push.
+// When the title cannot be moved back it stays on the bypass profile, which
+// changes what the *arr grabs for it from then on: stuck says so, for the
+// grab result.
+func (a *App) withAnyQuality(ctx context.Context, c *arr.Client, current func(context.Context) (int, error), set func(context.Context, int) error, push func(context.Context) ([]arr.PushDecision, error)) (decisions []arr.PushDecision, stuck string, err error) {
 	a.bypassMu.Lock()
 	defer a.bypassMu.Unlock()
 	orig, err := current(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	anyID, err := c.EnsureBypassProfile(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if orig != anyID {
 		if err := set(ctx, anyID); err != nil {
-			return nil, fmt.Errorf("switching to the %q profile: %w", arr.BypassProfileName, err)
+			return nil, "", fmt.Errorf("switching to the %q profile: %w", arr.BypassProfileName, err)
 		}
 		defer func() {
 			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 			defer cancel()
-			if err := set(rctx, orig); err != nil {
-				slog.Error("could not restore quality profile", "service", c.Service, "profile", orig, "err", err)
+			rerr := set(rctx, orig)
+			if rerr != nil {
+				rerr = set(rctx, orig)
+			}
+			if rerr == nil {
+				return
+			}
+			slog.Error("could not restore quality profile", "service", c.Service, "profile", orig, "err", rerr)
+			stuck = fmt.Sprintf("Its quality profile could not be put back (%v): the title is still on %q, so set its profile again in %s.", rerr, arr.BypassProfileName, c.Service)
+			if err != nil {
+				err = fmt.Errorf("%w. %s", err, stuck)
 			}
 		}()
 	}
-	return push(ctx)
+	decisions, err = push(ctx)
+	return decisions, "", err
 }
 
 // How long a grab waits for the *arr to record its "grabbed" history event.

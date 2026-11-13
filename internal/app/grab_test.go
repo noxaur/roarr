@@ -31,6 +31,8 @@ type fakeRadarr struct {
 	history    []map[string]any
 	noHandoff  bool
 	historyErr bool
+	// noRestore refuses every profile change except the one to the bypass profile.
+	noRestore bool
 }
 
 func (f *fakeRadarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +46,10 @@ func (f *fakeRadarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if p, ok := body["qualityProfileId"].(float64); ok {
+			if f.noRestore && int(p) != 99 {
+				http.Error(w, "database is locked", 500)
+				return
+			}
 			f.profile = int(p)
 			f.switches = append(f.switches, int(p))
 		}
@@ -143,6 +149,22 @@ func TestGrabMovieBypassesQualityProfile(t *testing.T) {
 	}
 	if fi := f.created["formatItems"].([]any)[0].(map[string]any); fi["score"] != float64(0) {
 		t.Fatalf("format score = %v, want 0", fi["score"])
+	}
+}
+
+// A title left on the bypass profile changes what Radarr grabs for it from
+// then on, so the user has to hear about it.
+func TestGrabMovieReportsFailedProfileRestore(t *testing.T) {
+	f := &fakeRadarr{profile: 1, noRestore: true}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+	a := testApp(t, &Clients{Radarr: arr.NewRadarr(srv.URL, "k")})
+	res, err := a.grabMovie(context.Background(), GrabRequest{Kind: "movie", MovieID: 5, Release: Release{Title: "Movie.2024.2160p.x265", DownloadURL: "http://prowlarr/1/download"}})
+	if err != nil || !res.OK || f.profile != 99 {
+		t.Fatalf("res=%+v err=%v profile=%d", res, err, f.profile)
+	}
+	if !strings.Contains(res.Message, "still on") || !strings.Contains(res.Message, arr.BypassProfileName) || !strings.Contains(res.Message, "database is locked") {
+		t.Fatalf("message = %q, want the failed restore", res.Message)
 	}
 }
 
