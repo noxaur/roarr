@@ -526,7 +526,7 @@ func (a *App) withAnyQuality(ctx context.Context, c *arr.Client, current func(co
 				return
 			}
 			slog.Error("could not restore quality profile", "service", c.Service, "profile", orig, "err", rerr)
-			stuck = fmt.Sprintf("Its quality profile could not be put back (%v): the title is still on %q, so set its profile again in %s.", rerr, arr.BypassProfileName, c.Service)
+			stuck = fmt.Sprintf("Its quality profile could not be put back (%v): the title is still on %q, so set its profile again in %s.", rerr, arr.BypassProfileName, strings.ToUpper(c.Service[:1])+c.Service[1:])
 			if err != nil {
 				err = fmt.Errorf("%w. %s", err, stuck)
 			}
