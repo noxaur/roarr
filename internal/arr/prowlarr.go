@@ -40,9 +40,6 @@ type Indexer struct {
 // SupportsTV reports tv-search support.
 func (i Indexer) SupportsTV() bool { return len(i.Capabilities.TvSearchParams) > 0 }
 
-// SupportsMovies reports movie-search support.
-func (i Indexer) SupportsMovies() bool { return len(i.Capabilities.MovieSearchParams) > 0 }
-
 // HasCategory reports whether the indexer carries any category in [lo, hi).
 func (i Indexer) HasCategory(lo, hi int) bool {
 	if len(i.Capabilities.Categories) == 0 {

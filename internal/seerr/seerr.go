@@ -269,12 +269,3 @@ func (c *Client) Approve(ctx context.Context, id int) error {
 func (c *Client) Decline(ctx context.Context, id int) error {
 	return c.Do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/request/%d/decline", id), nil, nil, nil)
 }
-
-// Trending returns trending titles for an empty search page.
-func (c *Client) Trending(ctx context.Context) ([]Result, error) {
-	var res struct {
-		Results []Result `json:"results"`
-	}
-	err := c.Get(ctx, "/api/v1/discover/trending?page=1&language=en", nil, &res)
-	return res.Results, err
-}
