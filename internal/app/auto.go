@@ -64,15 +64,15 @@ func (a *App) Auto(ctx context.Context, r AutoRequest) (AutoResult, error) {
 	if err != nil {
 		return AutoResult{}, err
 	}
+	if d.queueErr != nil {
+		return AutoResult{}, fmt.Errorf("%w: %w", errQueueUnknown, d.queueErr)
+	}
 	wanted := r.EpisodeIDs
 	seasonSet := map[int]bool{}
 	for _, s := range r.Seasons {
 		seasonSet[s] = true
 	}
 	if len(wanted) == 0 {
-		if d.queueErr != nil {
-			return AutoResult{}, fmt.Errorf("%w: %w", errQueueUnknown, d.queueErr)
-		}
 		for _, s := range d.Seasons {
 			if s.Number == 0 || (len(seasonSet) > 0 && !seasonSet[s.Number]) {
 				continue

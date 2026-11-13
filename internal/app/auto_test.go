@@ -90,8 +90,12 @@ func TestAutoRefusesWhenQueueUnknown(t *testing.T) {
 			t.Fatalf("%s, queue loaded: %+v, %v", name, res, err)
 		}
 	}
-	// The pages still load.
+	// Named episodes are no exception: episode 70 may be downloading.
 	f.queueDown.Store(true)
+	if _, err := a.Auto(context.Background(), AutoRequest{Kind: "tv", SeriesID: 7, EpisodeIDs: []int{70}}); !errors.Is(err, errQueueUnknown) {
+		t.Fatalf("named episodes, queue down: %v", err)
+	}
+	// The pages still load.
 	if d, err := a.Series(context.Background(), 7, true); err != nil || len(d.Seasons) != 1 {
 		t.Fatalf("series page with the queue down: %+v, %v", d, err)
 	}
