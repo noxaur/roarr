@@ -498,6 +498,8 @@ function Row({
         aria-expanded={open}
         onClick={onToggle}
         onKeyDown={(e) => {
+          // Keys pressed on the checkbox inside the row are the checkbox's.
+          if (e.target !== e.currentTarget) return;
           if (e.key === "Enter") {
             e.preventDefault();
             onToggle();
