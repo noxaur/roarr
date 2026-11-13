@@ -649,7 +649,9 @@ export function Home({ kind }: { kind?: Kind }) {
               </Grid>
             ) : items.length === 0 ? (
               <Empty>
-                {library.length === 0 ? (
+                {libraryErrors.library ? (
+                  "The library could not be loaded."
+                ) : library.length === 0 ? (
                   <>
                     Nothing in Sonarr or Radarr yet. <Kbd>⌘K</Kbd> finds a title.
                   </>
