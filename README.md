@@ -50,8 +50,9 @@ discovers in Prowlarr or Sonarr) is retried on the Docker host
 (`host.docker.internal`, then the default gateway) when nothing answers inside
 the container. Release links handed to Sonarr/Radarr are rewritten to the
 Prowlarr address *they* use, so the apps do not need to resolve the same names
-as roarr. Everything except connection
-settings can also be changed under **Admin** (account menu), and is saved in `/config`.
+as roarr. Settings, connections included, can also be changed under
+**Admin** (account menu) and are saved in `/config`. A setting given as an
+environment variable is locked there.
 
 ### Configuration
 
