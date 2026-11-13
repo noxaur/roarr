@@ -59,8 +59,9 @@ and import tests.
   searched that season in the last `CACHE_MINUTES`; the bench warns when it
   sees cached answers. Restart the `roarr` service before a second run. The
   lab roarr must run with `AUTH_MODE=none`, its default there.
-- `swarm/experiment.py`: download-order strategies for season packs on a
-  local throttled swarm (3 seeders). Generate the pack first with ffmpeg; see
-  docs/experiments.md for the exact commands.
+- `make swarm`, with the lab running: download-order strategies for season
+  packs on a local throttled swarm (3 seeders, `swarm/experiment.py`). The
+  first run builds the pack with ffmpeg in Docker and its torrent with
+  `swarm/maketorrent.py`, which needs `uv`. The Makefile has the commands.
 
 Results: [../docs/experiments.md](../docs/experiments.md).

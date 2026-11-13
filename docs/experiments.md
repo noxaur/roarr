@@ -3,12 +3,14 @@
 All numbers come from the lab in `lab/`:
 - Real Sonarr 4.0.20, Radarr 6.4.4, Prowlarr 2.6.5, qBittorrent 5.2.4,
   Jellyfin 12.2 and Seerr 3.5 in Docker on one machine (10 cores, Docker
-  Desktop).
+  Desktop). These are the versions of the measured run; the lab pulls
+  `latest`.
 - Prowlarr feeds seven fake Torznab indexers (`lab/mockindexer`), each with
   its own latency profile and hostname.
 
-The numbers are directional. Real trackers vary more, but the *ratios*
-between strategies are what decided the design.
+`lab/README.md` tells how to run each experiment. The numbers are
+directional. Real trackers vary more, but the *ratios* between strategies
+are what decided the design.
 
 ## 1. Where does search time go?
 
@@ -95,9 +97,8 @@ Two follow-ups came out of this:
 ## 3. Watch-first: the download order for a season pack
 
 **Setup.**
-- The pack: 10 synthetic 11-minute episodes, 30 MB each, made with ffmpeg
-  (see below). They are long enough that Sonarr does not treat them as
-  samples.
+- The pack: 10 synthetic 11-minute episodes, 30 MB each, made with ffmpeg.
+  They are long enough that Sonarr does not treat them as samples.
 - Three qBittorrent seeders capped at 2 MB/s each, with qBittorrent's
   embedded tracker.
 - The lab qBittorrent downloads the pack once per strategy
@@ -178,22 +179,3 @@ seeder held them. roarr imports whatever completes, in any order.
 - **Auto mode re-plans around declines.** If Sonarr refuses a pick (size
   limits, already has it), the episodes it would have filled are re-planned
   with the next best releases.
-
-## Reproduce
-
-```sh
-make lab                                   # stack + bootstrap
-go run ./lab/bench -n 5                    # section 1
-
-# section 3: build the pack, torrent it, seed it, run the strategies
-cd lab/state/swarm/payload && N=Severance.S02.1080p.WEB-DL.DDP5.1.H.264-LABPACK && mkdir -p $N
-for i in 01 02 03 04 05 06 07 08 09 10; do
-  docker run --rm -v "$PWD/$N":/out lscr.io/linuxserver/ffmpeg -loglevel error \
-    -f lavfi -i testsrc=size=320x180:rate=25 -f lavfi -i sine=frequency=440:sample_rate=22050 \
-    -t 660 -c:v libx264 -preset ultrafast -b:v 330k -c:a aac -b:a 32k \
-    /out/Severance.S02E$i.1080p.WEB-DL.DDP5.1.H.264-LABPACK.mkv
-done; cd -
-uv run --with torf python lab/swarm/maketorrent.py
-docker compose -f lab/docker-compose.yml --profile swarm up -d
-python3 lab/swarm/experiment.py 2
-```
