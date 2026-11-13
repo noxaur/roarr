@@ -12,7 +12,6 @@ package search
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -110,8 +109,6 @@ type queue struct {
 	pending []*entry
 	wake    chan struct{}
 }
-
-var errAbandoned = errors.New("abandoned")
 
 // errTTL is how long a failed query is remembered before it is retried.
 const errTTL = 90 * time.Second
@@ -338,7 +335,7 @@ func (e *Engine) fetch(ctx context.Context, j job) Batch {
 		case <-en.done:
 			// Failures are remembered briefly so one dead indexer does not
 			// add its full timeout to every search.
-			if time.Since(en.at) > e.TTL || (en.err != nil && time.Since(en.at) > errTTL) || errors.Is(en.err, errAbandoned) {
+			if time.Since(en.at) > e.TTL || (en.err != nil && time.Since(en.at) > errTTL) {
 				ok = false
 			}
 		default:
@@ -430,8 +427,6 @@ func (e *Engine) worker(q *queue) {
 			// instead of making the next click wait behind it.
 			if en.waiters == 0 {
 				delete(e.cache, en.j.q.Key())
-				en.err = errAbandoned
-				close(en.done)
 				e.mu.Unlock()
 				continue
 			}
@@ -470,17 +465,6 @@ func (e *Engine) Sweep() {
 	defer e.mu.Unlock()
 	for k, en := range e.cache {
 		if isClosed(en.done) && time.Since(en.at) > e.TTL {
-			delete(e.cache, k)
-		}
-	}
-}
-
-// Flush clears finished cache entries.
-func (e *Engine) Flush() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	for k, en := range e.cache {
-		if isClosed(en.done) {
 			delete(e.cache, k)
 		}
 	}
