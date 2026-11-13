@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // scene draws a frame that looks like footage: a gradient with shapes whose
@@ -425,5 +426,17 @@ func TestSkippedPictureCheckIsNotAPass(t *testing.T) {
 	})
 	if vd.Level != Warn {
 		t.Fatalf("verdict %s: %s\n%+v", vd.Level, vd.Summary, vd.Checks)
+	}
+}
+
+func TestVerdictTimesItself(t *testing.T) {
+	v, fr, file := newFake(t, "multi.json", nil)
+	fr.frame = func(at float64) image.Image {
+		time.Sleep(2 * time.Millisecond)
+		return scene(int(at))
+	}
+	vd := v.Verify(context.Background(), Target{Kind: "movie", Files: []File{{Name: "m.mkv", Path: file, Size: 1 << 30}}})
+	if vd.TookMS <= 0 {
+		t.Fatalf("TookMS = %d", vd.TookMS)
 	}
 }

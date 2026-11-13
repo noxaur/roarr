@@ -62,9 +62,9 @@ func (v *Verifier) rng() *rand.Rand {
 
 // Verify checks a download. It never returns an error: problems running
 // the tools become Skip or Fail checks.
-func (v *Verifier) Verify(ctx context.Context, t Target) Verdict {
+func (v *Verifier) Verify(ctx context.Context, t Target) (vd Verdict) {
 	start := time.Now()
-	vd := Verdict{At: start}
+	vd = Verdict{At: start}
 	defer func() { vd.TookMS = time.Since(start).Milliseconds() }()
 
 	payload, videos := CheckPayload(t.Files)
