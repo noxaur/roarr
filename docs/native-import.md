@@ -248,33 +248,42 @@ part of a file.
 
 ## Hook points
 
-Other features (download verification, AV1 transcoding) can register
-hooks with `App.Hooks`. Do this one time, at startup, after `app.New`:
+The importer runs hooks around each file (`importer.Hooks`): before-import
+hooks can refuse or postpone it, after-import hooks see it once it is in
+`library.json`. `App.importHooks` registers two at startup, before the
+import loop starts. They give native imports what arr mode gets from
+polling Sonarr and Radarr, which see nothing of a native import.
 
-```go
-a.Hooks.BeforeImport(func(ctx context.Context, c importer.Candidate) error {
-	// c.Source: the download file, c.Dest: its library path, c.Hash: the torrent.
-	if !verified(c.Source) {
-		return importer.ErrRetryLater // keep the file pending; roarr tries again
-	}
-	return nil // or an error: the file fails with that message
-})
+- **Verification, before the import.** The first file of a download that
+  reaches the importer is verified, and its verdict counts for the whole
+  download, as in arr mode. A `fail` keeps every file of the download out
+  of the library. The file fails like any other import that cannot be
+  done: after about one minute of tries, with the verdict as its message
+  in the activity feed. `warn` and `skip` do not hold a file back, and
+  nothing is checked when verification is off. A dismissed verdict lets a
+  later import of the download through.
+  - Arr mode cannot hold a file back, because Sonarr and Radarr import it
+    themselves. Native mode can, so the fake never reaches Jellyfin.
+  - Only the file that is imported is checked, not the torrent's file
+    list. roarr imports only the videos it planned, so an executable in
+    the torrent never reaches the library. The importer already knows the
+    path, so `VERIFY_PATH_MAP` is not necessary.
+  - The check runs in the import loop, like a copy or an unpack. A check
+    in the background, with the file kept pending until it is done, was
+    rejected: it adds state for a wait of one check per download.
+- **Conversion, after the import.** The library file goes to the same
+  transcode queue as an import from the Sonarr/Radarr history, so the
+  same rules decide if it is converted. The converter keeps the path, so
+  `library.json` stays correct.
 
-a.Hooks.AfterImport(func(ctx context.Context, e importer.Event) {
-	// e.Path: the library file, e.Subtitles, e.Method, e.Replaced, e.Title...
-	go transcode(e.Path) // the loop waits for this function: return quickly
-})
-```
+Rules for a hook:
 
 - Before-import hooks run in sequence. The first error stops the import.
-- After-import hooks run after the file is in `library.json`. They run
-  before the Jellyfin refresh. A hook that changes the file (for example,
-  a transcode to a new extension) must call
-  `a.Native.Store().Put/Forget` to keep the store correct. When the
-  hook's work is done, it must ask Jellyfin to refresh.
+  An error that wraps `importer.ErrRetryLater` keeps the file pending.
+- After-import hooks run on the import loop, before the Jellyfin refresh,
+  and must return quickly. A hook that moves or renames the file must
+  update the store (`Store().Put/Forget`).
 - roarr recovers from a panic in a hook and writes it to the log.
-- The hooks apply only to native imports. In arr mode, Sonarr and Radarr
-  import outside roarr, so roarr cannot see the final files.
 
 ## Endpoints
 
@@ -324,6 +333,9 @@ Native mode does not do these things yet:
   changed season splits. With TMDB-only metadata, such files can go to the
   wrong episode. Configure Sonarr for those shows, or check
   `GET /api/imports`.
+- **Re-grab after a failed verification.** Re-grab removes the download
+  through Sonarr/Radarr, so it does not work for a native download. Remove
+  the download in the activity feed and get another release.
 - **Quality comparison** uses only the release name (resolution, source,
   proper/repack). It does not read the media (codec, bitrate, audio) and
   does not use custom formats.

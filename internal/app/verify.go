@@ -30,12 +30,13 @@ import (
 // pack is judged by its first episode as soon as that file is complete, so a
 // fake is caught long before the whole pack has downloaded. A release that
 // fails is hidden from roarr's picks; it can be re-grabbed, automatically
-// when Verify.AutoRegrab is on.
+// when Verify.AutoRegrab is on. A native download is judged by beforeImport
+// instead, on the first of its files to reach the importer.
 
 // VerifyRecord is one download followed by the verifier.
 type VerifyRecord struct {
 	Hash       string          `json:"hash"`   // download id, lowercase
-	Source     string          `json:"source"` // sonarr | radarr
+	Source     string          `json:"source"` // sonarr | radarr | roarr (native import)
 	Kind       string          `json:"kind"`   // tv | movie
 	SeriesID   int             `json:"seriesId,omitempty"`
 	MovieID    int             `json:"movieId,omitempty"`
@@ -74,10 +75,11 @@ type VerifyRegrab struct {
 
 // Verification follows downloads and verifies them.
 type Verification struct {
-	app   *App
-	path  string
-	tools verify.Tools
-	sem   chan struct{} // one verification at a time: ffmpeg is heavy
+	app    *App
+	path   string
+	tools  verify.Tools
+	runner verify.Runner
+	sem    chan struct{} // one verification at a time: ffmpeg is heavy
 
 	mu   sync.Mutex
 	recs map[string]*VerifyRecord
@@ -87,7 +89,7 @@ type Verification struct {
 }
 
 func newVerification(a *App, dir string) *Verification {
-	v := &Verification{app: a, path: filepath.Join(dir, "verify.json"), tools: verify.FindTools(), sem: make(chan struct{}, 1), recs: map[string]*VerifyRecord{}}
+	v := &Verification{app: a, path: filepath.Join(dir, "verify.json"), tools: verify.FindTools(), runner: verify.ExecRunner{}, sem: make(chan struct{}, 1), recs: map[string]*VerifyRecord{}}
 	if b, err := os.ReadFile(v.path); err == nil {
 		var recs []*VerifyRecord
 		if json.Unmarshal(b, &recs) == nil {
@@ -262,7 +264,7 @@ func (v *Verification) tick(ctx context.Context) {
 	v.mu.Lock()
 	var pending []*VerifyRecord
 	for _, r := range v.recs {
-		if r.State == "pending" {
+		if r.State == "pending" && r.Source != "roarr" { // native downloads: beforeImport
 			cp := *r
 			pending = append(pending, &cp)
 		}
@@ -446,7 +448,7 @@ func (v *Verification) run(ctx context.Context, hash string, files []verify.File
 		return nil
 	}
 	v.update(hash, func(rec *VerifyRecord) { rec.State = "checking" })
-	vf := verify.New(v.tools)
+	vf := &verify.Verifier{Tools: v.tools, Run: v.runner}
 	vd := vf.Verify(ctx, verify.Target{Release: r.Release, Kind: r.Kind, RuntimeMin: v.runtime(ctx, r), Files: files})
 	if ctx.Err() != nil {
 		v.update(hash, func(rec *VerifyRecord) { rec.State = "pending" })
@@ -473,6 +475,41 @@ func (v *Verification) run(ctx context.Context, hash string, files []verify.File
 		}()
 	}
 	return &vd
+}
+
+// beforeImport is the before-import hook of the native backend. The first
+// file of a download to reach the importer is verified and stands for the
+// whole download; a failing verdict keeps every file of it out of the
+// library until someone dismisses it.
+func (v *Verification) beforeImport(ctx context.Context, c importer.Candidate) error {
+	if !v.Enabled() || c.Hash == "" {
+		return nil
+	}
+	hash := strings.ToLower(c.Hash)
+	v.mu.Lock()
+	r, ok := v.recs[hash]
+	if !ok {
+		r = &VerifyRecord{Hash: hash, Source: "roarr", Kind: c.Title.Kind, Title: c.Title.Title, Release: c.Release, Added: time.Now(), State: "pending"}
+		v.recs[hash] = r
+	}
+	judged := r.Verdict != nil
+	v.mu.Unlock()
+	if !judged {
+		var size int64
+		if st, err := os.Stat(c.Source); err == nil {
+			size = st.Size()
+		}
+		vctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+		vd := v.run(vctx, hash, []verify.File{{Name: filepath.Base(c.Source), Path: c.Source, Size: size}}, false)
+		cancel()
+		if vd == nil {
+			return fmt.Errorf("verification was interrupted: %w", importer.ErrRetryLater)
+		}
+	}
+	if r := v.mustRecord(hash); r.Failed() {
+		return errors.New("failed verification: " + r.Verdict.Summary)
+	}
+	return nil
 }
 
 // runtime is the expected minutes per episode or for the movie.

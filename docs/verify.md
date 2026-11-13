@@ -2,7 +2,9 @@
 
 `internal/verify` judges whether a finished download is real, watchable
 media and what its release name says it is. `internal/app/verify.go` follows
-the downloads and acts on the verdict.
+the downloads Sonarr and Radarr queue and acts on the verdict. A native
+download is verified when its first file is imported; the reasons are in
+[native-import.md](native-import.md#hook-points).
 
 ## What each check decides
 

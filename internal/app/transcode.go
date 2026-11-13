@@ -19,7 +19,8 @@ import (
 // Finished downloads are converted to AV1 in the background. Sonarr and
 // Radarr record every import in their history, whoever did it (their own
 // download handling or watch-first), so one poller of that history feeds the
-// transcode queue.
+// transcode queue. Native imports are not in that history; the after-import
+// hook (importHooks) queues them.
 
 func transcodeOptions(s config.Settings) transcode.Options {
 	t := s.Transcode
@@ -90,11 +91,16 @@ func (a *App) transcodeImports(ctx context.Context) {
 				slog.Debug("transcode: history", "service", src.name, "err", err)
 				continue // cursor stays; the next poll retries everything
 			}
-			on := a.Settings.Get().Transcode
+			pathMap := a.Settings.Get().Transcode.PathMap
 			for _, im := range fresh {
-				if on.Enabled {
-					a.queueTranscode(src.name, im, on.PathMap)
+				it := transcode.Item{Path: mapPath(pathMap, im.Path), Kind: "tv", TitleID: im.SeriesID}
+				if src.name == "radarr" {
+					it.Kind, it.TitleID = "movie", im.MovieID
 				}
+				if l, ok := a.Library.Find(it.Kind + ":" + strconv.Itoa(it.TitleID)); ok {
+					it.Title = l.Title
+				}
+				a.queueTranscode(it)
 			}
 			if next != last || !seen {
 				cursor[src.name] = next
@@ -167,19 +173,9 @@ func radarrClient(c *Clients) *arr.Client {
 	return c.Radarr.Client
 }
 
-func (a *App) queueTranscode(service string, im arr.Import, pathMap string) {
-	it := transcode.Item{Path: mapPath(pathMap, im.Path)}
-	if service == "sonarr" {
-		it.Kind, it.TitleID = "tv", im.SeriesID
-		if l, ok := a.Library.Find("tv:" + strconv.Itoa(im.SeriesID)); ok {
-			it.Title = l.Title
-		}
-	} else {
-		it.Kind, it.TitleID = "movie", im.MovieID
-		if l, ok := a.Library.Find("movie:" + strconv.Itoa(im.MovieID)); ok {
-			it.Title = l.Title
-		}
-	}
+// queueTranscode offers an imported file to the converter, whoever imported
+// it. The converter takes it only while it is on.
+func (a *App) queueTranscode(it transcode.Item) {
 	if it.Title == "" {
 		it.Title = filepath.Base(it.Path)
 	}

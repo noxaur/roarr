@@ -1,7 +1,8 @@
 # Transcode
 
-`internal/transcode` converts imported files to AV1 in the background. One
-rule shapes it: the original is the user's file, and no failure, crash or
+`internal/transcode` converts imported files to AV1 in the background. The
+queue is fed by the import history of Sonarr and Radarr and, for native
+imports, by the after-import hook. One rule shapes it: the original is the user's file, and no failure, crash or
 race may lose it or a file that replaced it.
 
 ## The swap: move aside, link in, delete last
