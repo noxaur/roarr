@@ -733,7 +733,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                                 )}
                               >
                                 <Checkbox checked={on} disabled={!e.aired} tabIndex={-1} aria-label={`Select ${code}`} className="pointer-events-none" />
-                                <span className={cn("w-8 shrink-0 font-mono text-[12px] text-muted-foreground tabular", !e.aired && "opacity-60")}>
+                                <span className="w-8 shrink-0 font-mono text-[12px] text-muted-foreground tabular">
                                   {e.absolute && d.anime ? `#${e.absolute}` : `E${pad(e.number)}`}
                                 </span>
                                 <span className={cn("min-w-0 flex-1 truncate text-[14px]", !e.aired && "text-muted-foreground")}>{e.title}</span>
@@ -750,7 +750,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                                     <span className="flex items-center gap-2 text-live">
                                       {live ? (
                                         <>
-                                          <Bar value={live.progress} segments={8} className="hidden sm:flex" />
+                                          <Bar label="Downloading" value={live.progress} segments={8} className="hidden sm:flex" />
                                           {pct(live.progress)}
                                           {live.eta && <span className="opacity-60">·</span>}
                                           {live.eta}

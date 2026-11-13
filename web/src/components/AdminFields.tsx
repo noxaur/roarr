@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
+import { LabelledBy } from "@/lib/label";
 import { Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -7,11 +8,9 @@ import { Switch } from "@/components/ui/switch";
 // Form rows for the Admin page. A lock means an environment variable sets
 // the value; it cannot be changed here.
 
-export function FieldLabel({ children }: { children: ReactNode }) {
-  return <span className="meta">{children}</span>;
-}
-
+/** A text input. With `label`, it renders the label too, as the cell before it in a two-column grid. */
 export function LockedInput({
+  label,
   locked,
   type,
   value,
@@ -20,6 +19,7 @@ export function LockedInput({
   className,
   onChange,
 }: {
+  label?: string;
   locked?: boolean;
   type?: string;
   value: string;
@@ -28,9 +28,11 @@ export function LockedInput({
   className?: string;
   onChange: (v: string) => void;
 }) {
-  return (
+  const id = useId();
+  const input = (
     <div className={cn("relative", className)}>
       <Input
+        aria-labelledby={label ? id : undefined}
         type={type}
         disabled={locked}
         value={value}
@@ -41,6 +43,15 @@ export function LockedInput({
       />
       {locked && <EnvLock className="absolute top-1/2 right-3 -translate-y-1/2" />}
     </div>
+  );
+  if (!label) return input;
+  return (
+    <>
+      <span id={id} className="meta">
+        {label}
+      </span>
+      {input}
+    </>
   );
 }
 
@@ -59,14 +70,19 @@ export function EnvLock({ className }: { className?: string }) {
  * viewport): beside two nav columns a 200 px label would leave the control too little room.
  */
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
+  const id = useId();
   return (
     <div className="@container border-t">
       <div className="grid gap-x-8 gap-y-2 py-4 @xl:grid-cols-[200px_minmax(0,1fr)]">
         <div className="self-center" title={typeof hint === "string" ? hint : undefined}>
-          <div className="font-medium">{label}</div>
+          <div id={id} className="font-medium">
+            {label}
+          </div>
           {hint && <p className="sr-only">{hint}</p>}
         </div>
-        <div className="min-w-0 self-center">{children}</div>
+        <div className="min-w-0 self-center">
+          <LabelledBy.Provider value={id}>{children}</LabelledBy.Provider>
+        </div>
       </div>
     </div>
   );
@@ -90,6 +106,7 @@ export function Num({
   value,
   min,
   max,
+  step,
   unit,
   disabled,
   label,
@@ -98,15 +115,16 @@ export function Num({
   value: number;
   min: number;
   max?: number;
-  unit: string;
+  step?: number;
+  unit?: string;
   disabled?: boolean;
   label?: string;
   onChange: (v: number) => void;
 }) {
   return (
     <div className="flex items-center gap-2">
-      <Input type="number" aria-label={label} min={min} max={max} value={value} disabled={disabled} onChange={(e) => onChange(+e.target.value)} className="w-24" />
-      <span className="font-mono text-xs text-muted-foreground">{unit}</span>
+      <Input type="number" aria-label={label} min={min} max={max} step={step} value={value} disabled={disabled} onChange={(e) => onChange(+e.target.value)} className="w-24" />
+      {unit && <span className="font-mono text-xs text-muted-foreground">{unit}</span>}
       {disabled && <EnvLock />}
     </div>
   );

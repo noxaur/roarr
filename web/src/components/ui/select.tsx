@@ -1,5 +1,6 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { useLabelledBy } from "@/lib/label"
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react"
 import { Select as SelectPrimitive } from "radix-ui"
 
@@ -38,6 +39,7 @@ function SelectTrigger({
         className
       )}
       {...props}
+      aria-labelledby={useLabelledBy(props)}
     >
       {children}
       <SelectPrimitive.Icon asChild>

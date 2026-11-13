@@ -111,7 +111,7 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
   const reloadRequests = useCallback(() => {
     api
       .requests("pending")
-      .then((r) => setPending(r.items.length))
+      .then((r) => setPending(r.configured ? r.items.length : null))
       .catch(() => setPending(null));
   }, []);
 

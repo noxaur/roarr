@@ -127,3 +127,25 @@ func TestStaticServesPrecompressed(t *testing.T) {
 		t.Errorf("Content-Type = %q, want javascript", ct)
 	}
 }
+
+// Crawlers and agents probe for files such as robots.txt and llms.txt. Only
+// app routes fall back to index.html; a missing file is a 404.
+func TestStaticMissingFileIs404(t *testing.T) {
+	s := &Server{ui: fstest.MapFS{"index.html": {Data: []byte("<html>")}}}
+	h := s.static()
+	for path, want := range map[string]int{
+		"/robots.txt":           404,
+		"/llms.txt":             404,
+		"/.well-known/ard.json": 404,
+		"/assets/gone-1.js":     404,
+		"/tv/12":                200,
+		"/admin/connections":    200,
+		"/":                     200,
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != want {
+			t.Errorf("%s: status %d, want %d", path, w.Code, want)
+		}
+	}
+}

@@ -109,7 +109,7 @@ export function Nav({ authMode }: { authMode: string }) {
             title="Downloads (D)"
             className="flex h-4 cursor-pointer items-center gap-3 rounded-[2px] px-3 outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           >
-            <Bar value={progress} segments={8} className="h-3" tone={problems ? "bad" : "live"} />
+            <Bar label="Downloads" value={progress} segments={8} className="h-3" tone={problems ? "bad" : "live"} />
             <span className="ml-auto font-mono text-[12px] text-muted-foreground tabular">{rate ? speed(rate) : active.length ? "queued" : "idle"}</span>
           </button>
           <DropdownMenu>

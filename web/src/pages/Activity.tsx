@@ -243,7 +243,7 @@ function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: 
                   </span>
                 ))}
             </div>
-            <Bar value={a.progress} segments={32} stretch tone={a.status === "importing" ? "have" : "live"} />
+            <Bar label={a.title} value={a.progress} segments={32} stretch tone={a.status === "importing" ? "have" : "live"} />
           </div>
           <div className="col-start-2 row-start-1 md:col-start-3">{menu}</div>
         </>

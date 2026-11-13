@@ -8,7 +8,7 @@ import { Link } from "@/lib/router";
 import { useStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Empty, Notice, PageHeader, Spinner, State } from "@/components/kit";
 import { Thumb } from "@/components/Poster";
 
@@ -29,6 +29,7 @@ export function RequestsPage() {
   const [filter, setFilter] = useState<Filter>("pending");
   const [items, setItems] = useState<RequestItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [configured, setConfigured] = useState(true);
   const [busy, setBusy] = useState<Record<number, string>>({});
   // When Seerr auto-fetch is on, approving already triggers a grab.
   const [autoFetch, setAutoFetch] = useState(false);
@@ -38,6 +39,7 @@ export function RequestsPage() {
       .requests(filter)
       .then((r) => {
         setItems(r.items);
+        setConfigured(r.configured);
         setError(null);
       })
       .catch((e) => setError(String(e.message ?? e)));
@@ -82,88 +84,89 @@ export function RequestsPage() {
     }
   };
 
-  const notConfigured = error?.includes("not configured");
-
   return (
-    <div className="space-y-10">
+    <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)} className="gap-0">
       <PageHeader title="Requests">
-        <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
-          <TabsList>
-            {FILTERS.map(([v, name]) => (
-              <TabsTrigger key={v} value={v} className="flex-none">
-                {name}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        <TabsList>
+          {FILTERS.map(([v, name]) => (
+            <TabsTrigger key={v} value={v} className="flex-none">
+              {name}
+            </TabsTrigger>
+          ))}
+        </TabsList>
       </PageHeader>
 
-      {error && <Notice>{notConfigured ? "Seerr is not connected. Admin, Connections." : error}</Notice>}
+      {/* One panel for every filter: the tabs only change what it lists. */}
+      <TabsContent value={filter} className="mt-10 space-y-10">
 
-      {!items && !error && (
-        <div className="space-y-3">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-20 rounded-xl" />
-          ))}
-        </div>
-      )}
-      {items && items.length === 0 && <Empty>{filter === "pending" ? "No pending requests." : "No requests."}</Empty>}
+        {!configured && <Notice>Seerr is not connected. Admin, Connections.</Notice>}
+        {error && <Notice>{error}</Notice>}
 
-      {items && items.length > 0 && (
-        <section>
-          {items.map((r) => {
-            const pending = r.status === "pending";
-            const canGet = r.kind === "movie" || !!r.tvdbId || !!r.libraryId;
-            const b = busy[r.id];
-            return (
-              <div key={r.id} className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-x-4 gap-y-3 border-t py-3 sm:grid-cols-[44px_minmax(0,1fr)_auto] sm:gap-x-5">
-                <Thumb src={r.poster} title={r.title} className="w-10 sm:w-11" />
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <Link to={href(r)} className="text-[14px] font-medium hover:underline">
-                      {r.title}
-                    </Link>
-                    <span className="meta">{[r.kind === "tv" ? "Show" : "Movie", r.year, r.seasons?.length ? `Season ${r.seasons.join(", ")}` : null].filter(Boolean).join(", ")}</span>
-                    {!pending && <State tone={r.status === "declined" ? "bad" : "have"}>{r.status}</State>}
-                    {r.available === "available" && <State tone="have">Available</State>}
-                    {r.available === "partial" && <State tone="live">Partly available</State>}
+        {!items && !error && (
+          <div className="space-y-3">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-20 rounded-xl" />
+            ))}
+          </div>
+        )}
+        {configured && items && items.length === 0 && <Empty>{filter === "pending" ? "No pending requests." : "No requests."}</Empty>}
+
+        {items && items.length > 0 && (
+          <section>
+            {items.map((r) => {
+              const pending = r.status === "pending";
+              const canGet = r.kind === "movie" || !!r.tvdbId || !!r.libraryId;
+              const b = busy[r.id];
+              return (
+                <div key={r.id} className="grid grid-cols-[40px_minmax(0,1fr)] items-center gap-x-4 gap-y-3 border-t py-3 sm:grid-cols-[44px_minmax(0,1fr)_auto] sm:gap-x-5">
+                  <Thumb src={r.poster} title={r.title} className="w-10 sm:w-11" />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <Link to={href(r)} className="text-[14px] font-medium hover:underline">
+                        {r.title}
+                      </Link>
+                      <span className="meta">{[r.kind === "tv" ? "Show" : "Movie", r.year, r.seasons?.length ? `Season ${r.seasons.join(", ")}` : null].filter(Boolean).join(", ")}</span>
+                      {!pending && <State tone={r.status === "declined" ? "bad" : "have"}>{r.status}</State>}
+                      {r.available === "available" && <State tone="have">Available</State>}
+                      {r.available === "partial" && <State tone="live">Partly available</State>}
+                    </div>
+                    <div className="meta mt-1">
+                      {r.requestedBy}, {ago(r.createdAt)}
+                    </div>
                   </div>
-                  <div className="meta mt-1">
-                    {r.requestedBy}, {ago(r.createdAt)}
-                  </div>
-                </div>
-                <div className="col-span-2 flex flex-wrap justify-end gap-2 sm:col-span-1">
-                  {pending ? (
-                    <>
-                      <Button variant="ghost" size="sm" disabled={!!b} onClick={() => act(r, "decline")}>
-                        {b === "decline" && <Spinner />} Decline
-                      </Button>
-                      {autoFetch || !canGet ? (
-                        <Button size="sm" disabled={!!b} onClick={() => act(r, "approve")}>
-                          {b === "approve" && <Spinner />} Approve{autoFetch ? " and get" : ""}
+                  <div className="col-span-2 flex flex-wrap justify-end gap-2 sm:col-span-1">
+                    {pending ? (
+                      <>
+                        <Button variant="ghost" size="sm" disabled={!!b} onClick={() => act(r, "decline")}>
+                          {b === "decline" && <Spinner />} Decline
                         </Button>
-                      ) : (
-                        <>
-                          <Button variant="outline" size="sm" disabled={!!b} onClick={() => act(r, "approve")}>
-                            {b === "approve" && <Spinner />} Approve only
+                        {autoFetch || !canGet ? (
+                          <Button size="sm" disabled={!!b} onClick={() => act(r, "approve")}>
+                            {b === "approve" && <Spinner />} Approve{autoFetch ? " and get" : ""}
                           </Button>
-                          <Button size="sm" disabled={!!b} onClick={() => act(r, "get")}>
-                            {b === "get" ? <Spinner /> : <Download />} Approve and get
-                          </Button>
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <Button asChild variant="outline" size="sm">
-                      <Link to={href(r)}>Open</Link>
-                    </Button>
-                  )}
+                        ) : (
+                          <>
+                            <Button variant="outline" size="sm" disabled={!!b} onClick={() => act(r, "approve")}>
+                              {b === "approve" && <Spinner />} Approve only
+                            </Button>
+                            <Button size="sm" disabled={!!b} onClick={() => act(r, "get")}>
+                              {b === "get" ? <Spinner /> : <Download />} Approve and get
+                            </Button>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <Button asChild variant="outline" size="sm">
+                        <Link to={href(r)}>Open</Link>
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </section>
-      )}
-    </div>
+              );
+            })}
+          </section>
+        )}
+      </TabsContent>
+    </Tabs>
   );
 }

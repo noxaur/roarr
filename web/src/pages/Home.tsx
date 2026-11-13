@@ -673,7 +673,6 @@ export function Home({ kind }: { kind?: Kind }) {
                       to={libraryHref(it)}
                       data-sel={it.key}
                       draggable={false}
-                      aria-pressed={sel}
                       onClick={(e) => onItemClick(e, it)}
                       onFocus={() => setCursor(it.key)}
                       className={cn("group -m-2 block min-w-0 rounded-[2px] p-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/60", cursor === it.key && "bg-card")}
@@ -696,12 +695,13 @@ export function Home({ kind }: { kind?: Kind }) {
                             <Pin className="size-3" fill="currentColor" />
                           </span>
                         )}
-                        {p !== undefined && <Bar value={Math.max(0.05, p)} segments={12} stretch className="absolute inset-x-2 bottom-2" />}
+                        {p !== undefined && <Bar label="Downloading" value={Math.max(0.05, p)} segments={12} stretch className="absolute inset-x-2 bottom-2" />}
                       </div>
                       <div className="mt-2 truncate text-[14px] font-medium" title={it.title}>
                         {it.title}
                       </div>
                       <CellStrip cells={libraryCells(it, p !== undefined, 26)} className="mt-2" />
+                      {sel && <span className="sr-only">, selected</span>}
                     </Link>
                   );
                 })}
@@ -725,7 +725,7 @@ export function Home({ kind }: { kind?: Kind }) {
                       to={libraryHref(it)}
                       data-sel={it.key}
                       draggable={false}
-                      aria-pressed={sel}
+                      aria-selected={sel}
                       role="row"
                       onClick={(e) => onItemClick(e, it)}
                       onFocus={() => setCursor(it.key)}

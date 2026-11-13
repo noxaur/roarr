@@ -1,5 +1,6 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { useLabelledBy } from "@/lib/label"
 
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
@@ -13,6 +14,7 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
         className
       )}
       {...props}
+      aria-labelledby={useLabelledBy(props)}
     />
   )
 }
