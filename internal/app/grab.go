@@ -278,6 +278,7 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 		push.SeriesID = d.ID
 		push.TvdbID = d.TvdbID
 		a.pushTarget(ctx, c.Sonarr.Client, "Sonarr", g.Release, &push)
+		grabbed := confirmGrab(ctx, c.Sonarr.Client, g.Release.Title)
 		decisions, err := c.Sonarr.Push(ctx, push)
 		if err != nil {
 			return GrabResult{}, err
@@ -310,14 +311,21 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 			}
 			forced = true
 		}
-		if !forced && !confirmGrab(ctx, c.Sonarr.Client, g.Release.Title) {
-			res.Message = "Sonarr accepted the release but its download client did not take it (see Sonarr → System → Logs)"
-			res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
-			return res, nil
+		var unknown error
+		if !forced {
+			ok, err := grabbed()
+			if err == nil && !ok {
+				res.Message = "Sonarr accepted the release but its download client did not take it (see Sonarr → System → Logs)"
+				res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
+				return res, nil
+			}
+			unknown = err
 		}
 		res.OK, res.Via, res.Hash = true, "sonarr", strings.ToLower(g.Release.InfoHash)
 		res.Message = "Sonarr is downloading it."
 		switch {
+		case unknown != nil:
+			res.Message = unconfirmed("Sonarr", unknown)
 		case forced:
 			res.Message = "Sonarr is downloading it (all Sonarr checks skipped)."
 		case bypassed:
@@ -372,6 +380,7 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 	push.MovieID = g.MovieID
 	push.TmdbID = g.TmdbID
 	a.pushTarget(ctx, c.Radarr.Client, "Radarr", g.Release, &push)
+	grabbed := confirmGrab(ctx, c.Radarr.Client, g.Release.Title)
 	decisions, err := c.Radarr.Push(ctx, push)
 	if err != nil {
 		return GrabResult{}, err
@@ -398,13 +407,20 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 		}
 		forced = true
 	}
-	if !forced && !confirmGrab(ctx, c.Radarr.Client, g.Release.Title) {
-		res.Message = "Radarr accepted the release but its download client did not take it (see Radarr → System → Logs)"
-		res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
-		return res, nil
+	var unknown error
+	if !forced {
+		ok, err := grabbed()
+		if err == nil && !ok {
+			res.Message = "Radarr accepted the release but its download client did not take it (see Radarr → System → Logs)"
+			res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
+			return res, nil
+		}
+		unknown = err
 	}
 	res.OK, res.Via, res.Hash, res.Message = true, "radarr", strings.ToLower(g.Release.InfoHash), "Radarr is downloading it."
 	switch {
+	case unknown != nil:
+		res.Message = unconfirmed("Radarr", unknown)
 	case forced:
 		res.Message = "Radarr is downloading it (all Radarr checks skipped)."
 	case bypassed:
@@ -500,24 +516,51 @@ func (a *App) withAnyQuality(ctx context.Context, c *arr.Client, current func(co
 	return push(ctx)
 }
 
-// confirmGrab waits briefly for the *arr to record a "grabbed" history
-// event. An approved push only means the decision engine liked it; the
-// event appears once the download client actually accepted it.
-func confirmGrab(ctx context.Context, c *arr.Client, title string) bool {
-	deadline := time.Now().Add(8 * time.Second)
-	for time.Now().Before(deadline) {
-		if ok, err := c.RecentlyGrabbed(ctx, title, time.Minute); err == nil && ok {
-			return true
-		} else if err != nil {
-			return true // cannot verify; do not report a false failure
+// How long a grab waits for the *arr to record its "grabbed" history event.
+var (
+	grabConfirmWait = 8 * time.Second
+	grabConfirmPoll = 400 * time.Millisecond
+)
+
+// confirmGrab is called before a push and notes the newest "grabbed" history
+// event (ids grow with time). The func it returns then waits briefly for a
+// newer one for title. An approved push only means the decision engine liked
+// it; the event appears once the download client actually accepted it. An
+// error means history could not be read, which says nothing either way.
+func confirmGrab(ctx context.Context, c *arr.Client, title string) func() (bool, error) {
+	last := 0
+	rows, err := c.Grabs(ctx, 1)
+	if len(rows) > 0 {
+		last = rows[0].ID
+	}
+	return func() (bool, error) {
+		if err != nil {
+			return false, err
 		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(400 * time.Millisecond):
+		deadline := time.Now().Add(grabConfirmWait)
+		for {
+			rows, err = c.Grabs(ctx, 25)
+			for _, r := range rows {
+				if r.ID > last && strings.EqualFold(r.SourceTitle, title) {
+					return true, nil
+				}
+			}
+			if !time.Now().Before(deadline) {
+				return false, err
+			}
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			case <-time.After(grabConfirmPoll):
+			}
 		}
 	}
-	return false
+}
+
+// unconfirmed is the grab message for an approved push whose "grabbed" event
+// could not be looked up.
+func unconfirmed(app string, err error) string {
+	return fmt.Sprintf("%s accepted the release, but roarr could not check that its download client took it (%v). Look in %s → Activity.", app, err, app)
 }
 
 func pushFor(r Release) arr.PushRelease {

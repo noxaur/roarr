@@ -389,26 +389,15 @@ func (c *Client) RemoveQueue(ctx context.Context, id int, removeFromClient, bloc
 	return c.Do(ctx, http.MethodDelete, fmt.Sprintf("%s/queue/%d", c.prefix, id), q, nil, nil)
 }
 
-// RecentlyGrabbed reports whether a release with this title was grabbed
-// within the window (history event type 1 = grabbed).
-func (c *Client) RecentlyGrabbed(ctx context.Context, title string, within time.Duration) (bool, error) {
+// Grabs lists the newest "grabbed" history events (event type 1), newest
+// first.
+func (c *Client) Grabs(ctx context.Context, pageSize int) ([]HistoryRecord, error) {
 	var res struct {
-		Records []struct {
-			SourceTitle string    `json:"sourceTitle"`
-			EventType   string    `json:"eventType"`
-			Date        time.Time `json:"date"`
-		} `json:"records"`
+		Records []HistoryRecord `json:"records"`
 	}
-	q := url.Values{"page": {"1"}, "pageSize": {"25"}, "sortKey": {"date"}, "sortDirection": {"descending"}, "eventType": {"1"}}
-	if err := c.get(ctx, "/history", q, &res); err != nil {
-		return false, err
-	}
-	for _, r := range res.Records {
-		if strings.EqualFold(r.SourceTitle, title) && time.Since(r.Date) < within {
-			return true, nil
-		}
-	}
-	return false, nil
+	q := url.Values{"page": {"1"}, "pageSize": {strconv.Itoa(pageSize)}, "sortKey": {"date"}, "sortDirection": {"descending"}, "eventType": {"1"}}
+	err := c.get(ctx, "/history", q, &res)
+	return res.Records, err
 }
 
 // RemotePathMapping translates a download client's path to the *arr's.
