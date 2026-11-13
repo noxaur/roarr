@@ -5,7 +5,8 @@ import { api, type ActivityItem, type VerifyRecord, type WatchJob } from "@/lib/
 import { autoGet, errText } from "@/lib/actions";
 import { bytes, epCode, pct, speed } from "@/lib/format";
 import { Link, useRouter } from "@/lib/router";
-import { needsYou, useStore } from "@/lib/store";
+import { needsYou, statusText } from "@/lib/activity";
+import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { byHash, forActivity, headline, hrefOf, isBlocking, isFlagged, orphans } from "@/lib/verify";
 import { Button } from "@/components/ui/button";
@@ -137,8 +138,6 @@ export function ActivityPage() {
   );
 }
 
-const statusText = (s: string) => (s === "warning" ? "Stuck" : s === "failed" ? "Failed" : s === "importing" ? "Importing" : s === "queued" ? "Queued" : "");
-
 function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: VerifyRecord; attention?: boolean; onRemove: (blocklist: boolean) => void; onRetry: () => void }) {
   const { navigate } = useRouter();
   // A failed check decides the row: its reasons and actions replace the
@@ -232,7 +231,7 @@ function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: 
         <div className="col-start-2 row-start-1 self-start md:col-start-3">{menu}</div>
       ) : (
         <>
-          <div className={cn("col-span-2 font-mono text-[12px] tabular md:col-span-1", a.status === "importing" ? "text-have" : "text-live")}>
+          <div className={cn("col-span-2 font-mono text-[12px] tabular md:col-span-1", a.status === "importing" ? "text-have" : a.status === "paused" ? "text-muted-foreground" : "text-live")}>
             <div className="mb-2 flex justify-end gap-2">
               {[pct(a.progress), a.speed ? speed(a.speed) : a.status === "queued" ? "waiting" : null, a.eta && a.status === "downloading" ? a.eta : null, a.size > 0 ? bytes(a.size) : null]
                 .filter(Boolean)

@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type ActivityItem, type LibraryItem, type VerifyRecord } from "./api";
+import { needsYou } from "./activity";
 import { isBlocking, orphans } from "./verify";
+
+export { isActive, needsYou } from "./activity";
 
 // App-wide data that many pages share: the library (shipped once, then
 // filtered locally), activity for the nav badge, and the request count.
@@ -148,11 +151,6 @@ export function useStore(): Store {
   if (!s) throw new Error("useStore outside provider");
   return s;
 }
-
-/** Downloads that are moving (or about to). */
-export const isActive = (a: ActivityItem) => a.status === "downloading" || a.status === "queued" || a.status === "importing";
-/** Downloads that need a human. */
-export const needsYou = (a: ActivityItem) => a.status === "warning" || a.status === "failed";
 
 /** How many things wait on a person: stuck downloads and failed checks. */
 export function problemCount(activity: ActivityItem[], verify: VerifyRecord[]): number {

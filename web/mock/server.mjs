@@ -96,6 +96,8 @@ const activity = {
     { id: "a2", source: "sonarr", kind: "tv", title: "Sousou no Frieren", subtitle: "S01E21", downloadId: "f00d0021", release: "[SubsPlease] Sousou no Frieren - 21 (1080p) [A1B2C3D4].mkv", href: "/tv/3", status: "queued", progress: 0, size: 0, sizeLeft: 0 },
     { id: "a3", source: "radarr", kind: "movie", title: "Perfect Days", subtitle: "2023", downloadId: "da150014", release: "Perfect.Days.2023.1080p.BluRay.x264-GROUP", href: "/movie/14", status: "warning", progress: 0.1, size: 8e9, sizeLeft: 7.2e9, messages: ["No seeders for 2 days. qBittorrent reports the torrent as stalled."] },
     { id: "a4", source: "sonarr", kind: "tv", title: "Pluribus", subtitle: "S01E05", downloadId: "b1005005", release: "Pluribus.S01E05.720p.HDTV.x264-SYNCOPY", href: "/tv/4", status: "failed", progress: 1, size: 1.1e9, sizeLeft: 0, messages: ["Import failed: sample file detected, no video file found in the download."] },
+    { id: "a5", source: "roarr", kind: "tv", title: "Slow Horses", subtitle: "S04", downloadId: "5104e504", release: "Slow.Horses.S04.1080p.ATVP.WEB-DL.DDP5.1.H.264-NTb", href: "/tv/5", status: "stalled", progress: 0.31, size: 14e9, sizeLeft: 9.7e9 },
+    { id: "a6", source: "radarr", kind: "movie", title: "The French Dispatch", subtitle: "2021", downloadId: "f4e9c012", release: "The.French.Dispatch.2021.1080p.BluRay.x264-GROUP", href: "/movie/12", status: "paused", progress: 0.44, size: 9e9, sizeLeft: 5e9 },
   ],
   errors: {},
 };
