@@ -13,9 +13,9 @@ between strategies are what decided the design.
 ## 1. Where does search time go?
 
 `go run ./lab/bench -n 5` searches one episode of *The Expanse* (5 different
-episodes) with each strategy. Columns: time until the first results are
+episodes; since the roarr rows, the first of 5 seasons) with each strategy. Columns: time until the first results are
 known, until 90% of the final result count is known, and until the request
-completes.
+completes (for roarr, until the `done` event of its stream).
 
 | strategy | first | 90% | all | results | indexer requests |
 |---|---|---|---|---|---|
@@ -25,7 +25,10 @@ completes.
 | one Prowlarr JSON search per indexer, in parallel | **0.52 s** | 5.97 s | 7.33 s | 35 | 7 |
 | one Prowlarr Torznab call per indexer, in parallel | 0.42 s | 5.50 s | 5.50 s | 36 | 7 |
 
-Medians of 5. Raw runs in the bench output.
+Medians of 5. Raw runs in the bench output. The bench also prints
+`roarr-cold` and `roarr-warm` rows, measured on roarr's `/api/search` stream.
+They are newer than this run and are not in the table yet. Section 2 has
+roarr's numbers from the same run, taken by hand.
 
 - Every "single request" strategy is as slow as the slowest indexer. When the
   hanging indexer hangs, it is much worse: up to 48 s for the Prowlarr
