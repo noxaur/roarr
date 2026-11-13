@@ -166,24 +166,27 @@ func PlanTV(files []SourceFile, releaseTitle string, t Title) ([]Placement, []Sk
 	return out, skips
 }
 
-// dedupe keeps one file per episode: the larger one (a proper pack rarely
-// carries two, but a mislabelled extra can claim a real episode's number).
+// dedupe drops a file when every episode it holds has a larger copy in the
+// download (a proper pack rarely carries two, but a mislabelled extra can
+// claim a real episode's number). A multi-episode file stays as long as it
+// is the largest copy of one of its episodes.
 func dedupe(ps []Placement) ([]Placement, []Skip) {
 	best := map[int]int{} // episode id -> index into ps
-	drop := map[int]bool{}
 	for i, p := range ps {
 		for _, e := range p.Episodes {
 			id := EpisodeID(p.Season, e)
-			if j, ok := best[id]; ok && j != i {
-				loser := i
-				if ps[i].Video.Size > ps[j].Video.Size {
-					loser = j
-					best[id] = i
-				}
-				drop[loser] = true
-				continue
+			if j, ok := best[id]; !ok || p.Video.Size > ps[j].Video.Size {
+				best[id] = i
 			}
-			best[id] = i
+		}
+	}
+	drop := map[int]bool{}
+	for i, p := range ps {
+		drop[i] = true
+		for _, e := range p.Episodes {
+			if best[EpisodeID(p.Season, e)] == i {
+				drop[i] = false
+			}
 		}
 	}
 	var out []Placement

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -182,6 +183,35 @@ func TestPlanTVDuplicateEpisodeKeepsLarger(t *testing.T) {
 	ps, skips := PlanTV(files, "P", showTitle(8))
 	if len(ps) != 1 || ps[0].Video.Size != 900 || len(skips) != 1 {
 		t.Fatalf("got %+v skips %+v", ps, skips)
+	}
+}
+
+func TestPlanTVDuplicateKeepsMultiEpisodeFileWithAnEpisodeOfItsOwn(t *testing.T) {
+	sized := func(sizes map[string]int64) []SourceFile {
+		var out []SourceFile
+		for _, rel := range []string{"The.Show.S01E01E02.720p.mkv", "The.Show.S01E01.1080p.mkv", "The.Show.S01E02.1080p.mkv"} {
+			if size, ok := sizes[rel]; ok {
+				out = append(out, SourceFile{Rel: rel, Path: "/dl/" + rel, Size: size})
+			}
+		}
+		return out
+	}
+	// The pair loses E01 but is the only copy of E02.
+	ps, skips := PlanTV(sized(map[string]int64{"The.Show.S01E01E02.720p.mkv": 1 << 30, "The.Show.S01E01.1080p.mkv": 2 << 30}), "The.Show.S01", showTitle(8))
+	got := placements(ps)
+	sort.Strings(got) // both start at E01, so PlanTV's order is not fixed
+	if !reflect.DeepEqual(got, []string{"S01E01", "S01E01-E02"}) || len(skips) != 0 {
+		t.Fatalf("placements %v skips %+v", got, skips)
+	}
+	// Every episode of the pair has a larger copy.
+	ps, skips = PlanTV(sized(map[string]int64{"The.Show.S01E01E02.720p.mkv": 1 << 30, "The.Show.S01E01.1080p.mkv": 2 << 30, "The.Show.S01E02.1080p.mkv": 2 << 30}), "The.Show.S01", showTitle(8))
+	if got := placements(ps); !reflect.DeepEqual(got, []string{"S01E01", "S01E02"}) || len(skips) != 1 || skips[0].File.Rel != "The.Show.S01E01E02.720p.mkv" {
+		t.Fatalf("placements %v skips %+v", got, skips)
+	}
+	// The pair is the largest copy of both.
+	ps, skips = PlanTV(sized(map[string]int64{"The.Show.S01E01E02.720p.mkv": 5 << 30, "The.Show.S01E01.1080p.mkv": 2 << 30, "The.Show.S01E02.1080p.mkv": 2 << 30}), "The.Show.S01", showTitle(8))
+	if got := placements(ps); !reflect.DeepEqual(got, []string{"S01E01-E02"}) || len(skips) != 2 {
+		t.Fatalf("placements %v skips %+v", got, skips)
 	}
 }
 
