@@ -240,6 +240,12 @@ paths (`D:\Torrents=/mnt/t`) also work. When qBittorrent keeps unfinished
 torrents in a separate folder, roarr also looks in that folder
 (`download_path`).
 
+`VERIFY_PATH_MAP`, `TRANSCODE_PATH_MAP` and the remote path mappings read
+from Sonarr and Radarr go through the same mapper (`importer.PathMap`), so
+these rules hold for all of them. Three hand-written mappers had drifted:
+one took the first match instead of the longest, and two missed a drive
+letter in another case.
+
 A hardlink is only possible when the source and the destination are in
 one filesystem and in one Docker bind mount. If the link fails (`EXDEV`,
 `EPERM` and similar errors), roarr copies the file. roarr writes a copy to

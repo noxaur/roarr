@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/noxaur/roarr/internal/httpx"
+	"github.com/noxaur/roarr/internal/importer"
 )
 
 // Client is a Servarr API client.
@@ -418,24 +419,18 @@ func (c *Client) RemotePathMappings(ctx context.Context) ([]RemotePathMapping, e
 // to the path the *arr sees, using the longest matching mapping. Mappings
 // for host are preferred; others apply when none of host's match.
 func MapRemotePath(ms []RemotePathMapping, host, p string) string {
-	best, bestLen, bestHost := -1, -1, false
-	for i, m := range ms {
-		rp := strings.TrimRight(strings.ReplaceAll(m.RemotePath, `\`, "/"), "/")
-		pp := strings.ReplaceAll(p, `\`, "/")
-		if pp != rp && !strings.HasPrefix(pp, rp+"/") {
-			continue
-		}
-		hostOK := strings.EqualFold(m.Host, host)
-		if (hostOK && !bestHost) || (hostOK == bestHost && len(rp) > bestLen) {
-			best, bestLen, bestHost = i, len(rp), hostOK
+	var mine, all importer.PathMap
+	for _, m := range ms {
+		r := importer.PathRule{Remote: m.RemotePath, Local: m.LocalPath}
+		all = append(all, r)
+		if strings.EqualFold(m.Host, host) {
+			mine = append(mine, r)
 		}
 	}
-	if best < 0 {
-		return p
+	if out, ok := mine.Match(p); ok {
+		return out
 	}
-	m := ms[best]
-	rest := strings.TrimPrefix(strings.ReplaceAll(p, `\`, "/"), strings.TrimRight(strings.ReplaceAll(m.RemotePath, `\`, "/"), "/"))
-	return strings.TrimRight(m.LocalPath, `/\`) + rest
+	return all.Map(p)
 }
 
 // BypassProfileName is the permissive quality profile roarr creates to get

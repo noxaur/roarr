@@ -292,7 +292,7 @@ func (v *Verification) tick(ctx context.Context) {
 			}
 		}
 	}
-	pathMap := parsePathMap(v.app.Settings.Get().Verify.PathMap)
+	pm := pathMap("VERIFY_PATH_MAP", v.app.Settings.Get().Verify.PathMap)
 	for _, r := range pending {
 		if ctx.Err() != nil {
 			return
@@ -300,7 +300,7 @@ func (v *Verification) tick(ctx context.Context) {
 		var files []verify.File
 		ready, final := false, true
 		if t, ok := torrents[r.Hash]; ok {
-			files, ready = v.torrentFiles(ctx, c, t, r.Kind, pathMap)
+			files, ready = v.torrentFiles(ctx, c, t, r.Kind, pm)
 			final = t.Progress >= 1
 			if !final && r.triedEarly {
 				ready = false
@@ -309,7 +309,7 @@ func (v *Verification) tick(ctx context.Context) {
 				v.update(r.Hash, func(rec *VerifyRecord) { rec.Added = time.Unix(t.AddedOn, 0) })
 			}
 		} else if r.outputPath != "" {
-			files = walkFiles(mapVerifyPath(pathMap, r.outputPath))
+			files = walkFiles(pm.Map(r.outputPath))
 			ready = len(files) > 0
 		}
 		if !ready {
@@ -402,7 +402,7 @@ func (v *Verification) update(hash string, fn func(*VerifyRecord)) {
 // torrentFiles lists a torrent's files as roarr sees them, and whether the
 // download is ready to judge: finished, or its first episode is, or its file
 // list alone already shows junk.
-func (v *Verification) torrentFiles(ctx context.Context, c *Clients, t qbit.Torrent, kind string, pm []pathPair) ([]verify.File, bool) {
+func (v *Verification) torrentFiles(ctx context.Context, c *Clients, t qbit.Torrent, kind string, pm importer.PathMap) ([]verify.File, bool) {
 	fctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	qf, err := c.QBit.Files(fctx, t.Hash)
 	cancel()
@@ -418,7 +418,7 @@ func (v *Verification) torrentFiles(ctx context.Context, c *Clients, t qbit.Torr
 		if f.Priority == qbit.PrioSkip && importer.IsVideo(name) {
 			continue
 		}
-		files = append(files, verify.File{Name: name, Size: f.Size, Path: mapVerifyPath(pm, joinClientPath(t.SavePath, name))})
+		files = append(files, verify.File{Name: name, Size: f.Size, Path: pm.Map(joinClientPath(t.SavePath, name))})
 		progress[name] = f.Progress
 	}
 	if t.Progress >= 1 {
@@ -541,7 +541,7 @@ func (v *Verification) Recheck(ctx context.Context, hash string) (VerifyRecord, 
 		return VerifyRecord{}, fmt.Errorf("ffprobe %w", ErrNotConfigured)
 	}
 	c := v.app.C()
-	pm := parsePathMap(v.app.Settings.Get().Verify.PathMap)
+	pm := pathMap("VERIFY_PATH_MAP", v.app.Settings.Get().Verify.PathMap)
 	var files []verify.File
 	if c.QBit != nil && len(hash) == 40 {
 		ts, err := c.QBit.Torrents(ctx, hash)
@@ -553,7 +553,7 @@ func (v *Verification) Recheck(ctx context.Context, hash string) (VerifyRecord, 
 		}
 	}
 	if files == nil && r.outputPath != "" {
-		files = walkFiles(mapVerifyPath(pm, r.outputPath))
+		files = walkFiles(pm.Map(r.outputPath))
 	}
 	if files == nil {
 		return VerifyRecord{}, errors.New("the download's files are gone")
@@ -864,38 +864,18 @@ func samePath(a, b string) bool {
 	return a != "" && normClientPath(a) == normClientPath(b)
 }
 
-// pathPair maps a download-client path prefix to roarr's.
-type pathPair struct{ from, to string }
-
-// parsePathMap reads "client=roarr,client2=roarr2".
-func parsePathMap(s string) []pathPair {
-	var out []pathPair
-	for _, part := range strings.Split(s, ",") {
-		from, to, ok := strings.Cut(part, "=")
-		from, to = strings.TrimSpace(from), strings.TrimSpace(to)
-		if !ok || from == "" || to == "" {
-			continue
-		}
-		out = append(out, pathPair{normClientPath(from), to})
+// pathMap reads a path-map setting. A rule it cannot read is logged under
+// the setting's name and left out.
+func pathMap(setting, spec string) importer.PathMap {
+	pm, err := importer.ParsePathMap(spec)
+	if err != nil {
+		slog.Warn(setting+" is invalid", "err", err)
 	}
-	// Longest prefix first.
-	sort.SliceStable(out, func(i, j int) bool { return len(out[i].from) > len(out[j].from) })
-	return out
+	return pm
 }
 
 func normClientPath(p string) string {
 	return strings.TrimRight(strings.ReplaceAll(p, `\`, "/"), "/")
-}
-
-// mapPath rewrites a client path with the first matching prefix.
-func mapVerifyPath(pm []pathPair, p string) string {
-	p = normClientPath(p)
-	for _, m := range pm {
-		if p == m.from || strings.HasPrefix(p, m.from+"/") {
-			return filepath.FromSlash(strings.TrimRight(m.to, "/") + p[len(m.from):])
-		}
-	}
-	return filepath.FromSlash(p)
 }
 
 func joinClientPath(dir, name string) string {

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/noxaur/roarr/internal/arr"
@@ -91,9 +90,9 @@ func (a *App) transcodeImports(ctx context.Context) {
 				slog.Debug("transcode: history", "service", src.name, "err", err)
 				continue // cursor stays; the next poll retries everything
 			}
-			pathMap := a.Settings.Get().Transcode.PathMap
+			pm := pathMap("TRANSCODE_PATH_MAP", a.Settings.Get().Transcode.PathMap)
 			for _, im := range fresh {
-				it := transcode.Item{Path: mapPath(pathMap, im.Path), Kind: "tv", TitleID: im.SeriesID}
+				it := transcode.Item{Path: pm.Map(im.Path), Kind: "tv", TitleID: im.SeriesID}
 				if src.name == "radarr" {
 					it.Kind, it.TitleID = "movie", im.MovieID
 				}
@@ -180,16 +179,4 @@ func (a *App) queueTranscode(it transcode.Item) {
 		it.Title = filepath.Base(it.Path)
 	}
 	a.Transcode.Submit(it)
-}
-
-// mapPath applies "from=to,from2=to2" prefix rewrites to a path.
-func mapPath(spec, p string) string {
-	for _, pair := range strings.Split(spec, ",") {
-		from, to, ok := strings.Cut(strings.TrimSpace(pair), "=")
-		from, to = strings.TrimRight(from, "/"), strings.TrimRight(to, "/")
-		if ok && from != "" && (p == from || strings.HasPrefix(p, from+"/")) {
-			return to + strings.TrimPrefix(p, from)
-		}
-	}
-	return p
 }

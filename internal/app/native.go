@@ -751,10 +751,7 @@ func (n *Native) prioritise(ctx context.Context, c *Clients, j *NativeJob) {
 // (or its incomplete-files folder while the torrent is unfinished) joined
 // with the file's path in the torrent, then rewritten by QBIT_PATH_MAP.
 func (n *Native) resolve(t qbit.Torrent, rel string) string {
-	pm, err := importer.ParsePathMap(n.app.Settings.Get().Import.PathMap)
-	if err != nil {
-		slog.Warn("native: QBIT_PATH_MAP is invalid", "err", err)
-	}
+	pm := pathMap("QBIT_PATH_MAP", n.app.Settings.Get().Import.PathMap)
 	join := func(base string) string {
 		return pm.Map(strings.TrimRight(base, `/\`) + "/" + rel)
 	}
