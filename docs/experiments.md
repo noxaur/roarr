@@ -21,7 +21,7 @@ completes (for roarr, until the `done` event of its stream).
 
 | strategy | first | 90% | all | results | indexer requests |
 |---|---|---|---|---|---|
-| Sonarr interactive search (`/api/v3/release`, what pulldeck used) | 6.97 s | 6.97 s | 6.97 s | 26 | 6 |
+| Sonarr interactive search (`/api/v3/release`, what roarr used at first) | 6.97 s | 6.97 s | 6.97 s | 26 | 6 |
 | Sonarr season search | 6.79 s | 6.79 s | 6.79 s | 299 | 6 |
 | Prowlarr aggregated `/api/v1/search` | 6.49 s | 6.49 s | 6.49 s | 36 | 7 |
 | one Prowlarr JSON search per indexer, in parallel | **0.52 s** | 5.97 s | 7.33 s | 35 | 7 |

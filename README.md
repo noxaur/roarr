@@ -300,7 +300,7 @@ write-up in [docs/experiments.md](docs/experiments.md).
 
 | Episode search, 7 indexers (median of 5) | first results | everything |
 |---|---|---|
-| Sonarr interactive search (what pulldeck used) | 6.97 s | 6.97 s |
+| Sonarr interactive search (what roarr used at first) | 6.97 s | 6.97 s |
 | Prowlarr aggregated search | 6.49 s | 6.49 s (48 s when an indexer hangs) |
 | **roarr** | **0.52 s** | streamed as indexers answer |
 | **roarr**, after opening the show page (prefetched) | **0.01 s** | cached |

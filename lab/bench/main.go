@@ -3,7 +3,7 @@
 //
 // Strategies:
 //
-//	sonarr-episode   GET Sonarr /api/v3/release?episodeId=  (original pulldeck path)
+//	sonarr-episode   GET Sonarr /api/v3/release?episodeId=  (what roarr used at first)
 //	sonarr-season    GET Sonarr /api/v3/release?seriesId=&seasonNumber=
 //	prowlarr-all     one aggregated Prowlarr /api/v1/search across every indexer
 //	fanout-json      one Prowlarr /api/v1/search per indexer, in parallel, caps-aware
