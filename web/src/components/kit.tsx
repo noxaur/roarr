@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { LibraryItem } from "@/lib/api";
+import { cellCounts } from "@/lib/cells";
 import { cn } from "@/lib/utils";
 
 // Small pieces every page shares. Colour here always means state:
@@ -106,10 +107,7 @@ export function CellStrip({ cells, className }: { cells: Tone[]; className?: str
  * the rest. Long shows are grouped so the strip stays at most `max` cells.
  */
 export function libraryCells(it: LibraryItem, downloading: boolean, max = 48): Tone[] {
-  const total = Math.max(1, it.total);
-  const per = Math.ceil(total / max);
-  const n = Math.ceil(total / per);
-  const have = Math.floor(it.have / per);
+  const { cells: n, have } = cellCounts(it.have, it.total, max);
   const gap: Tone = downloading ? "live" : it.monitored ? "miss" : "none";
   return Array.from({ length: n }, (_, i) => (i < have ? "have" : i === have && downloading ? "live" : gap === "live" ? "miss" : gap));
 }
