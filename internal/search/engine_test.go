@@ -27,6 +27,7 @@ type fakeProwlarr struct {
 
 	ixCalls, statusCalls int
 	ixGate               chan struct{} // the indexer list waits for it when set
+	noIndexers           bool          // the indexer list is empty
 	status               string        // body of /indexerstatus, "[]" when empty
 	statusFail           bool
 }
@@ -52,6 +53,10 @@ func (f *fakeProwlarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		if gate != nil {
 			<-gate
+		}
+		if f.noIndexers {
+			w.Write([]byte(`[]`))
+			return
 		}
 		caps := `{"tvSearchParams":["q","season","ep","tvdbId"],"movieSearchParams":["q","imdbId"],"categories":[{"id":5000},{"id":2000}]}`
 		w.Write([]byte(`[{"id":1,"name":"one","enable":true,"capabilities":` + caps + `},{"id":2,"name":"two","enable":true,"capabilities":` + caps + `}]`))
@@ -453,5 +458,18 @@ func TestFailuresAreRememberedBriefly(t *testing.T) {
 	e.Run(context.Background(), req, nil, func(Batch) {})
 	if errs != 2 || f.calls != 2 {
 		t.Fatalf("want 2 errors from 2 calls, got errs=%d calls=%d", errs, f.calls)
+	}
+}
+
+func TestEmptyIndexerListIsCached(t *testing.T) {
+	f := &fakeProwlarr{order: map[string][]string{}, noIndexers: true}
+	e := newTestEngine(t, f)
+	for i := 0; i < 3; i++ {
+		if ix, _, err := e.Indexers(context.Background()); err != nil || len(ix) != 0 {
+			t.Fatalf("indexers %v, %v", ix, err)
+		}
+	}
+	if ix, _ := f.listCalls(); ix != 1 {
+		t.Fatalf("%d indexer list calls for three searches, want 1", ix)
 	}
 }

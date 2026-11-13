@@ -169,7 +169,7 @@ func (e *Engine) refreshIndexers(r *ixRefresh) {
 	}()
 	all, err := e.Prowlarr.AllIndexers(ctx)
 	<-disDone
-	var on []arr.Indexer
+	on := []arr.Indexer{} // nil means not loaded yet
 	for _, i := range all {
 		if i.Enable {
 			on = append(on, i)
