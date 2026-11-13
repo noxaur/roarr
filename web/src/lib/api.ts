@@ -507,11 +507,6 @@ export interface ImportsStatus {
   files: { titleKey: string; path: string; size: number; release?: string; importedAt: string }[];
 }
 
-export interface Plan {
-  picks: { key: string; fills: number[]; extras: number }[] | null;
-  missing: number[] | null;
-}
-
 export interface AutoResult {
   grabs: { release: string; fills: number; result: GrabResult; error?: string }[] | null;
   missing?: number[];
@@ -573,8 +568,6 @@ export const api = {
   seriesByTvdb: (tvdb: number, tmdb?: number) => call<SeriesDetail>("GET", `/api/tv/tvdb/${tvdb}${tmdb ? `?tmdb=${tmdb}` : ""}`),
   movie: (id: number) => call<MovieDetail>("GET", `/api/movie/${id}`),
   movieByTmdb: (tmdb: number) => call<MovieDetail>("GET", `/api/movie/tmdb/${tmdb}`),
-  plan: (wanted: number[], options: { key: string; score: number; rejected: boolean; covers: number[] }[]) =>
-    call<Plan>("POST", "/api/plan", { wanted, options }),
   grab: (body: {
     kind: Kind;
     seriesId?: number;

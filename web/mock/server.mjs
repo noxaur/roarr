@@ -537,16 +537,6 @@ function handle(req, res) {
     });
     return;
   }
-  if (p === "/api/plan") {
-    let body = "";
-    req.on("data", (c) => (body += c));
-    req.on("end", () => {
-      const { wanted, options } = JSON.parse(body);
-      const best = options.filter((o) => !o.rejected).sort((a, b) => b.score - a.score)[0];
-      json(res, { picks: best ? [{ key: best.key, fills: wanted, extras: 0 }] : null, missing: best ? [] : wanted });
-    });
-    return;
-  }
   if (route === "GET /api/search") {
     // The stream opens at once; a failed lookup arrives on it as an error event.
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
