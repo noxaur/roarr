@@ -483,7 +483,7 @@ function Row({
   const box = sent ? (
     <Check className="size-4 text-have" aria-label="Sent to the download client" />
   ) : busy ? (
-    <Spinner />
+    <Spinner label="Sending to the download client" />
   ) : (
     <Checkbox checked={chosen} onCheckedChange={(v) => onChoose(v === true)} onClick={(e) => e.stopPropagation()} aria-label={`Select ${r.title}`} />
   );

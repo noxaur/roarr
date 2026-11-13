@@ -48,8 +48,13 @@ export function Notice({ tone = "miss", children, className }: { tone?: Tone; ch
   );
 }
 
-export function Spinner({ className }: { className?: string }) {
-  return <span aria-hidden className={cn("inline-block size-3 animate-spin rounded-full border-2 border-current border-t-transparent opacity-70", className)} />;
+/** Decoration beside text that already says what is happening. Where it is the only sign of loading, give it a `label`. */
+export function Spinner({ label, className }: { label?: string; className?: string }) {
+  return (
+    <span role={label ? "status" : undefined} aria-hidden={!label} className={cn("inline-block size-3 animate-spin rounded-full border-2 border-current border-t-transparent opacity-70", className)}>
+      {label && <span className="sr-only">{label}</span>}
+    </span>
+  );
 }
 
 const fill: Record<Tone, string> = {
