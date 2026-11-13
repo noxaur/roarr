@@ -1,5 +1,6 @@
-import { useId, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { LabelledBy } from "@/lib/label";
+import { parseNum } from "@/lib/num";
 import { Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -121,9 +122,27 @@ export function Num({
   label?: string;
   onChange: (v: number) => void;
 }) {
+  // What is being typed. It may be empty or half a number; only a number
+  // inside min/max reaches `onChange`, and leaving the field shows the value again.
+  const [draft, setDraft] = useState<string | null>(null);
   return (
     <div className="flex items-center gap-2">
-      <Input type="number" aria-label={label} min={min} max={max} step={step} value={value} disabled={disabled} onChange={(e) => onChange(+e.target.value)} className="w-24" />
+      <Input
+        type="number"
+        aria-label={label}
+        min={min}
+        max={max}
+        step={step}
+        value={draft ?? value}
+        disabled={disabled}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          const n = parseNum(e.target.value, min, max);
+          if (n !== null) onChange(n);
+        }}
+        onBlur={() => setDraft(null)}
+        className="w-24"
+      />
       {unit && <span className="font-mono text-xs text-muted-foreground">{unit}</span>}
       {disabled && <EnvLock />}
     </div>
