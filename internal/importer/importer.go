@@ -201,6 +201,7 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 	}
 	existing := im.Existing(t, p.Season, p.Episodes)
 	var replace []string
+	var keeps string // a file left alone because it holds more episodes
 	for _, old := range existing {
 		if oi, err := os.Stat(old); err == nil && os.SameFile(si, oi) {
 			return Result{Path: old, Skipped: true, Reason: "already in the library"}, nil
@@ -213,7 +214,8 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 		}
 		if t.Kind == "tv" {
 			if extra := extraEpisodes(old, p.Season, p.Episodes); extra != "" {
-				return Result{Skipped: true, Reason: fmt.Sprintf("%s also holds %s; not replacing it", filepath.Base(old), extra)}, nil
+				keeps = fmt.Sprintf("%s also holds %s; not replacing it", filepath.Base(old), extra)
+				continue
 			}
 		}
 		oldRank := im.rankOf(old)
@@ -225,6 +227,9 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 			return Result{Skipped: true, Reason: filepath.Base(old) + " is already there and is as good or better"}, nil
 		}
 		replace = append(replace, old)
+	}
+	if keeps != "" && len(replace) == 0 {
+		return Result{Skipped: true, Reason: keeps}, nil
 	}
 
 	cand := Candidate{Title: t, Season: p.Season, Episodes: p.Episodes, Source: src, Dest: dest, Release: req.Release, Hash: req.Hash, Replacing: replace}

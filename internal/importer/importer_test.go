@@ -809,5 +809,20 @@ func TestImportKeepsBothFilesOfOneDownloadThatShareAnEpisode(t *testing.T) {
 				t.Errorf("order %v: %s is gone", order, n)
 			}
 		}
+		// A better E01 from another download replaces the single and
+		// leaves the pair, which still holds E02.
+		src := filepath.Join(dir, "dl2", "The.Show.S01E01.2160p.WEB-DL.mkv")
+		write(t, src, "uhd")
+		pl := Placement{Video: SourceFile{Rel: filepath.Base(src), Path: src}, Season: 1, Episodes: []int{1}}
+		res, err := im.Import(context.Background(), Request{Title: ti, Placement: pl, Release: "The.Show.S01E01.2160p.WEB-DL", Hash: "h2", Replace: true})
+		if err != nil || res.Skipped || len(res.Replaced) != 1 || filepath.Base(res.Replaced[0]) != "The Show - S01E01.mkv" {
+			t.Fatalf("order %v: upgrade: %+v %v", order, res, err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(season, "The Show - S01E01.mkv")); string(b) != "uhd" {
+			t.Errorf("order %v: E01 is %q, want the upgrade", order, b)
+		}
+		if _, err := os.Stat(filepath.Join(season, "The Show - S01E01-E02.mkv")); err != nil {
+			t.Errorf("order %v: the pair is gone", order)
+		}
 	}
 }
