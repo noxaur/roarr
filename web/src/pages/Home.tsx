@@ -390,13 +390,16 @@ export function Home({ kind }: { kind?: Kind }) {
   // ---------- context menu ----------
   const menuTargets = menuFor ? targetsOf(menuFor) : [];
   const menuOne = menuTargets.length === 1 ? menuTargets[0] : null;
-  // Right-click, Shift+F10 and a touch hold all open through here; a hold
-  // fires no contextmenu event, so the pressed poster comes from details.
-  const onMenuOpenChange = (open: boolean, details: { event?: Event }) => {
-    const el = open ? (details.event?.target as HTMLElement | null)?.closest<HTMLElement>("[data-sel]") : null;
+  // The menu is for the poster it opened on. A touch hold fires no
+  // contextmenu event, so opening reads it from the open event; a second
+  // right-click moves the open menu without opening it again, so the
+  // contextmenu event reads it too.
+  const menuTarget = (target: EventTarget | null | undefined) => {
+    const el = (target as HTMLElement | null)?.closest<HTMLElement>("[data-sel]");
     setMenuFor(el?.dataset.sel ?? null);
     if (el?.dataset.sel) setCursor(el.dataset.sel);
   };
+  const onMenuOpenChange = (open: boolean, details: { event?: Event }) => menuTarget(open ? details.event?.target : null);
 
   const titleMenu = (
     <>
@@ -623,7 +626,7 @@ export function Home({ kind }: { kind?: Kind }) {
       </div>
 
       <Menu onOpenChange={onMenuOpenChange}>
-        <MenuContextTrigger ref={shelf} onMouseDown={pointer.onMouseDown} className="min-h-[50vh] select-none">
+        <MenuContextTrigger ref={shelf} onMouseDown={pointer.onMouseDown} onContextMenuCapture={(e) => menuTarget(e.target)} className="min-h-[50vh] select-none">
           {!libraryLoaded ? (
             <Grid min={MIN[size]}>
               {Array.from({ length: 12 }, (_, i) => (
