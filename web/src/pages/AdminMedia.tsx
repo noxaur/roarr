@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { Field, LockedInput, Num, Segmented, Toggle } from "@/components/AdminFields";
 import { Bar, Dot, Figure, Notice, SameWidth, SectionHead, State, type Tone } from "@/components/kit";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 
 // Admin tabs for the media pipeline: who imports, the download checks, and
 // AV1 conversion. Each edits the shared settings copy; the page's save bar
@@ -305,16 +305,14 @@ function DaySelect({ value, onChange }: { value: number[]; onChange: (v: number[
   const custom = WEEK.filter((d) => value.includes(d.day))
     .map((d) => d.short)
     .join(" ");
+  const items = [...(set ? [] : [{ value: "custom", label: custom }]), ...DAY_SETS.map(([value, label]) => ({ value, label }))];
   return (
-    <Select value={set?.[0] ?? "custom"} onValueChange={(k) => onChange(DAY_SETS.find(([key]) => key === k)?.[2] ?? value)}>
-      <SelectTrigger aria-label="Days" className="h-9 w-32 bg-card">
-        <SelectValue />
-      </SelectTrigger>
+    <Select items={items} value={set?.[0] ?? "custom"} onValueChange={(k) => onChange(DAY_SETS.find(([key]) => key === k)?.[2] ?? value)}>
+      <SelectTrigger aria-label="Days" className="h-9 w-32 bg-card" />
       <SelectContent>
-        {!set && <SelectItem value="custom">{custom}</SelectItem>}
-        {DAY_SETS.map(([k, name]) => (
-          <SelectItem key={k} value={k}>
-            {name}
+        {items.map((i) => (
+          <SelectItem key={i.value} value={i.value}>
+            {i.label}
           </SelectItem>
         ))}
       </SelectContent>
@@ -325,10 +323,8 @@ function DaySelect({ value, onChange }: { value: number[]; onChange: (v: number[
 function TimeSelect({ label, value, times: base, onChange }: { label: string; value: string; times: string[]; onChange: (v: string) => void }) {
   const times = base.includes(value) ? base : [...base, value].sort();
   return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger aria-label={label} className="h-9 w-24 bg-card tabular">
-        <SelectValue />
-      </SelectTrigger>
+    <Select items={times} value={value} onValueChange={(v) => v && onChange(v)}>
+      <SelectTrigger aria-label={label} className="h-9 w-24 bg-card tabular" />
       <SelectContent className="max-h-72">
         {times.map((t) => (
           <SelectItem key={t} value={t} className="tabular">

@@ -1,30 +1,20 @@
-"use client"
-
-import * as React from "react"
 import { cn } from "@/lib/utils"
 import { CheckIcon } from "lucide-react"
-import { Checkbox as CheckboxPrimitive } from "radix-ui"
+import { Checkbox as CheckboxPrimitive, CheckboxIndicator } from "@ui-sdk/react/checkbox"
 
-function Checkbox({
-  className,
-  ...props
-}: React.ComponentProps<typeof CheckboxPrimitive.Root>) {
+function Checkbox({ className, ...props }: React.ComponentProps<typeof CheckboxPrimitive>) {
   return (
-    <CheckboxPrimitive.Root
-      data-slot="checkbox"
+    <CheckboxPrimitive
       className={cn(
-        "peer size-4 shrink-0 rounded-[2px] border border-muted-foreground/70 transition-shadow outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground dark:bg-input/30 dark:aria-invalid:ring-destructive/40 dark:data-[state=checked]:bg-primary",
+        "peer grid size-4 shrink-0 place-content-center rounded-[2px] border border-muted-foreground/70 transition-shadow outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-disabled:cursor-not-allowed data-disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground dark:bg-input/30 dark:aria-invalid:ring-destructive/40 dark:data-checked:bg-primary",
         className
       )}
       {...props}
     >
-      <CheckboxPrimitive.Indicator
-        data-slot="checkbox-indicator"
-        className="grid place-content-center text-current transition-none"
-      >
+      <CheckboxIndicator aria-hidden="true" className="grid place-content-center text-current">
         <CheckIcon className="size-3" strokeWidth={3} />
-      </CheckboxPrimitive.Indicator>
-    </CheckboxPrimitive.Root>
+      </CheckboxIndicator>
+    </CheckboxPrimitive>
   )
 }
 

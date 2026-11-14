@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogClose, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -39,6 +39,7 @@ export function useConfirm(): Ask {
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [req, setReq] = useState<ConfirmRequest | null>(null);
+  const [open, setOpen] = useState(false);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const resolve = useRef<(a: ConfirmAnswer | null) => void>(() => {});
 
@@ -46,27 +47,26 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     resolve.current(null);
     setChecked(Object.fromEntries((r.options ?? []).map((o) => [o.id, !!o.checked])));
     setReq(r);
+    setOpen(true);
     return new Promise((res) => (resolve.current = res));
   }, []);
 
   const finish = (a: ConfirmAnswer | null) => {
     resolve.current(a);
     resolve.current = () => {};
-    setReq(null);
+    setOpen(false);
   };
 
   return (
     <Ctx.Provider value={ask}>
       {children}
-      <AlertDialog open={!!req} onOpenChange={(o) => !o && finish(null)}>
+      <AlertDialog open={open} onOpenChange={(o) => !o && finish(null)}>
         {req && (
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle className="text-[20px] leading-7 font-semibold">{req.title}</AlertDialogTitle>
               {req.body && (
-                <AlertDialogDescription asChild>
-                  <div className="space-y-2 leading-relaxed">{req.body}</div>
-                </AlertDialogDescription>
+                <AlertDialogDescription render={<div className="space-y-2 leading-relaxed" />}>{req.body}</AlertDialogDescription>
               )}
             </AlertDialogHeader>
             {req.options && req.options.length > 0 && (
@@ -83,13 +83,13 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               </div>
             )}
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
               {req.alt && (
                 <Button variant="outline" onClick={() => finish({ action: "alt", checked })}>
                   {req.alt}
                 </Button>
               )}
-              <Button variant={req.danger ? "destructive" : "default"} autoFocus onClick={() => finish({ action: "confirm", checked })}>
+              <Button variant={req.danger ? "destructive" : "default"} onClick={() => finish({ action: "confirm", checked })}>
                 {req.confirm}
               </Button>
             </AlertDialogFooter>

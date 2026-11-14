@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Command as CommandPrimitive } from "cmdk";
+import {
+  Command as CommandRoot,
+  CommandEmpty,
+  CommandGroup,
+  CommandGroupLabel,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@ui-sdk/react/command";
 import { Download, Search } from "lucide-react";
 import { api, type DiscoverItem, type LibraryItem } from "@/lib/api";
 import { autoGet } from "@/lib/actions";
@@ -120,10 +128,16 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      onOpenChange(false);
+      return;
+    }
     if (e.key !== "Enter" || !(e.metaKey || e.ctrlKey)) return;
     const row = [...rows.a, ...rows.b].find((r) => r.key === selected);
     if (row && canGet(row.remote)) {
       e.preventDefault();
+      e.stopPropagation();
       get(row);
     }
   };
@@ -139,23 +153,33 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
       <DialogContent showCloseButton={false} className="top-[12vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-[680px]">
         <DialogTitle className="sr-only">Search</DialogTitle>
         <DialogDescription className="sr-only">Search your library and everything on TMDB</DialogDescription>
-        <CommandPrimitive shouldFilter={false} loop value={selected} onValueChange={setSelected} onKeyDown={onKeyDown} className="flex flex-col">
+        <CommandRoot
+          filter={false}
+          loop
+          query={q}
+          onQueryChange={setQ}
+          value={selected}
+          onValueChange={(v) => setSelected(v ?? "")}
+          status={loading ? "loading" : "idle"}
+          onKeyDownCapture={onKeyDown}
+          className="flex flex-col"
+        >
           <div className="flex h-12 items-center gap-3 border-b px-4">
-            <Search className="size-5 shrink-0 text-muted-foreground" />
-            <CommandPrimitive.Input
-              value={q}
-              onValueChange={setQ}
+            <Search className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <CommandInput
+              aria-label="Search"
               placeholder="Find a show or movie"
               className="h-full flex-1 bg-transparent text-[16px] outline-none placeholder:text-muted-foreground/70"
             />
             {loading && <Spinner label="Searching" />}
           </div>
-          <CommandPrimitive.List className="max-h-[min(60vh,520px)] overflow-y-auto p-2">
-            {term.length > 0 && !loading && rows.a.length + rows.b.length + cmds.length === 0 && (
-              <CommandPrimitive.Empty className="px-3 py-8 text-center text-sm text-muted-foreground">{error ?? `No match for “${term}”.`}</CommandPrimitive.Empty>
-            )}
+          <CommandEmpty className="empty:hidden px-3 py-8 text-center text-sm text-muted-foreground">
+            {(s) => (s.empty && term.length > 0 && !loading ? (error ?? `No match for “${term}”.`) : null)}
+          </CommandEmpty>
+          <CommandList className="max-h-[min(60vh,520px)] overflow-y-auto p-2">
             {rows.a.length > 0 && (
-              <CommandPrimitive.Group heading="In the library" className="pb-2 **:[[cmdk-group-heading]]:label-caps **:[[cmdk-group-heading]]:px-3 **:[[cmdk-group-heading]]:py-2">
+              <CommandGroup className="pb-2">
+                <CommandGroupLabel className="label-caps px-3 py-2">In the library</CommandGroupLabel>
                 {rows.a.map((row) => {
                   const it = row.lib!;
                   return (
@@ -165,10 +189,11 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
                     </Item>
                   );
                 })}
-              </CommandPrimitive.Group>
+              </CommandGroup>
             )}
             {rows.b.length > 0 && (
-              <CommandPrimitive.Group heading="Not in the library" className="**:[[cmdk-group-heading]]:label-caps **:[[cmdk-group-heading]]:px-3 **:[[cmdk-group-heading]]:py-2">
+              <CommandGroup>
+                <CommandGroupLabel className="label-caps px-3 py-2">Not in the library</CommandGroupLabel>
                 {rows.b.map((row) => {
                   const r = row.remote!;
                   return (
@@ -197,19 +222,20 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
                     </Item>
                   );
                 })}
-              </CommandPrimitive.Group>
+              </CommandGroup>
             )}
             {cmds.length > 0 && (
-              <CommandPrimitive.Group heading="Go to" className="**:[[cmdk-group-heading]]:label-caps **:[[cmdk-group-heading]]:px-3 **:[[cmdk-group-heading]]:py-2">
+              <CommandGroup>
+                <CommandGroupLabel className="label-caps px-3 py-2">Go to</CommandGroupLabel>
                 {cmds.map((c) => (
                   <Item key={c.id} value={`cmd:${c.id}`} onSelect={() => runCmd(c)}>
                     <span className="flex-1 text-sm">{c.label}</span>
                   </Item>
                 ))}
-              </CommandPrimitive.Group>
+              </CommandGroup>
             )}
-          </CommandPrimitive.List>
-        </CommandPrimitive>
+          </CommandList>
+        </CommandRoot>
       </DialogContent>
     </Dialog>
   );
@@ -217,13 +243,13 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
 
 function Item({ value, onSelect, children }: { value: string; onSelect: () => void; children: React.ReactNode }) {
   return (
-    <CommandPrimitive.Item
+    <CommandItem
       value={value}
       onSelect={onSelect}
-      className="flex min-h-12 cursor-pointer items-center gap-4 rounded-[2px] px-3 py-2 outline-none data-[selected=true]:bg-accent"
+      className="flex min-h-12 cursor-pointer items-center gap-4 rounded-[2px] px-3 py-2 outline-none data-highlighted:bg-accent"
     >
       {children}
-    </CommandPrimitive.Item>
+    </CommandItem>
   );
 }
 

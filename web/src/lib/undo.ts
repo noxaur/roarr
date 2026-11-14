@@ -1,4 +1,4 @@
-import { toast } from "sonner";
+import { toast } from "@ui-sdk/react/toast";
 
 // A short history of reversible changes. ⌘Z (wired in App) or the toast's
 // Undo button runs the most recent one.
@@ -18,7 +18,7 @@ export function done(label: string, undo: Entry["undo"]) {
   toast.success(label, {
     action: {
       label: "Undo",
-      onClick: () => {
+      onAction: () => {
         const i = stack.indexOf(entry);
         if (i >= 0) stack.splice(i, 1);
         entry.undo();

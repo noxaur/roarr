@@ -1,5 +1,5 @@
 import { Ban, Copy, ExternalLink, ListChecks, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@ui-sdk/react/toast";
 import { api, type ActivityItem, type VerifyRecord } from "@/lib/api";
 import { errText } from "@/lib/actions";
 import { copyText } from "@/lib/copy";
@@ -8,7 +8,8 @@ import { Link, useRouter } from "@/lib/router";
 import { needsYou, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { byHash, forActivity, headline, hrefOf, isBlocking, orphans } from "@/lib/verify";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Menu, MenuContextTrigger } from "@ui-sdk/react/menu";
+import { MenuContent, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/menu";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Bar } from "./kit";
 import { useConfirm } from "./Confirm";
@@ -85,68 +86,66 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
     const rec = failedCheck(a);
     const bad = needsYou(a) || !!rec;
     return (
-      <ContextMenu key={a.id}>
-        <ContextMenuTrigger asChild>
-          <div className="rounded-[2px] bg-card p-3">
-            <div className="flex items-baseline gap-2">
-              <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-                {a.title}
-                {a.subtitle && <span className="font-mono text-[12px] font-normal text-muted-foreground"> {a.subtitle}</span>}
-              </span>
-              <span className={cn("font-mono text-[11px]", bad ? "text-bad" : a.status === "downloading" ? "text-live" : "text-muted-foreground")}>
-                {rec ? "failed check" : a.status === "warning" ? "stuck" : a.status}
-              </span>
-            </div>
-            <Bar label={a.title} className="mt-3" value={a.progress} segments={24} stretch tone={bad ? "bad" : "live"} />
-            <div className="meta mt-2 flex justify-between font-mono tabular">
-              <span>
-                {pct(a.progress)} of {bytes(a.size)}
-              </span>
-              <span className="truncate pl-3">{rec ? "" : bad ? (a.messages?.[0] ?? "") : [speed(a.speed), a.eta].filter(Boolean).join(", ")}</span>
-            </div>
-            {rec && (
-              <>
-                <div className="mt-2 text-[12px] leading-snug text-bad">{headline(rec)}</div>
-                <VerdictActions r={rec} size="xs" className="mt-3" />
-              </>
-            )}
-            {bad && !rec && a.href && (
-              <button onClick={() => go(withPick(a.href!))} className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[12px] font-medium underline-offset-4 hover:underline">
-                Pick release manually
-              </button>
-            )}
+      <Menu key={a.id}>
+        <MenuContextTrigger render={<div className="rounded-[2px] bg-card p-3" />}>
+          <div className="flex items-baseline gap-2">
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+              {a.title}
+              {a.subtitle && <span className="font-mono text-[12px] font-normal text-muted-foreground"> {a.subtitle}</span>}
+            </span>
+            <span className={cn("font-mono text-[11px]", bad ? "text-bad" : a.status === "downloading" ? "text-live" : "text-muted-foreground")}>
+              {rec ? "failed check" : a.status === "warning" ? "stuck" : a.status}
+            </span>
           </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent className="w-60">
-          <ContextMenuLabel className="truncate text-xs font-normal text-muted-foreground">{a.title}</ContextMenuLabel>
+          <Bar label={a.title} className="mt-3" value={a.progress} segments={24} stretch tone={bad ? "bad" : "live"} />
+          <div className="meta mt-2 flex justify-between font-mono tabular">
+            <span>
+              {pct(a.progress)} of {bytes(a.size)}
+            </span>
+            <span className="truncate pl-3">{rec ? "" : bad ? (a.messages?.[0] ?? "") : [speed(a.speed), a.eta].filter(Boolean).join(", ")}</span>
+          </div>
+          {rec && (
+            <>
+              <div className="mt-2 text-[12px] leading-snug text-bad">{headline(rec)}</div>
+              <VerdictActions r={rec} size="xs" className="mt-3" />
+            </>
+          )}
+          {bad && !rec && a.href && (
+            <button onClick={() => go(withPick(a.href!))} className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[12px] font-medium underline-offset-4 hover:underline">
+              Pick release manually
+            </button>
+          )}
+        </MenuContextTrigger>
+        <MenuContent className="w-60">
+          <MenuLabel className="truncate text-xs font-normal text-muted-foreground">{a.title}</MenuLabel>
           {a.href && (
-            <ContextMenuItem onSelect={() => go(a.href!)}>
+            <MenuItem onSelect={() => go(a.href!)}>
               <ExternalLink /> Open title
-            </ContextMenuItem>
+            </MenuItem>
           )}
           {a.href && (
-            <ContextMenuItem onSelect={() => go(withPick(a.href!))}>
+            <MenuItem onSelect={() => go(withPick(a.href!))}>
               <ListChecks /> Pick release manually
-            </ContextMenuItem>
+            </MenuItem>
           )}
-          <ContextMenuItem onSelect={() => copyText(a.release, "Copied release name")}>
+          <MenuItem onSelect={() => copyText(a.release, "Copied release name")}>
             <Copy /> Copy release name
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onSelect={() => remove(a, false)}>
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem onSelect={() => remove(a, false)}>
             <Trash2 /> Remove
-          </ContextMenuItem>
-          <ContextMenuItem variant="destructive" onSelect={() => remove(a, true)}>
+          </MenuItem>
+          <MenuItem destructive onSelect={() => remove(a, true)}>
             <Ban /> Remove and blocklist
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+          </MenuItem>
+        </MenuContent>
+      </Menu>
     );
   };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" data-downloads className="w-full gap-0 p-0 sm:max-w-[400px]">
+      <SheetContent data-downloads className="w-full gap-0 p-0 sm:max-w-[400px]">
         <SheetHeader className="border-b px-4 py-4">
           <SheetTitle className="text-[14px] font-medium">Downloads</SheetTitle>
           <SheetDescription className="font-mono text-[12px]">{total ? speed(total) : "idle"}</SheetDescription>

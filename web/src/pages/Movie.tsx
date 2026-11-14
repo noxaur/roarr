@@ -13,7 +13,7 @@ import { forMovie, isBlocking, isFlagged } from "@/lib/verify";
 import { useSearch } from "@/lib/useSearch";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { MenuItem } from "@/components/ui/menu";
 import { Dot, Notice, SectionHead, Spec, State } from "@/components/kit";
 import { useConfirm } from "@/components/Confirm";
 import { FileFacts, ManageMenu } from "@/components/Manage";
@@ -255,15 +255,15 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
             actions={
               d.inLibrary && (
                 <ManageMenu kind="movie" id={d.id} title={d.title} monitored={d.monitored} profileId={d.qualityProfileId} path={d.path} onChanged={changed}>
-                    <DropdownMenuItem disabled={!d.hasFile} onSelect={() => replaceNow()}>
+                    <MenuItem disabled={!d.hasFile} onSelect={() => replaceNow()}>
                       <RefreshCw /> Replace
-                    </DropdownMenuItem>
-                    <DropdownMenuItem disabled={!d.hasFile} onSelect={() => replace(true)}>
+                    </MenuItem>
+                    <MenuItem disabled={!d.hasFile} onSelect={() => replace(true)}>
                       <ListChecks /> Replace, pick release manually
-                    </DropdownMenuItem>
-                    <DropdownMenuItem variant="destructive" disabled={!d.hasFile} onSelect={deleteFile}>
+                    </MenuItem>
+                    <MenuItem destructive disabled={!d.hasFile} onSelect={deleteFile}>
                       <Trash2 /> Delete file
-                    </DropdownMenuItem>
+                    </MenuItem>
                   </ManageMenu>
               )
             }

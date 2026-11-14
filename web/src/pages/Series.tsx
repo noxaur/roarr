@@ -15,8 +15,8 @@ import { forEpisode, isBlocking, isFlagged } from "@/lib/verify";
 import { useSearch } from "@/lib/useSearch";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { Menu, MenuContextTrigger } from "@ui-sdk/react/menu";
+import { MenuContent, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/menu";
 import { Bar, Notice, SameWidth, Spec, State } from "@/components/kit";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useConfirm } from "@/components/Confirm";
@@ -402,67 +402,67 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
   };
 
   // One episode's actions, shared by its ⋯ menu and its right-click menu.
-  const epMenu = (e: EpisodeDetail, C: MenuParts) => {
+  const epMenu = (e: EpisodeDetail) => {
     const code = label(e.id);
     return (
       <>
-        <C.Label className="font-mono text-[11px] font-normal">
+        <MenuLabel className="font-mono text-[11px] font-normal">
           {code}
           {e.file && <span className="mt-1 block break-all text-muted-foreground">{e.file.path}</span>}
-        </C.Label>
+        </MenuLabel>
         {checks.has(e.id) && (
           <>
-            <C.Item onSelect={() => verdict.regrab(checks.get(e.id)!)}>
+            <MenuItem onSelect={() => verdict.regrab(checks.get(e.id)!)}>
               <RotateCcw /> Re-grab
-            </C.Item>
-            <C.Item onSelect={() => verdict.recheck(checks.get(e.id)!)}>
+            </MenuItem>
+            <MenuItem onSelect={() => verdict.recheck(checks.get(e.id)!)}>
               <RefreshCw /> Re-check
-            </C.Item>
-            <C.Item onSelect={() => verdict.keep(checks.get(e.id)!)}>
+            </MenuItem>
+            <MenuItem onSelect={() => verdict.keep(checks.get(e.id)!)}>
               <ShieldCheck /> Keep anyway
-            </C.Item>
-            <C.Sep />
+            </MenuItem>
+            <MenuSeparator />
           </>
         )}
         {e.hasFile ? (
           <>
-            <C.Item onSelect={() => replace([e.id])}>
+            <MenuItem onSelect={() => replace([e.id])}>
               <RefreshCw /> Replace
-            </C.Item>
-            <C.Item onSelect={() => replace([e.id], true)}>
+            </MenuItem>
+            <MenuItem onSelect={() => replace([e.id], true)}>
               <ListChecks /> Replace, pick release manually
-            </C.Item>
+            </MenuItem>
           </>
         ) : (
           <>
-            <C.Item onSelect={() => getNow([e.id])}>
+            <MenuItem onSelect={() => getNow([e.id])}>
               <Download /> Get
-            </C.Item>
-            <C.Item onSelect={() => choose([e.id])}>
+            </MenuItem>
+            <MenuItem onSelect={() => choose([e.id])}>
               <ListChecks /> Pick release manually
-            </C.Item>
+            </MenuItem>
           </>
         )}
         {lib && (
-          <C.Item onSelect={() => episodesDo("search", [e.id], "Asking Sonarr…")}>
+          <MenuItem onSelect={() => episodesDo("search", [e.id], "Asking Sonarr…")}>
             <Radar /> Sonarr search
-          </C.Item>
+          </MenuItem>
         )}
-        <C.Sep />
-        <C.Item onSelect={() => toggle(e)}>
+        <MenuSeparator />
+        <MenuItem onSelect={() => toggle(e)}>
           <Check /> {sel.has(e.id) && scope === "custom" ? "Deselect" : "Select"}
-        </C.Item>
+        </MenuItem>
         {lib && (
-          <C.Item onSelect={() => setMonitored([e.id], !isMon(e))}>
+          <MenuItem onSelect={() => setMonitored([e.id], !isMon(e))}>
             <Bookmark /> {isMon(e) ? "Unmonitor" : "Monitor"}
-          </C.Item>
+          </MenuItem>
         )}
         {e.hasFile && (
           <>
-            <C.Sep />
-            <C.Item variant="destructive" onSelect={() => deleteFiles([e.id])}>
+            <MenuSeparator />
+            <MenuItem destructive onSelect={() => deleteFiles([e.id])}>
               <Trash2 /> Delete file
-            </C.Item>
+            </MenuItem>
           </>
         )}
       </>
@@ -470,36 +470,36 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
   };
 
   // Actions for every ticked episode, when one of several is right-clicked.
-  const bulkMenu = (C: MenuParts) => (
+  const bulkMenu = () => (
     <>
-      <C.Label className="text-xs font-normal text-muted-foreground">{plural(tickedArr.length, "episode")} selected</C.Label>
+      <MenuLabel className="text-xs font-normal text-muted-foreground">{plural(tickedArr.length, "episode")} selected</MenuLabel>
       {tickedMissing.length > 0 && (
-        <C.Item onSelect={() => getNow(tickedMissing)}>
+        <MenuItem onSelect={() => getNow(tickedMissing)}>
           <Download /> Get {plural(tickedMissing.length, "missing episode")}
-        </C.Item>
+        </MenuItem>
       )}
-      <C.Item onSelect={() => setSheet(true)}>
+      <MenuItem onSelect={() => setSheet(true)}>
         <ListChecks /> Pick releases manually
-      </C.Item>
+      </MenuItem>
       {lib && tickedOnDisk.length > 0 && (
-        <C.Item onSelect={() => replace(tickedOnDisk.map((e) => e.id))}>
+        <MenuItem onSelect={() => replace(tickedOnDisk.map((e) => e.id))}>
           <RefreshCw /> Replace {plural(tickedOnDisk.length, "file")}
-        </C.Item>
+        </MenuItem>
       )}
       {lib && (
-        <C.Item onSelect={() => setMonitored(tickedArr, !allMon)}>
+        <MenuItem onSelect={() => setMonitored(tickedArr, !allMon)}>
           <Bookmark /> {allMon ? "Unmonitor" : "Monitor"}
-        </C.Item>
+        </MenuItem>
       )}
-      <C.Item onSelect={clearTicks}>
+      <MenuItem onSelect={clearTicks}>
         <Check /> Deselect all
-      </C.Item>
+      </MenuItem>
       {lib && tickedOnDisk.length > 0 && (
         <>
-          <C.Sep />
-          <C.Item variant="destructive" onSelect={() => deleteFiles(tickedArr)}>
+          <MenuSeparator />
+          <MenuItem destructive onSelect={() => deleteFiles(tickedArr)}>
             <Trash2 /> Delete {plural(tickedOnDisk.length, "file")}
-          </C.Item>
+          </MenuItem>
         </>
       )}
     </>
@@ -577,9 +577,9 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
             actions={
               lib && (
                 <ManageMenu kind="tv" id={d.id} title={d.title} monitored={d.monitored} profileId={d.qualityProfileId} path={d.path} onChanged={changed}>
-                  <DropdownMenuItem disabled={have === 0} onSelect={() => deleteFiles(allEps.filter((e) => e.hasFile).map((e) => e.id))}>
+                  <MenuItem disabled={have === 0} onSelect={() => deleteFiles(allEps.filter((e) => e.hasFile).map((e) => e.id))}>
                     <Trash2 /> Delete every file
-                  </DropdownMenuItem>
+                  </MenuItem>
                 </ManageMenu>
               )
             }
@@ -642,26 +642,26 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                       <>
                         <MonitorToggle on={seasonMon} label={seasonName} onToggle={() => setSeasonMonitored(s.number, !seasonMon)} />
                         <RowMenu label={`${seasonName} actions`}>
-                          <DropdownMenuLabel className="font-mono text-[11px] font-normal text-muted-foreground">
+                          <MenuLabel className="font-mono text-[11px] font-normal text-muted-foreground">
                             {seasonName}
                             {seasonSize ? `, ${bytes(seasonSize)}` : ""}
-                          </DropdownMenuLabel>
-                          <DropdownMenuItem disabled={aired.length === 0} onSelect={() => tickOnly(aired.map((e) => e.id))}>
+                          </MenuLabel>
+                          <MenuItem disabled={aired.length === 0} onSelect={() => tickOnly(aired.map((e) => e.id))}>
                             <ListChecks /> Select only this season
-                          </DropdownMenuItem>
-                          <DropdownMenuItem disabled={seasonMissing.length === 0} onSelect={() => getNow(seasonMissing)}>
+                          </MenuItem>
+                          <MenuItem disabled={seasonMissing.length === 0} onSelect={() => getNow(seasonMissing)}>
                             <Download /> Get the missing
-                          </DropdownMenuItem>
-                          <DropdownMenuItem disabled={haveS === 0} onSelect={() => replace(aired.map((e) => e.id))}>
+                          </MenuItem>
+                          <MenuItem disabled={haveS === 0} onSelect={() => replace(aired.map((e) => e.id))}>
                             <RefreshCw /> Replace the season
-                          </DropdownMenuItem>
-                          <DropdownMenuItem disabled={seasonMissing.length === 0} onSelect={() => episodesDo("search", seasonMissing, "Asking Sonarr…")}>
+                          </MenuItem>
+                          <MenuItem disabled={seasonMissing.length === 0} onSelect={() => episodesDo("search", seasonMissing, "Asking Sonarr…")}>
                             <Radar /> Sonarr search
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem variant="destructive" disabled={haveS === 0} onSelect={() => deleteFiles(s.episodes.map((e) => e.id))}>
+                          </MenuItem>
+                          <MenuSeparator />
+                          <MenuItem destructive disabled={haveS === 0} onSelect={() => deleteFiles(s.episodes.map((e) => e.id))}>
                             <Trash2 /> Delete season files
-                          </DropdownMenuItem>
+                          </MenuItem>
                         </RowMenu>
                       </>
                     )}
@@ -719,65 +719,64 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                         const st = swept ? "live" : epState(e);
                         const live = liveOf.get(epCode(e.season, e.number));
                         return (
-                          <ContextMenu key={e.id}>
-                            <ContextMenuTrigger asChild disabled={!e.aired}>
-                              <div
-                                data-sel={e.aired ? String(e.id) : undefined}
-                                onClick={(ev) => {
-                                  if (pointer.swallowClick()) return;
-                                  if (e.aired) toggle(e, ev.shiftKey);
-                                }}
-                                className={cn(
-                                  "group flex h-10 cursor-pointer items-center gap-4 border-b pr-1 pl-2 select-none hover:bg-card",
-                                  on && "bg-card",
-                                  !e.aired && "cursor-default",
-                                )}
-                              >
-                                <Checkbox checked={on} disabled={!e.aired} tabIndex={-1} aria-label={`Select ${code}`} className="pointer-events-none" />
-                                <span className="w-8 shrink-0 font-mono text-[12px] text-muted-foreground tabular">
-                                  {e.absolute && d.anime ? `#${e.absolute}` : `E${pad(e.number)}`}
-                                </span>
-                                <span className={cn("min-w-0 flex-1 truncate text-[14px]", !e.aired && "text-muted-foreground")}>{e.title}</span>
-                                {checks.has(e.id) && <VerdictBadge r={checks.get(e.id)!} />}
-                                {e.file && converting.get(baseName(e.file.path)) && (
-                                  <Spec tone="live" className="hidden sm:inline-flex" title="Converting to AV1">
-                                    {jobTag(converting.get(baseName(e.file.path))!)}
-                                  </Spec>
-                                )}
-                                <span className="flex items-center gap-2 font-mono text-[12px] whitespace-nowrap text-muted-foreground tabular">
-                                  {st === "have" ? (
-                                    e.file ? bytes(e.file.size) : "on disk"
-                                  ) : st === "live" ? (
-                                    <span className="flex items-center gap-2 text-live">
-                                      {live ? (
-                                        <>
-                                          <Bar label="Downloading" value={live.progress} segments={8} className="hidden sm:flex" />
-                                          {pct(live.progress)}
-                                          {live.eta && <span className="opacity-60">·</span>}
-                                          {live.eta}
-                                        </>
-                                      ) : (
-                                        "downloading"
-                                      )}
-                                    </span>
-                                  ) : st === "miss" ? (
-                                    <span className="text-miss">missing</span>
-                                  ) : (
-                                    (e.airDate ?? "TBA")
-                                  )}
-                                </span>
-                                {lib && <MonitorToggle on={isMon(e)} label={code} onToggle={() => setMonitored([e.id], !isMon(e))} />}
-                                {e.aired ? (
-                                  <RowMenu label={`${code} actions`} className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100">
-                                    {epMenu(e, DM)}
-                                  </RowMenu>
+                          <Menu key={e.id}>
+                            <MenuContextTrigger
+                              disabled={!e.aired}
+                              data-sel={e.aired ? String(e.id) : undefined}
+                              onClick={(ev) => {
+                                if (pointer.swallowClick()) return;
+                                if (e.aired) toggle(e, ev.shiftKey);
+                              }}
+                              className={cn(
+                                "group flex h-10 cursor-pointer items-center gap-4 border-b pr-1 pl-2 select-none hover:bg-card",
+                                on && "bg-card",
+                                !e.aired && "cursor-default",
+                              )}
+                            >
+                              <Checkbox checked={on} disabled={!e.aired} tabIndex={-1} aria-label={`Select ${code}`} className="pointer-events-none" />
+                              <span className="w-8 shrink-0 font-mono text-[12px] text-muted-foreground tabular">
+                                {e.absolute && d.anime ? `#${e.absolute}` : `E${pad(e.number)}`}
+                              </span>
+                              <span className={cn("min-w-0 flex-1 truncate text-[14px]", !e.aired && "text-muted-foreground")}>{e.title}</span>
+                              {checks.has(e.id) && <VerdictBadge r={checks.get(e.id)!} />}
+                              {e.file && converting.get(baseName(e.file.path)) && (
+                                <Spec tone="live" className="hidden sm:inline-flex" title="Converting to AV1">
+                                  {jobTag(converting.get(baseName(e.file.path))!)}
+                                </Spec>
+                              )}
+                              <span className="flex items-center gap-2 font-mono text-[12px] whitespace-nowrap text-muted-foreground tabular">
+                                {st === "have" ? (
+                                  e.file ? bytes(e.file.size) : "on disk"
+                                ) : st === "live" ? (
+                                  <span className="flex items-center gap-2 text-live">
+                                    {live ? (
+                                      <>
+                                        <Bar label="Downloading" value={live.progress} segments={8} className="hidden sm:flex" />
+                                        {pct(live.progress)}
+                                        {live.eta && <span className="opacity-60">·</span>}
+                                        {live.eta}
+                                      </>
+                                    ) : (
+                                      "downloading"
+                                    )}
+                                  </span>
+                                ) : st === "miss" ? (
+                                  <span className="text-miss">missing</span>
                                 ) : (
-                                  <span className="w-8 shrink-0" />
+                                  (e.airDate ?? "TBA")
                                 )}
-                              </div>
-                            </ContextMenuTrigger>
-                            <ContextMenuContent className="w-64">{tickedKeys.has(String(e.id)) && tickedArr.length > 1 ? bulkMenu(CM) : epMenu(e, CM)}</ContextMenuContent>
-                          </ContextMenu>
+                              </span>
+                              {lib && <MonitorToggle on={isMon(e)} label={code} onToggle={() => setMonitored([e.id], !isMon(e))} />}
+                              {e.aired ? (
+                                <RowMenu label={`${code} actions`} className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-open:opacity-100">
+                                  {epMenu(e)}
+                                </RowMenu>
+                              ) : (
+                                <span className="w-8 shrink-0" />
+                              )}
+                            </MenuContextTrigger>
+                            <MenuContent className="w-64">{tickedKeys.has(String(e.id)) && tickedArr.length > 1 ? bulkMenu() : epMenu(e)}</MenuContent>
+                          </Menu>
                         );
                       })}
                     </div>
@@ -858,6 +857,3 @@ function rangeLabel(codes: string[]): string {
   return `${codes[0]}–${codes[codes.length - 1]}`;
 }
 
-type MenuParts = { Item: typeof DropdownMenuItem | typeof ContextMenuItem; Label: typeof DropdownMenuLabel | typeof ContextMenuLabel; Sep: typeof DropdownMenuSeparator | typeof ContextMenuSeparator };
-const DM: MenuParts = { Item: DropdownMenuItem, Label: DropdownMenuLabel, Sep: DropdownMenuSeparator };
-const CM: MenuParts = { Item: ContextMenuItem, Label: ContextMenuLabel, Sep: ContextMenuSeparator };

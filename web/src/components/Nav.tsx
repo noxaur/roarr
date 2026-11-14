@@ -6,7 +6,8 @@ import { Link, useRouter } from "@/lib/router";
 import { useShell } from "@/lib/shell";
 import { forgetLocalCopy, isActive, problemCount, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Menu, MenuTrigger } from "@ui-sdk/react/menu";
+import { MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuShortcut } from "@/components/ui/menu";
 import { totalSpeed } from "./Downloads";
 import { Bar, Kbd } from "./kit";
 import { Mark } from "./Mark";
@@ -112,33 +113,31 @@ export function Nav({ authMode }: { authMode: string }) {
             <Bar label="Downloads" value={progress} segments={8} className="h-3" tone={problems ? "bad" : "live"} />
             <span className="ml-auto font-mono text-[12px] text-muted-foreground tabular">{rate ? speed(rate) : active.length ? "queued" : "idle"}</span>
           </button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="group flex h-6 cursor-pointer items-center gap-3 rounded-[2px] px-3 text-left text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
-                <span className="grid size-6 place-items-center rounded-[2px] bg-accent text-[12px] font-semibold text-foreground uppercase">{name.slice(0, 1)}</span>
-                <span className="min-w-0 flex-1 truncate">{name}</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" className="w-52">
+          <Menu>
+            <MenuTrigger className="group flex h-6 cursor-pointer items-center gap-3 rounded-[2px] px-3 text-left text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
+              <span className="grid size-6 place-items-center rounded-[2px] bg-accent text-[12px] font-semibold text-foreground uppercase">{name.slice(0, 1)}</span>
+              <span className="min-w-0 flex-1 truncate">{name}</span>
+            </MenuTrigger>
+            <MenuContent side="top" align="start" className="w-52">
               {authMode !== "none" && (
                 <>
-                  <DropdownMenuLabel className="font-normal">
+                  <MenuLabel className="font-normal">
                     <div className="meta">Signed in as</div>
                     <div className="mt-1 truncate font-medium">{user ?? "you"}</div>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
+                  </MenuLabel>
+                  <MenuSeparator />
                 </>
               )}
-              <DropdownMenuItem onSelect={openShortcuts}>
-                <Keyboard /> Shortcuts <DropdownMenuShortcut>?</DropdownMenuShortcut>
-              </DropdownMenuItem>
+              <MenuItem onSelect={openShortcuts}>
+                <Keyboard /> Shortcuts <MenuShortcut>?</MenuShortcut>
+              </MenuItem>
               {authMode !== "none" && (
-                <DropdownMenuItem onSelect={() => api.logout().then(() => (forgetLocalCopy(), location.reload()))}>
+                <MenuItem onSelect={() => api.logout().then(() => (forgetLocalCopy(), location.reload()))}>
                   <LogOut /> Sign out
-                </DropdownMenuItem>
+                </MenuItem>
               )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+            </MenuContent>
+          </Menu>
         </div>
       </aside>
 

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Ban, ExternalLink, ListChecks, MoreHorizontal, RefreshCw, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@ui-sdk/react/toast";
 import { api, type ActivityItem, type VerifyRecord, type WatchJob } from "@/lib/api";
 import { autoGet, errText } from "@/lib/actions";
 import { bytes, epCode, pct, speed } from "@/lib/format";
@@ -10,7 +10,8 @@ import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { byHash, forActivity, headline, hrefOf, isBlocking, isFlagged, orphans } from "@/lib/verify";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Menu, MenuTrigger } from "@ui-sdk/react/menu";
+import { MenuContent, MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { useConfirm } from "@/components/Confirm";
 import { Bar, Dot, Empty, Notice, PageHeader, SectionHead } from "@/components/kit";
 import { VerdictActions, VerdictBadge, VerdictChecks } from "@/components/Verdict";
@@ -143,35 +144,33 @@ function Row({ a, rec, attention, onRemove, onRetry }: { a: ActivityItem; rec?: 
     a.title
   );
   const menu = (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={`More for ${a.title}`}>
-          <MoreHorizontal />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
+    <Menu>
+      <MenuTrigger render={<Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={`More for ${a.title}`} />}>
+        <MoreHorizontal />
+      </MenuTrigger>
+      <MenuContent align="end" className="w-60">
         {a.href && (
-          <DropdownMenuItem onSelect={() => navigate(a.href!)}>
+          <MenuItem onSelect={() => navigate(a.href!)}>
             <ExternalLink /> Open title
-          </DropdownMenuItem>
+          </MenuItem>
         )}
         {a.href && (
-          <DropdownMenuItem onSelect={() => navigate(withPick(a.href!))}>
+          <MenuItem onSelect={() => navigate(withPick(a.href!))}>
             <ListChecks /> Pick release manually
-          </DropdownMenuItem>
+          </MenuItem>
         )}
-        <DropdownMenuItem onSelect={onRetry}>
+        <MenuItem onSelect={onRetry}>
           <RefreshCw /> Blocklist and pick again
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => onRemove(false)}>
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem onSelect={() => onRemove(false)}>
           <Trash2 /> Remove
-        </DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onSelect={() => onRemove(true)}>
+        </MenuItem>
+        <MenuItem destructive onSelect={() => onRemove(true)}>
           <Ban /> Remove and blocklist
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </MenuItem>
+      </MenuContent>
+    </Menu>
   );
 
   return (

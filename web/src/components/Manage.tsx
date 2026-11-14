@@ -7,20 +7,8 @@ import { useRouter } from "@/lib/router";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Menu, MenuRadioGroup, MenuSub, MenuTrigger } from "@ui-sdk/react/menu";
+import { MenuCheckboxItem, MenuContent, MenuItem, MenuLabel, MenuRadioItem, MenuSeparator, MenuSubContent, MenuSubTrigger } from "@/components/ui/menu";
 import { useConfirm } from "./Confirm";
 
 /** A labelled list of a file's properties, for a title's "on disk" card. */
@@ -116,85 +104,85 @@ export function ManageMenu({
   };
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label={`Manage ${title}`} title="Manage" className="text-muted-foreground data-[state=open]:bg-accent">
-          <Settings2 />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
-        <DropdownMenuCheckboxItem checked={monitored} onCheckedChange={(v) => patch({ monitored: v }, v ? "Monitored" : "Not monitored")}>
+    <Menu open={open} onOpenChange={setOpen}>
+      <MenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`Manage ${title}`} title="Manage" className="text-muted-foreground data-open:bg-accent" />}>
+        <Settings2 />
+      </MenuTrigger>
+      <MenuContent align="start" className="w-64">
+        <MenuCheckboxItem value="monitored" checked={monitored} onCheckedChange={(v) => patch({ monitored: v }, v ? "Monitored" : "Not monitored")}>
           Monitored
-        </DropdownMenuCheckboxItem>
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
+        </MenuCheckboxItem>
+        <MenuSub>
+          <MenuSubTrigger>
             <Gauge /> Quality profile
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
+          </MenuSubTrigger>
+          <MenuSubContent className="max-h-80 overflow-y-auto">
             {profiles === null ? (
               profilesError ? (
-                <DropdownMenuLabel role="alert" className="max-w-64 font-normal text-bad">
+                <MenuLabel role="alert" className="max-w-64 font-normal text-bad">
                   {profilesError}
-                </DropdownMenuLabel>
+                </MenuLabel>
               ) : (
-                <DropdownMenuLabel className="font-normal text-muted-foreground">Loading…</DropdownMenuLabel>
+                <MenuLabel className="font-normal text-muted-foreground">Loading…</MenuLabel>
               )
             ) : (
-              <DropdownMenuRadioGroup
+              <MenuRadioGroup
                 value={String(profileId ?? "")}
                 onValueChange={(v) => patch({ qualityProfileId: +v }, `Quality profile: ${profiles.find((p) => p.id === +v)?.name}`)}
               >
                 {profiles.map((p) => (
-                  <DropdownMenuRadioItem key={p.id} value={String(p.id)}>
+                  <MenuRadioItem key={p.id} value={String(p.id)}>
                     {p.name}
-                  </DropdownMenuRadioItem>
+                  </MenuRadioItem>
                 ))}
-              </DropdownMenuRadioGroup>
+              </MenuRadioGroup>
             )}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => run("Asking for a rescan…", () => api.titleCommand(kind, id, "refresh")).then((ok) => ok && setTimeout(onChanged, 2500))}>
+          </MenuSubContent>
+        </MenuSub>
+        <MenuSeparator />
+        <MenuItem onSelect={() => run("Asking for a rescan…", () => api.titleCommand(kind, id, "refresh")).then((ok) => ok && setTimeout(onChanged, 2500))}>
           <FolderSync /> Rescan disk
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => run(`Asking ${app}…`, () => api.titleCommand(kind, id, "search"))}>
+        </MenuItem>
+        <MenuItem onSelect={() => run(`Asking ${app}…`, () => api.titleCommand(kind, id, "search"))}>
           <Radar /> {app} search
-        </DropdownMenuItem>
-        {children && <DropdownMenuSeparator />}
+        </MenuItem>
+        {children && <MenuSeparator />}
         {children}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onSelect={remove}>
+        <MenuSeparator />
+        <MenuItem destructive onSelect={remove}>
           <Trash2 /> Remove from {app}
-        </DropdownMenuItem>
+        </MenuItem>
         {path && (
-          <DropdownMenuLabel className="truncate pt-2 font-mono text-[11px] font-normal text-muted-foreground" title={path}>
+          <MenuLabel className="truncate pt-2 font-mono text-[11px] font-normal text-muted-foreground" title={path}>
             {path}
-          </DropdownMenuLabel>
+          </MenuLabel>
         )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </MenuContent>
+    </Menu>
   );
 }
 
 /** The small "⋯" trigger used on rows. */
 export function RowMenu({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={label}
-          className={cn("size-8 shrink-0 text-muted-foreground data-[state=open]:bg-accent", className)}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <MoreHorizontal />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56" onClick={(e) => e.stopPropagation()}>
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={label}
+            className={cn("size-8 shrink-0 text-muted-foreground data-open:bg-accent", className)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        }
+      >
+        <MoreHorizontal />
+      </MenuTrigger>
+      <MenuContent align="end" className="w-56" onClick={(e) => e.stopPropagation()}>
         {children}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </MenuContent>
+    </Menu>
   );
 }
 
@@ -237,7 +225,7 @@ export function SelectionBar({ count, summary, onClear, children }: { count: num
   // selection are disabled, not removed, for the same reason.
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5rem)] z-40 flex justify-center px-4 md:bottom-6 md:pl-[256px]">
-      <div data-selection-bar className="pointer-events-auto flex w-[768px] max-w-full animate-in items-center gap-1 overflow-x-auto rounded-[2px] border bg-popover p-2 pl-4 text-popover-foreground fade-in-0 slide-in-from-bottom-3">
+      <div data-selection-bar className="pointer-events-auto flex w-[768px] max-w-full rise-in items-center gap-1 overflow-x-auto rounded-[2px] border bg-popover p-2 pl-4 text-popover-foreground">
         <span className="flex-1 shrink-0 pr-2 text-sm whitespace-nowrap">
           <b className="font-mono font-medium tabular">{count}</b> selected
           {summary && <span className="meta ml-2 font-mono">{summary}</span>}
