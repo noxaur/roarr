@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { GrabResult, Release } from "./api";
 import { errText } from "./actions";
-import { planEpisodes } from "./plan";
+import { PER_GRAB, WASTE_FACTOR, planEpisodes } from "./plan";
 import type { SearchState } from "./useSearch";
 
 export type Kind = "tv" | "movie";
@@ -64,7 +64,7 @@ export function fitScore(r: Release, wanted: Set<number>, kind: Kind): number {
   const fills = r.covers.filter((id) => wanted.has(id)).length;
   if (fills === 0) return -1;
   const extras = r.covers.length - fills;
-  return (r.score * fills - 0.35 * r.score * extras - 8) / fills;
+  return (r.score * fills - WASTE_FACTOR * r.score * extras - PER_GRAB) / fills;
 }
 
 export interface Grabber {

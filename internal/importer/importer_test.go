@@ -6,9 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/noxaur/roarr/internal/release"
 )
 
 func TestNaming(t *testing.T) {
@@ -43,11 +46,44 @@ func TestClassify(t *testing.T) {
 		"Movie.2010/Movie.2010.nfo":              ClassOther,
 		"Show.S01E02.mkv.!qB":                    ClassVideo,
 		"Samuel.Jackson.Story.2019.mkv":          ClassVideo, // "Sam..." is not a sample
+		// A marker word in the title is not an extra.
+		"Trailer.Park.Boys.S01E01.720p.WEB.mkv":              ClassVideo,
+		"Interview.with.the.Vampire.S01E01.1080p.WEB.mkv":    ClassVideo,
+		"The.Interview.2014.1080p.BluRay.x264-GRP.mkv":       ClassVideo,
+		"Extras.S01E01.DVDRip.mkv":                           ClassVideo,
+		"Bonus.Family.S01E01.SWEDISH.1080p.WEB.mkv":          ClassVideo,
+		"Trailer.Park.Boys.S01/Trailer.Park.Boys.S01E02.mkv": ClassVideo,
+		"Show - S02E03 - The Interview.mkv":                  ClassVideo, // episode title
+		// Real extras: a trailing marker, or the folder.
+		"Movie (2014)/Movie (2014)-trailer.mkv":                       ClassExtra,
+		"Movie.2010/Movie.2010.Deleted.Scenes.mkv":                    ClassExtra,
+		"Movie.2010/Movie.2010.Trailer.2.mkv":                         ClassExtra,
+		"Movie.2010/Behind the Scenes.mkv":                            ClassExtra,
+		"Trailer.Park.Boys.S01/Extras/Trailer.Park.Boys.S01E01.mkv":   ClassExtra,
+		"The.Interview.2014/The.Interview.2014-featurette.mkv":        ClassExtra,
+		"Inception.2010/Inception.2010.Trailer.1080p.mkv":             ClassExtra,
+		"Inception.2010/Inception.2010.Trailer.2.720p.BluRay-GRP.mkv": ClassExtra,
 	}
 	for rel, want := range cases {
 		if got := Classify(rel); got != want {
 			t.Errorf("Classify(%q) = %s, want %s", rel, got, want)
 		}
+	}
+}
+
+func TestQualityRankUsesTheReleaseSourceOrder(t *testing.T) {
+	rank := func(source string) int { return QualityRank("Show.S01E01.1080p." + source + ".x264-GRP.mkv") }
+	order := []string{"HDTV", "WEB.RIP", "WEB.DL", "Blu.Ray", "BluRay.REMUX"}
+	for i := 1; i < len(order); i++ {
+		if rank(order[i-1]) >= rank(order[i]) {
+			t.Errorf("%s ranks %d, %s ranks %d", order[i-1], rank(order[i-1]), order[i], rank(order[i]))
+		}
+	}
+	if rank("WEB") != rank("WEB-DL") {
+		t.Errorf("WEB ranks %d, WEB-DL %d: one must not replace the other", rank("WEB"), rank("WEB-DL"))
+	}
+	if got := QualityRank("The Show - S01E01.mkv"); got != -1 {
+		t.Errorf("no quality in the name: rank %d, want -1", got)
 	}
 }
 
@@ -170,6 +206,35 @@ func TestPlanTVDuplicateEpisodeKeepsLarger(t *testing.T) {
 	}
 }
 
+func TestPlanTVDuplicateKeepsMultiEpisodeFileWithAnEpisodeOfItsOwn(t *testing.T) {
+	sized := func(sizes map[string]int64) []SourceFile {
+		var out []SourceFile
+		for _, rel := range []string{"The.Show.S01E01E02.720p.mkv", "The.Show.S01E01.1080p.mkv", "The.Show.S01E02.1080p.mkv"} {
+			if size, ok := sizes[rel]; ok {
+				out = append(out, SourceFile{Rel: rel, Path: "/dl/" + rel, Size: size})
+			}
+		}
+		return out
+	}
+	// The pair loses E01 but is the only copy of E02.
+	ps, skips := PlanTV(sized(map[string]int64{"The.Show.S01E01E02.720p.mkv": 1 << 30, "The.Show.S01E01.1080p.mkv": 2 << 30}), "The.Show.S01", showTitle(8))
+	got := placements(ps)
+	sort.Strings(got) // both start at E01, so PlanTV's order is not fixed
+	if !reflect.DeepEqual(got, []string{"S01E01", "S01E01-E02"}) || len(skips) != 0 {
+		t.Fatalf("placements %v skips %+v", got, skips)
+	}
+	// Every episode of the pair has a larger copy.
+	ps, skips = PlanTV(sized(map[string]int64{"The.Show.S01E01E02.720p.mkv": 1 << 30, "The.Show.S01E01.1080p.mkv": 2 << 30, "The.Show.S01E02.1080p.mkv": 2 << 30}), "The.Show.S01", showTitle(8))
+	if got := placements(ps); !reflect.DeepEqual(got, []string{"S01E01", "S01E02"}) || len(skips) != 1 || skips[0].File.Rel != "The.Show.S01E01E02.720p.mkv" {
+		t.Fatalf("placements %v skips %+v", got, skips)
+	}
+	// The pair is the largest copy of both.
+	ps, skips = PlanTV(sized(map[string]int64{"The.Show.S01E01E02.720p.mkv": 5 << 30, "The.Show.S01E01.1080p.mkv": 2 << 30, "The.Show.S01E02.1080p.mkv": 2 << 30}), "The.Show.S01", showTitle(8))
+	if got := placements(ps); !reflect.DeepEqual(got, []string{"S01E01-E02"}) || len(skips) != 2 {
+		t.Fatalf("placements %v skips %+v", got, skips)
+	}
+}
+
 func TestPlanMovie(t *testing.T) {
 	files := []SourceFile{
 		{Rel: "Inception.2010.1080p/Inception.2010.1080p.mkv", Size: 9000},
@@ -203,6 +268,93 @@ func TestPathMap(t *testing.T) {
 	}
 	if _, err := ParsePathMap("/nope"); err == nil {
 		t.Error("want error for a rule without =")
+	}
+}
+
+func TestPathMapKeepsValidRulesNextToABrokenOne(t *testing.T) {
+	m, err := ParsePathMap(` /downloads = /data/downloads , broken, /downloads/tv=/tv`)
+	if err == nil || !strings.Contains(err.Error(), "broken") {
+		t.Fatalf("want an error naming the broken rule, got %v", err)
+	}
+	if got := m.Map("/downloads/tv/a.mkv"); got != "/tv/a.mkv" {
+		t.Errorf("Map = %q, want the valid rules to apply", got)
+	}
+}
+
+func TestPathMapMatch(t *testing.T) {
+	m := PathMap{
+		{Remote: "/downloads/", Local: "/data/torrents/"},
+		{Remote: "/downloads/tv", Local: "/tv-dl"},
+		{Remote: `D:\Torrents\`, Local: `E:\Media\`},
+		{Remote: "/same", Local: "/same"},
+	}
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"/downloads/movies/X", "/data/torrents/movies/X", true},
+		{"/downloads/tv/Show S01", "/tv-dl/Show S01", true}, // longest prefix wins
+		{"/downloads", "/data/torrents", true},
+		{"/downloadsx/a", "/downloadsx/a", false},
+		{"/Downloads/a", "/Downloads/a", false}, // only drive letters ignore case
+		{`D:\Torrents\Show\e01.mkv`, `E:\Media/Show/e01.mkv`, true},
+		{`d:\torrents\Show\e01.mkv`, `E:\Media/Show/e01.mkv`, true},
+		{"d:/Torrents", `E:\Media`, true},
+		{`D:\TorrentsX\a.mkv`, `D:\TorrentsX\a.mkv`, false},
+		{"/same/a.mkv", "/same/a.mkv", true}, // matched, although unchanged
+		{"", "", false},
+	}
+	for _, c := range cases {
+		got, ok := m.Match(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("Match(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
+		}
+		if mapped := m.Map(c.in); mapped != c.want {
+			t.Errorf("Map(%q) = %q, want %q", c.in, mapped, c.want)
+		}
+	}
+	if got, ok := (PathMap)(nil).Match("/a/b"); got != "/a/b" || ok {
+		t.Errorf("empty map: %q, %v", got, ok)
+	}
+}
+
+// Callers outside the package bring their own episode ids (Sonarr's), so
+// the matcher must not read anything into them.
+func TestEpisodesOfWithForeignEpisodeIDs(t *testing.T) {
+	show := release.Show{Titles: []string{"The Show"}}
+	id := 9000
+	for season := 1; season <= 2; season++ {
+		for n := 1; n <= 12; n++ {
+			id += 7
+			show.Episodes = append(show.Episodes, release.Episode{ID: id, Season: season, Number: n, Absolute: (season-1)*12 + n, Aired: true})
+		}
+	}
+	multi := release.Parse("The.Show.S01-S02.1080p.BluRay.x265-GRP")
+	single := release.Parse("The.Show.S02.1080p.BluRay.x265-GRP")
+	cases := []struct {
+		rel      string
+		pack     release.Info
+		anime    bool
+		season   int
+		eps      []int
+		verified bool
+	}{
+		{"The.Show.S01-S02/The.Show.S02E03.1080p.mkv", multi, false, 2, []int{3}, true},
+		{"The.Show.S01-S02/The.Show.S02E03E04.1080p.m2ts", multi, false, 2, []int{3, 4}, true},
+		{"The.Show.S01-S02/Season 2/Episode 05.mkv", multi, false, 2, []int{5}, true},
+		{"The.Show.S01-S02/Season 2/05.mkv", multi, false, 2, []int{5}, true},
+		{`The.Show.S01-S02\Season 1\E07.mpg.!qB`, multi, false, 1, []int{7}, true},
+		{"The.Show.S02/E05.mkv", single, false, 2, []int{5}, true},
+		{"The.Show.S01-S02/E05.mkv", multi, false, 0, nil, false}, // no season to borrow
+		{"The.Show.S02/The.Show.S02E13.mkv", single, false, 2, []int{13}, false},
+		{"[Grp] The Show (01-24)/[Grp] The Show - 14 (1080p).mkv", release.Parse("[Grp] The Show (01-24) (1080p)"), true, 2, []int{2}, true},
+		{"The.Show.S02/Featurette.mkv", single, false, 0, nil, false},
+	}
+	for _, c := range cases {
+		season, eps, verified := EpisodesOf(c.rel, c.pack, show, c.anime)
+		if season != c.season || !reflect.DeepEqual(eps, c.eps) || verified != c.verified {
+			t.Errorf("EpisodesOf(%q) = S%d %v verified=%v, want S%d %v verified=%v", c.rel, season, eps, verified, c.season, c.eps, c.verified)
+		}
 	}
 }
 
@@ -629,5 +781,48 @@ func TestImportMovieAndBeforeHook(t *testing.T) {
 	}
 	if want := filepath.Join(dir, "movies", "Inception (2010)", "Inception (2010).mkv"); res.Path != want {
 		t.Fatalf("path %s, want %s", res.Path, want)
+	}
+}
+
+func TestImportKeepsBothFilesOfOneDownloadThatShareAnEpisode(t *testing.T) {
+	for _, order := range [][]int{{0, 1}, {1, 0}} {
+		im, dir, _ := newImporter(t)
+		ti := showTitle(8)
+		var pls []Placement
+		for _, f := range []struct {
+			name string
+			eps  []int
+		}{{"The.Show.S01E01.1080p.WEB-DL.mkv", []int{1}}, {"The.Show.S01E01E02.720p.WEB-DL.mkv", []int{1, 2}}} {
+			src := filepath.Join(dir, "dl", f.name)
+			write(t, src, f.name)
+			pls = append(pls, Placement{Video: SourceFile{Rel: f.name, Path: src}, Season: 1, Episodes: f.eps})
+		}
+		for _, i := range order {
+			res, err := im.Import(context.Background(), Request{Title: ti, Placement: pls[i], Release: "The.Show.S01.WEB-DL", Hash: "h1", Replace: true})
+			if err != nil || res.Skipped {
+				t.Fatalf("order %v: import %s: %+v %v", order, pls[i].Video.Rel, res, err)
+			}
+		}
+		season := filepath.Join(dir, "tv", "The Show (2020)", "Season 01")
+		for _, n := range []string{"The Show - S01E01.mkv", "The Show - S01E01-E02.mkv"} {
+			if _, err := os.Stat(filepath.Join(season, n)); err != nil {
+				t.Errorf("order %v: %s is gone", order, n)
+			}
+		}
+		// A better E01 from another download replaces the single and
+		// leaves the pair, which still holds E02.
+		src := filepath.Join(dir, "dl2", "The.Show.S01E01.2160p.WEB-DL.mkv")
+		write(t, src, "uhd")
+		pl := Placement{Video: SourceFile{Rel: filepath.Base(src), Path: src}, Season: 1, Episodes: []int{1}}
+		res, err := im.Import(context.Background(), Request{Title: ti, Placement: pl, Release: "The.Show.S01E01.2160p.WEB-DL", Hash: "h2", Replace: true})
+		if err != nil || res.Skipped || len(res.Replaced) != 1 || filepath.Base(res.Replaced[0]) != "The Show - S01E01.mkv" {
+			t.Fatalf("order %v: upgrade: %+v %v", order, res, err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(season, "The Show - S01E01.mkv")); string(b) != "uhd" {
+			t.Errorf("order %v: E01 is %q, want the upgrade", order, b)
+		}
+		if _, err := os.Stat(filepath.Join(season, "The Show - S01E01-E02.mkv")); err != nil {
+			t.Errorf("order %v: the pair is gone", order)
+		}
 	}
 }

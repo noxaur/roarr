@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 # One small image: the React UI is compiled and embedded into a static Go
-# binary, which runs on a distroless base (~20 MB total). A static ffmpeg and
-# ffprobe (SVT-AV1 + libaom, no shared libraries, ~200 MB) are added for the
-# optional AV1 converter and media verification; build with
-# --build-arg FFMPEG=false to leave them out.
+# binary, which runs on a distroless base. A static ffmpeg and ffprobe
+# (SVT-AV1 + libaom, no shared libraries) are added for the optional AV1
+# converter and media verification; build with --build-arg FFMPEG=false to
+# leave them out.
 
 ARG FFMPEG=true
 

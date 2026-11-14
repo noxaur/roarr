@@ -19,9 +19,8 @@ jobs:
         with: { go-version: "1.25" }
       - uses: actions/setup-node@v4
         with: { node-version: "22", cache: npm, cache-dependency-path: web/package-lock.json }
-      - run: cd web && npm ci && npm run build && touch ../internal/webui/dist/.keep
-      - run: go vet ./... && go test ./...
-      - run: cd web && npx vitest run
+      - run: make web
+      - run: make test
 
   image:
     needs: test

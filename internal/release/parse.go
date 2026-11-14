@@ -103,16 +103,18 @@ type flagRule struct {
 	set func(*Info)
 }
 
+// flagRules run on the title after sepRe, so a tag written "WEB.DL" reads
+// "WEB DL" here: tags made of two words allow a space as well as a hyphen.
 var flagRules = []flagRule{
 	{regexp.MustCompile(`(?i)\bremux\b`), func(i *Info) { i.Remux = true }},
-	{regexp.MustCompile(`(?i)\b(blu-?ray|bdrip|brrip|bd(?:25|50)?|bdremux|uhd\s?bd)\b`), func(i *Info) { setSource(i, SourceBluRay) }},
-	{regexp.MustCompile(`(?i)\bweb-?dl\b|\bwebdl\b`), func(i *Info) { setSource(i, SourceWEBDL) }},
-	{regexp.MustCompile(`(?i)\bweb-?rip\b`), func(i *Info) { setSource(i, SourceWEBRip) }},
+	{regexp.MustCompile(`(?i)\b(blu[ -]?ray|b[dr][ -]?rip|bd(?:25|50)?|bdremux|uhd\s?bd)\b`), func(i *Info) { setSource(i, SourceBluRay) }},
+	{regexp.MustCompile(`(?i)\bweb[ -]?dl\b`), func(i *Info) { setSource(i, SourceWEBDL) }},
+	{regexp.MustCompile(`(?i)\bweb[ -]?rip\b`), func(i *Info) { setSource(i, SourceWEBRip) }},
 	{regexp.MustCompile(`(?i)\bweb\b`), func(i *Info) { setSource(i, SourceWEB) }},
 	{regexp.MustCompile(`(?i)\b(hdtv|pdtv|sdtv|dsr|tvrip|hdtvrip)\b`), func(i *Info) { setSource(i, SourceHDTV) }},
-	{regexp.MustCompile(`(?i)\b(dvd-?rip|dvdr|dvd5|dvd9|dvd)\b`), func(i *Info) { setSource(i, SourceDVD) }},
-	{regexp.MustCompile(`(?i)\b(hdcam|cam-?rip|camrip|cam)\b`), func(i *Info) { setSource(i, SourceCam) }},
-	{regexp.MustCompile(`(?i)\b(telesync|hdts|ts-?rip|pdvd|ts)\b`), func(i *Info) { setSource(i, SourceTS) }},
+	{regexp.MustCompile(`(?i)\b(dvd[ -]?rip|dvdr|dvd5|dvd9|dvd)\b`), func(i *Info) { setSource(i, SourceDVD) }},
+	{regexp.MustCompile(`(?i)\b(hdcam|cam[ -]?rip|cam)\b`), func(i *Info) { setSource(i, SourceCam) }},
+	{regexp.MustCompile(`(?i)\b(telesync|hdts|ts[ -]?rip|pdvd|ts)\b`), func(i *Info) { setSource(i, SourceTS) }},
 	{regexp.MustCompile(`(?i)\b(dvdscr|screener|scr)\b`), func(i *Info) { setSource(i, SourceScreen) }},
 
 	{regexp.MustCompile(`(?i)\b(x ?265|h ?265|hevc)\b`), func(i *Info) { setCodec(i, "x265") }},
@@ -126,11 +128,11 @@ var flagRules = []flagRule{
 	{regexp.MustCompile(`(?i)\b10-?bit\b|\bhi10p?\b`), func(i *Info) { i.BitDepth10 = true }},
 
 	{regexp.MustCompile(`(?i)\batmos\b`), func(i *Info) { setAudio(i, "Atmos") }},
-	{regexp.MustCompile(`(?i)\btrue-?hd\b`), func(i *Info) { setAudio(i, "TrueHD") }},
-	{regexp.MustCompile(`(?i)\bdts-?(hd|x)(\s?ma)?\b`), func(i *Info) { setAudio(i, "DTS-HD MA") }},
+	{regexp.MustCompile(`(?i)\btrue[ -]?hd\b`), func(i *Info) { setAudio(i, "TrueHD") }},
+	{regexp.MustCompile(`(?i)\bdts[ -]?(hd|x)([ -]?ma)?\b`), func(i *Info) { setAudio(i, "DTS-HD MA") }},
 	{regexp.MustCompile(`(?i)\bdts\b`), func(i *Info) { setAudio(i, "DTS") }},
-	{regexp.MustCompile(`(?i)\b(ddp|dd\+|e-?ac-?3)`), func(i *Info) { setAudio(i, "DDP") }},
-	{regexp.MustCompile(`(?i)\b(dd|ac-?3|dolby\s?digital)(\d\.\d)?\b`), func(i *Info) { setAudio(i, "DD") }},
+	{regexp.MustCompile(`(?i)\b(ddp|dd\+|e[ -]?ac[ -]?3)`), func(i *Info) { setAudio(i, "DDP") }},
+	{regexp.MustCompile(`(?i)\b(dd|ac[ -]?3|dolby\s?digital)(\d\.\d)?\b`), func(i *Info) { setAudio(i, "DD") }},
 	{regexp.MustCompile(`(?i)\bflac\b`), func(i *Info) { setAudio(i, "FLAC") }},
 	{regexp.MustCompile(`(?i)\bopus\b`), func(i *Info) { setAudio(i, "Opus") }},
 	{regexp.MustCompile(`(?i)\baac(\d\.\d)?\b`), func(i *Info) { setAudio(i, "AAC") }},
@@ -169,10 +171,15 @@ var languageTokens = map[string]string{
 	"czech": "Czech", "cz": "Czech", "greek": "Greek", "arabic": "Arabic", "hebrew": "Hebrew", "ukrainian": "Ukrainian", "ukr": "Ukrainian",
 }
 
-var sourceRank = map[Source]int{SourceCam: 0, SourceTS: 1, SourceScreen: 2, SourceDVD: 3, SourceHDTV: 4, SourceWEBRip: 5, SourceWEB: 6, SourceWEBDL: 7, SourceBluRay: 8, SourceRemux: 9}
+var sourceRank = map[Source]int{SourceCam: 1, SourceTS: 2, SourceScreen: 3, SourceDVD: 4, SourceHDTV: 5, SourceWEBRip: 6, SourceWEB: 7, SourceWEBDL: 7, SourceBluRay: 8, SourceRemux: 9}
+
+// SourceRank orders sources from worst to best; an unknown source is 0. WEB
+// and WEB-DL rank the same: a scene "WEB" release is an untouched stream.
+// The importer stores the numbers in library.json, so do not renumber them.
+func SourceRank(s Source) int { return sourceRank[s] }
 
 func setSource(i *Info, s Source) {
-	if i.Source == SourceUnknown || sourceRank[s] > sourceRank[i.Source] && s != SourceCam && s != SourceTS && s != SourceScreen {
+	if i.Source == SourceUnknown || SourceRank(s) > SourceRank(i.Source) && s != SourceCam && s != SourceTS && s != SourceScreen {
 		// "WEB" is a weaker signal than WEB-DL/WEBRip; TS/CAM only win when nothing else matched.
 		if s == SourceWEB && (i.Source == SourceWEBDL || i.Source == SourceWEBRip) {
 			return

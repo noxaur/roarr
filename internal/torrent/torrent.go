@@ -1,5 +1,5 @@
-// Package torrent reads the bits of a .torrent file roarr cares about: the
-// info-hash (to track the download in qBittorrent) and the file list.
+// Package torrent reads the one thing roarr needs from a .torrent file: its
+// v1 (SHA-1) info-hash, to track the download in qBittorrent.
 package torrent
 
 import (

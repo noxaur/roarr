@@ -94,6 +94,9 @@ export function ImportTab({ s, locked, update }: Edit) {
               <LockedInput label="Save to" mono locked={locked.QBIT_SAVE_PATH} value={im.savePath ?? ""} placeholder="client default" onChange={(v) => set((i) => (i.savePath = v))} />
             </div>
           </Field>
+          <Field label="Missing search" hint="How often roarr searches for monitored episodes and movies that are not on disk, and gets the best releases. Only for titles roarr tracks without Sonarr or Radarr. 0 turns it off.">
+            <Num label="Missing search" min={0} unit="hours" value={im.missingSearchHours ?? 0} disabled={locked.MISSING_SEARCH_HOURS} onChange={(v) => set((i) => (i.missingSearchHours = v))} />
+          </Field>
         </>
       )}
       {st && st.mode === "native" && <ImportJobs st={st} />}

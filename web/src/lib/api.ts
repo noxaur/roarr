@@ -322,6 +322,7 @@ export interface Settings {
   authMode: string;
   authPassword?: string;
   jellyfinAdminOnly: boolean;
+  trustedProxies?: string;
   prefs: Prefs;
   behaviour: {
     watchFirst: boolean;
@@ -377,6 +378,8 @@ export interface ImportSettings {
   pathMap?: string;
   category?: string;
   savePath?: string;
+  /** Hours between searches for monitored items that are not on disk (native library only); 0 or absent = off. */
+  missingSearchHours?: number;
 }
 
 export type VerifyLevel = "pass" | "warn" | "fail" | "skip";
@@ -505,11 +508,6 @@ export interface ImportsStatus {
   files: { titleKey: string; path: string; size: number; release?: string; importedAt: string }[];
 }
 
-export interface Plan {
-  picks: { key: string; fills: number[]; extras: number }[] | null;
-  missing: number[] | null;
-}
-
 export interface AutoResult {
   grabs: { release: string; fills: number; result: GrabResult; error?: string }[] | null;
   missing?: number[];
@@ -528,15 +526,16 @@ export function setUnauthorizedHandler(f: () => void) {
   onUnauthorized = f;
 }
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** Sends a request. Resolves to the answer when it is 2xx or 304; throws an ApiError otherwise. */
+async function send(method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<Response> {
   const res = await fetch(path, {
     method,
-    headers: { "X-Roarr": "1", ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+    headers: { "X-Roarr": "1", ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...headers },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: "same-origin",
   });
   if (res.status === 401 && !path.startsWith("/api/login")) onUnauthorized();
-  if (!res.ok) {
+  if (!res.ok && res.status !== 304) {
     let msg = res.statusText;
     try {
       const j = await res.json();
@@ -549,22 +548,27 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     }
     throw new ApiError(res.status, msg);
   }
-  return res.json() as Promise<T>;
+  return res;
 }
+
+const call = async <T>(method: string, path: string, body?: unknown) => (await send(method, path, body)).json() as Promise<T>;
 
 export const api = {
   me: () => call<{ authMode: string; authenticated: boolean; user?: string; version: string }>("GET", "/api/me"),
   login: (username: string, password: string) => call<{ ok: boolean }>("POST", "/api/login", { username, password }),
   logout: () => call<{ ok: boolean }>("POST", "/api/logout", {}),
   status: (fresh = false) => call<{ services: Record<string, ServiceStatus>; version: string }>("GET", `/api/status${fresh ? "?fresh=1" : ""}`),
-  library: (refresh = false) => call<{ items: LibraryItem[]; errors: Record<string, string> }>("GET", `/api/library${refresh ? "?refresh=1" : ""}`),
+  /** The library, or null when the copy with `etag` is still current. A refresh rebuilds it from the upstreams first. */
+  library: async (etag: string | null = null, refresh = false) => {
+    const res = await send("GET", `/api/library${refresh ? "?refresh=1" : ""}`, undefined, etag && !refresh ? { "If-None-Match": etag } : undefined);
+    if (res.status === 304) return null;
+    return { ...((await res.json()) as { items: LibraryItem[]; errors: Record<string, string> }), etag: res.headers.get("ETag") };
+  },
   discover: (q: string) => call<{ results: DiscoverItem[] }>("GET", `/api/discover?q=${encodeURIComponent(q)}`),
   series: (id: number, fresh = false) => call<SeriesDetail>("GET", `/api/tv/${id}${fresh ? "?fresh=1" : ""}`),
   seriesByTvdb: (tvdb: number, tmdb?: number) => call<SeriesDetail>("GET", `/api/tv/tvdb/${tvdb}${tmdb ? `?tmdb=${tmdb}` : ""}`),
   movie: (id: number) => call<MovieDetail>("GET", `/api/movie/${id}`),
   movieByTmdb: (tmdb: number) => call<MovieDetail>("GET", `/api/movie/tmdb/${tmdb}`),
-  plan: (wanted: number[], options: { key: string; score: number; rejected: boolean; covers: number[] }[]) =>
-    call<Plan>("POST", "/api/plan", { wanted, options }),
   grab: (body: {
     kind: Kind;
     seriesId?: number;

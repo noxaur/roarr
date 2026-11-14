@@ -19,8 +19,8 @@ export interface Plan {
   missing: number[];
 }
 
-const PER_GRAB = 8.0;
-const WASTE_FACTOR = 0.35;
+export const PER_GRAB = 8.0;
+export const WASTE_FACTOR = 0.35;
 
 export function planEpisodes(wanted: number[], opts: Option[]): Plan {
   const remaining = new Set(wanted);

@@ -13,7 +13,7 @@ Branch: short name at most three words, separated by hyphens.
 Title: conventional commit in plain english: `type(optional scope): description`, for example `feat(transcode): pause AV1 encoding on a weekly schedule`.
 
 ```text
-Explain the problem in a sentence or two. Then.
+<the problem in one or two sentences>
 
 <summary>
 
@@ -21,8 +21,12 @@ Explain the problem in a sentence or two. Then.
 
 <merge danger>
 
-`...{model name} for {role > 1 ? roles : role}.
+<models>
 ```
+
+## Models
+
+End with one line that names each model that worked on the change and its role, for example `Claude Fable 5.2 for planning and review, Claude Sonnet 5.5 for implementation.`
 
 ## Summary
 

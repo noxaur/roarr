@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/noxaur/roarr/internal/arr"
 	"github.com/noxaur/roarr/internal/config"
+	"github.com/noxaur/roarr/internal/qbit"
 )
 
 // fakeRadarr declines every push unless the movie sits on the bypass profile.
@@ -23,6 +26,13 @@ type fakeRadarr struct {
 	// alwaysReject declines every push (blocklist, file on disk, ...).
 	alwaysReject bool
 	grabbed      map[string]any
+	// history holds "grabbed" events, oldest first. An approved push adds
+	// one unless noHandoff is set (the download client refused the release).
+	history    []map[string]any
+	noHandoff  bool
+	historyErr bool
+	// noRestore refuses every profile change except the one to the bypass profile.
+	noRestore bool
 }
 
 func (f *fakeRadarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +46,10 @@ func (f *fakeRadarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		if p, ok := body["qualityProfileId"].(float64); ok {
+			if f.noRestore && int(p) != 99 {
+				http.Error(w, "database is locked", 500)
+				return
+			}
 			f.profile = int(p)
 			f.switches = append(f.switches, int(p))
 		}
@@ -60,6 +74,11 @@ func (f *fakeRadarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		send(map[string]any{"id": 99})
 	case "POST /api/v3/release/push":
 		if f.profile == 99 && !f.alwaysReject {
+			var push struct{ Title string }
+			_ = json.NewDecoder(r.Body).Decode(&push)
+			if !f.noHandoff {
+				f.history = append(f.history, map[string]any{"id": 100 + len(f.history), "sourceTitle": push.Title, "eventType": "grabbed", "date": time.Now().UTC()})
+			}
 			send([]any{map[string]any{"approved": true}})
 		} else {
 			send([]any{map[string]any{"approved": false, "rejected": true, "rejections": []string{"x265 is not wanted in profile"}}})
@@ -77,7 +96,16 @@ func (f *fakeRadarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&f.grabbed)
 		send(f.grabbed)
 	case "GET /api/v3/history":
-		send(map[string]any{"records": []any{map[string]any{"sourceTitle": "Movie.2024.2160p.x265", "eventType": "grabbed", "date": time.Now().UTC()}}})
+		if f.historyErr {
+			http.Error(w, "database is locked", 500)
+			return
+		}
+		n, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+		records := []any{}
+		for i := len(f.history) - 1; i >= 0 && len(records) < n; i-- {
+			records = append(records, f.history[i])
+		}
+		send(map[string]any{"records": records})
 	default:
 		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, 404)
 	}
@@ -124,6 +152,22 @@ func TestGrabMovieBypassesQualityProfile(t *testing.T) {
 	}
 }
 
+// A title left on the bypass profile changes what Radarr grabs for it from
+// then on, so the user has to hear about it.
+func TestGrabMovieReportsFailedProfileRestore(t *testing.T) {
+	f := &fakeRadarr{profile: 1, noRestore: true}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+	a := testApp(t, &Clients{Radarr: arr.NewRadarr(srv.URL, "k")})
+	res, err := a.grabMovie(context.Background(), GrabRequest{Kind: "movie", MovieID: 5, Release: Release{Title: "Movie.2024.2160p.x265", DownloadURL: "http://prowlarr/1/download"}})
+	if err != nil || !res.OK || f.profile != 99 {
+		t.Fatalf("res=%+v err=%v profile=%d", res, err, f.profile)
+	}
+	if !strings.Contains(res.Message, "still on") || !strings.Contains(res.Message, arr.BypassProfileName) || !strings.Contains(res.Message, "database is locked") {
+		t.Fatalf("message = %q, want the failed restore", res.Message)
+	}
+}
+
 // Rejections a profile cannot fix are skipped the way Radarr's own "grab
 // anyway" does: interactive search, then grab from the release cache.
 func TestGrabMovieSkipsAllChecks(t *testing.T) {
@@ -140,6 +184,65 @@ func TestGrabMovieSkipsAllChecks(t *testing.T) {
 	}
 	if f.profile != 1 {
 		t.Fatalf("profile = %d, want 1", f.profile)
+	}
+}
+
+// An approved push is only a grab once Radarr records a new "grabbed" event
+// for it: an earlier grab of the same release proves nothing.
+func TestGrabConfirmsThroughNewHistoryRow(t *testing.T) {
+	defer func(w, p time.Duration) { grabConfirmWait, grabConfirmPoll = w, p }(grabConfirmWait, grabConfirmPoll)
+	grabConfirmWait, grabConfirmPoll = 50*time.Millisecond, time.Millisecond
+	g := GrabRequest{Kind: "movie", MovieID: 5, Release: Release{Title: "Movie.2024.2160p.x265", DownloadURL: "http://prowlarr/1/download"}}
+	earlier := map[string]any{"id": 7, "sourceTitle": g.Release.Title, "eventType": "grabbed", "date": time.Now().UTC().Add(-10 * time.Second)}
+
+	for name, tc := range map[string]struct {
+		f    *fakeRadarr
+		ok   bool
+		want string
+	}{
+		"earlier grab only": {&fakeRadarr{profile: 99, noHandoff: true, history: []map[string]any{earlier}}, false, "did not take it"},
+		"new row":           {&fakeRadarr{profile: 99, history: []map[string]any{earlier}}, true, "Radarr is downloading it."},
+		// Radarr approved the push, so this is not a failure (a retry would
+		// download it twice), but it must not be reported as downloading.
+		"history unreadable": {&fakeRadarr{profile: 99, historyErr: true}, true, "could not check"},
+	} {
+		srv := httptest.NewServer(tc.f)
+		res, err := testApp(t, &Clients{Radarr: arr.NewRadarr(srv.URL, "k")}).grabMovie(context.Background(), g)
+		srv.Close()
+		if err != nil || res.OK != tc.ok || !strings.Contains(res.Message, tc.want) || (name == "history unreadable" && strings.Contains(res.Message, "is downloading")) {
+			t.Errorf("%s: res=%+v err=%v, want ok=%v and %q", name, res, err, tc.ok, tc.want)
+		}
+	}
+}
+
+// An error listing the torrent says nothing about whether qBittorrent has it.
+func TestAddToQBitListErrorIsNotPresence(t *testing.T) {
+	defer func(w, p time.Duration) { qbitListWait, qbitListPoll = w, p }(qbitListWait, qbitListPoll)
+	qbitListWait, qbitListPoll = 50*time.Millisecond, time.Millisecond
+	magnet := "magnet:?xt=urn:btih:" + strings.Repeat("ab", 20)
+
+	for name, failures := range map[string]int32{"always failing": 1 << 30, "failing once": 1} {
+		var lists int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v2/torrents/add":
+				_, _ = w.Write([]byte("Ok."))
+			case "/api/v2/torrents/info":
+				if atomic.AddInt32(&lists, 1) <= failures {
+					http.Error(w, "database is locked", 500)
+					return
+				}
+				_, _ = w.Write([]byte(`[{"hash":"` + strings.Repeat("ab", 20) + `"}]`))
+			}
+		}))
+		hash, err := testApp(t, &Clients{QBit: qbit.New(srv.URL, "", "")}).addToQBit(context.Background(), qbit.Add{}, Release{MagnetURL: magnet})
+		srv.Close()
+		if failures == 1 && (err != nil || hash != strings.Repeat("ab", 20)) {
+			t.Errorf("%s: hash=%q err=%v, want the hash after a retry", name, hash, err)
+		}
+		if failures > 1 && (err == nil || !strings.Contains(err.Error(), "database is locked")) {
+			t.Errorf("%s: hash=%q err=%v, want the list error", name, hash, err)
+		}
 	}
 }
 

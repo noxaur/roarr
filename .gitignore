@@ -4,5 +4,6 @@
 /internal/webui/dist/*
 !/internal/webui/dist/.keep
 /bin/
+/web/tsconfig.tsbuildinfo
 .DS_Store
 *.local

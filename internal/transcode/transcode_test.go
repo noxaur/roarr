@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/noxaur/roarr/internal/verify"
 )
 
 func probeJSON(codec string, dur float64, audio, subs, chapters int, extraVideo string) []byte {
@@ -33,12 +35,14 @@ func probeJSON(codec string, dur float64, audio, subs, chapters int, extraVideo 
 
 func mustInfo(t *testing.T, b []byte) Info {
 	t.Helper()
-	i, err := ParseProbe(b)
+	p, err := verify.ParseProbe(b)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return i
+	return Info{Probe: p}
 }
+
+var testTools = verify.Tools{FFprobe: "ffprobe", FFmpeg: "ffmpeg"}
 
 func has(args []string, seq ...string) bool {
 	for i := 0; i+len(seq) <= len(args); i++ {
@@ -182,9 +186,11 @@ type fakeRunner struct {
 	outSize  int               // bytes ffmpeg "writes"
 	outProbe []byte            // ffprobe json of the written file
 	runErr   error
-	onRun    func() // runs while ffmpeg "encodes"
+	onRun    func()       // runs while ffmpeg "encodes"
+	onProbe  func(string) // runs before a file is probed
 	proc     *fakeProc
 	ran      [][]string
+	names    []string // programs run
 }
 
 // fakeProc records suspend and resume calls.
@@ -206,9 +212,16 @@ func (p *fakeProc) Resume() error {
 	return nil
 }
 
-func (f *fakeRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
-	if strings.HasSuffix(name, "ffprobe") && len(args) > 0 {
+func (f *fakeRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	f.names = append(f.names, name)
+	if strings.HasSuffix(name, "ffprobe") && len(args) > 1 {
 		p := args[len(args)-1]
+		if f.onProbe != nil {
+			f.onProbe(p)
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if b, ok := f.probes[p]; ok {
 			return b, nil
 		}
@@ -217,10 +230,11 @@ func (f *fakeRunner) Output(_ context.Context, name string, args ...string) ([]b
 		}
 		return nil, fmt.Errorf("no such file")
 	}
-	return nil, nil
+	return []byte(" V..... libsvtav1            SVT-AV1\n"), nil
 }
 
-func (f *fakeRunner) Run(ctx context.Context, _ int, _ string, args []string, line func(string), started func(Proc)) error {
+func (f *fakeRunner) Run(ctx context.Context, _ int, name string, args []string, line func(string), started func(Proc)) error {
+	f.names = append(f.names, name)
 	f.ran = append(f.ran, args)
 	if f.proc != nil && started != nil {
 		started(f.proc)
@@ -247,7 +261,7 @@ func setup(t *testing.T, f *fakeRunner, srcBytes int, srcProbe []byte) (*Manager
 		t.Fatal(err)
 	}
 	f.probes = map[string][]byte{path: srcProbe}
-	m := New(f, t.TempDir())
+	m := New(f, testTools, t.TempDir())
 	m.SetOptions(Options{Enabled: true, Concurrency: 1, Preset: 6, MinSavings: 15})
 	if !m.Submit(Item{Path: path, Title: "Show", Kind: "tv", TitleID: 1}) {
 		t.Fatal("submit refused")
@@ -337,7 +351,7 @@ func TestProcessDiscardsResultWhenSourceChanged(t *testing.T) {
 }
 
 func TestSubmitDedupesAndRespectsToggle(t *testing.T) {
-	m := New(&fakeRunner{}, t.TempDir())
+	m := New(&fakeRunner{}, testTools, t.TempDir())
 	if m.Submit(Item{Path: "/a.mkv"}) {
 		t.Error("submit must be refused while disabled")
 	}
@@ -350,7 +364,7 @@ func TestSubmitDedupesAndRespectsToggle(t *testing.T) {
 func TestQueueRunsWithConcurrencyLimitAndPersists(t *testing.T) {
 	dir := t.TempDir()
 	f := &fakeRunner{outSize: 100, outProbe: probeJSON("av1", 100, 1, 0, 0, ""), probes: map[string][]byte{}}
-	m := New(f, dir)
+	m := New(f, testTools, dir)
 	m.SetOptions(Options{Enabled: true, Concurrency: 1, Preset: 6, MinSavings: 15})
 	m.mu.Lock()
 	m.enc = EncSVT
@@ -374,7 +388,7 @@ func TestQueueRunsWithConcurrencyLimitAndPersists(t *testing.T) {
 	if st := m.Status(); st.Counts.Done != 2 || st.BytesSaved != 1800 {
 		t.Fatalf("status %+v", st)
 	}
-	again := New(f, dir)
+	again := New(f, testTools, dir)
 	if st := again.Status(); st.Counts.Done != 2 || st.BytesSaved != 1800 {
 		t.Errorf("state not restored: %+v", st)
 	}
@@ -440,7 +454,7 @@ func TestSwapLeavesNoBackupOnSuccess(t *testing.T) {
 
 func TestConcurrentSavesStayValid(t *testing.T) {
 	dir := t.TempDir()
-	m := New(&fakeRunner{}, dir)
+	m := New(&fakeRunner{}, testTools, dir)
 	m.SetOptions(Options{Enabled: true, Concurrency: 1})
 	var wg sync.WaitGroup
 	for i := 0; i < 40; i++ {
@@ -453,7 +467,7 @@ func TestConcurrentSavesStayValid(t *testing.T) {
 	}
 	wg.Wait()
 	m.save()
-	if st := New(&fakeRunner{}, dir).Status(); st.Counts.Queued != 40 {
+	if st := New(&fakeRunner{}, testTools, dir).Status(); st.Counts.Queued != 40 {
 		t.Errorf("reloaded %d queued jobs, want 40", st.Counts.Queued)
 	}
 }
@@ -573,5 +587,199 @@ func TestSwapRefusesWhenBackupExists(t *testing.T) {
 	}
 	if size(t, backupPath(path)) != 555 || size(t, path) != 1000 {
 		t.Error("backup or original touched")
+	}
+}
+
+// stopInSwap runs the job until it calls stop, which arm puts somewhere
+// inside the swap, and holds it there: the disk then looks as it would had
+// roarr died at that point.
+func stopInSwap(t *testing.T, m *Manager, j *Job, arm func(stop func())) {
+	t.Helper()
+	reached, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	arm(func() { close(reached); <-release })
+	go func() {
+		defer close(done)
+		m.process(context.Background(), j, m.opts, EncSVT)
+	}()
+	<-reached
+	t.Cleanup(func() { close(release); <-done })
+}
+
+// restart loads the state m saved into a new manager and runs its startup.
+func restart(m *Manager, f *fakeRunner) *Manager {
+	again := New(f, testTools, filepath.Dir(m.path))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	again.Loop(ctx)
+	return again
+}
+
+func TestRecoveryRestoresOriginalAfterCrashInSwap(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	stopInSwap(t, m, j, func(stop func()) { m.afterBackup = stop })
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatal("the original should be moved aside at this point")
+	}
+	again := restart(m, f)
+	if size(t, path) != 1000 {
+		t.Fatalf("original not restored, size %d", size(t, path))
+	}
+	for _, p := range []string{tempPath(path), backupPath(path)} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s left behind", p)
+		}
+	}
+	if s := again.jobs[0].State; s != Queued {
+		t.Errorf("state %s (%s), want queued", s, again.jobs[0].Message)
+	}
+}
+
+func TestRecoveryDropsBackupBehindFinishedEncode(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	stopInSwap(t, m, j, func(stop func()) {
+		m.linkFn = func(a, b string) error {
+			err := os.Link(a, b)
+			if a == tempPath(path) {
+				stop()
+			}
+			return err
+		}
+	})
+	if size(t, backupPath(path)) != 1000 || size(t, path) != 300 {
+		t.Fatal("the result should be linked in with the backup still there")
+	}
+	again := restart(m, f)
+	if size(t, path) != 300 {
+		t.Fatalf("result not kept, size %d", size(t, path))
+	}
+	for _, p := range []string{tempPath(path), backupPath(path)} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s left behind", p)
+		}
+	}
+	if aj := again.jobs[0]; aj.State != Done || aj.SavedBytes != 700 || again.Status().BytesSaved != 700 {
+		t.Errorf("state %s (%s), saved %d", aj.State, aj.Message, aj.SavedBytes)
+	}
+}
+
+func TestRecoveryKeepsBackupBesideUnknownFile(t *testing.T) {
+	f := &fakeRunner{}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	if err := os.WriteFile(backupPath(path), make([]byte, 555), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	m.Loop(ctx)
+	if size(t, backupPath(path)) != 555 || size(t, path) != 1000 {
+		t.Error("backup or file in place touched")
+	}
+	if j.State != Failed || !strings.Contains(j.Message, backupPath(path)) {
+		t.Errorf("state %s (%s)", j.State, j.Message)
+	}
+}
+
+func TestCancelDuringResultProbeRequeues(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, j, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	ctx, cancel := context.WithCancel(context.Background())
+	f.onProbe = func(p string) {
+		if p == tempPath(path) {
+			cancel() // shutdown while the result is checked
+		}
+	}
+	m.process(ctx, j, m.opts, EncSVT)
+	if j.State != Queued || size(t, path) != 1000 {
+		t.Fatalf("state %s (%s), size %d", j.State, j.Message, size(t, path))
+	}
+	if _, err := os.Lstat(tempPath(path)); !os.IsNotExist(err) {
+		t.Error("temp file left behind")
+	}
+}
+
+func TestLoopWaitsForSwap(t *testing.T) {
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, "")}
+	m, _, path := setup(t, f, 1000, probeJSON("hevc", 100, 2, 3, 4, ""))
+	inSwap, release, returned := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	m.beforeSwap = func() { close(inSwap); <-release }
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		m.Loop(ctx)
+		close(returned)
+	}()
+	<-inSwap
+	cancel()
+	select {
+	case <-returned:
+		close(release)
+		t.Fatal("Loop returned while a worker was swapping")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	<-returned
+	if st := m.Status(); st.Counts.Done != 1 || size(t, path) != 300 {
+		t.Fatalf("the swap did not finish: %+v, size %d", st.Counts, size(t, path))
+	}
+}
+
+// The probe rules are shared with internal/verify; these pin what they mean
+// for conversion.
+func TestSharedProbeRules(t *testing.T) {
+	// Cover art without the attached_pic flag is still not video.
+	cover := mustInfo(t, []byte(`{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","width":1280,"height":720},
+	 {"index":1,"codec_type":"video","codec_name":"png","width":600,"height":900},
+	 {"index":2,"codec_type":"audio","codec_name":"aac"}],"format":{"format_name":"matroska","duration":"10"}}`))
+	if v := cover.MainVideo(); len(v) != 1 || v[0].CodecName != "h264" {
+		t.Errorf("real video = %+v, want only the h264 stream", v)
+	}
+	if a := BuildArgs(Options{Preset: 6}, EncSVT, cover, "/m/a.mkv", "/m/t"); !has(a, "-c:v:0", "libsvtav1") || has(a, "-c:v:1", "libsvtav1") {
+		t.Errorf("unflagged cover art must not be re-encoded: %v", a)
+	}
+	// Any side data that names Dolby Vision counts, not one exact label.
+	dv := mustInfo(t, probeJSON("hevc", 60, 1, 0, 0, `,"side_data_list":[{"side_data_type":"Dolby Vision Metadata"}]`))
+	if got := Skip(dv, "a.mkv"); !strings.Contains(got, "Dolby Vision") {
+		t.Errorf("Skip = %q, want Dolby Vision", got)
+	}
+	// Without a container duration the longest stream's is used.
+	noFormat := mustInfo(t, []byte(`{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","width":1280,"height":720,"tags":{"DURATION":"00:01:40.500000000"}},
+	 {"index":1,"codec_type":"audio","codec_name":"aac","duration":"99.0"}],"format":{"format_name":"matroska"}}`))
+	if got := Skip(noFormat, "a.mkv"); got != "" {
+		t.Errorf("Skip = %q, want a file with stream durations to be converted", got)
+	}
+}
+
+func TestManagerUsesConfiguredTools(t *testing.T) {
+	bin := t.TempDir()
+	ffmpeg, ffprobe := filepath.Join(bin, "my-ffmpeg"), filepath.Join(bin, "my-ffprobe")
+	for _, p := range []string{ffmpeg, ffprobe} {
+		if err := os.WriteFile(p, nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("FFMPEG_PATH", ffmpeg)
+	t.Setenv("FFPROBE_PATH", ffprobe)
+	path := filepath.Join(t.TempDir(), "a.mkv")
+	if err := os.WriteFile(path, make([]byte, 1000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeRunner{outSize: 300, outProbe: probeJSON("av1", 100, 2, 3, 4, ""), probes: map[string][]byte{path: probeJSON("hevc", 100, 2, 3, 4, "")}}
+	m := New(f, verify.FindTools(), t.TempDir()) // as internal/app builds it
+	m.SetOptions(Options{Enabled: true, Concurrency: 1, Preset: 6, MinSavings: 15})
+	m.Submit(Item{Path: path})
+	j := m.jobs[0]
+	m.Detect(context.Background())
+	m.process(context.Background(), j, m.opts, EncSVT)
+	if j.State != Done {
+		t.Fatalf("state %s (%s)", j.State, j.Message)
+	}
+	for _, name := range f.names {
+		if name != ffmpeg && name != ffprobe {
+			t.Errorf("ran %q, want only the configured tools", name)
+		}
+	}
+	if !slices.Contains(f.names, ffmpeg) || !slices.Contains(f.names, ffprobe) {
+		t.Errorf("ran %v", f.names)
 	}
 }

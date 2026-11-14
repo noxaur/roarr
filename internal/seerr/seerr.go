@@ -111,7 +111,9 @@ type TV struct {
 	PosterPath   string `json:"posterPath"`
 	BackdropPath string `json:"backdropPath"`
 	Status       string `json:"status"`
-	Genres       []struct {
+	// EpisodeRunTime is in minutes, the usual length first.
+	EpisodeRunTime []int `json:"episodeRunTime"`
+	Genres         []struct {
 		Name string `json:"name"`
 	} `json:"genres"`
 	ExternalIDs struct {
@@ -268,13 +270,4 @@ func (c *Client) Approve(ctx context.Context, id int) error {
 // Decline declines a request.
 func (c *Client) Decline(ctx context.Context, id int) error {
 	return c.Do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/request/%d/decline", id), nil, nil, nil)
-}
-
-// Trending returns trending titles for an empty search page.
-func (c *Client) Trending(ctx context.Context) ([]Result, error) {
-	var res struct {
-		Results []Result `json:"results"`
-	}
-	err := c.Get(ctx, "/api/v1/discover/trending?page=1&language=en", nil, &res)
-	return res.Results, err
 }

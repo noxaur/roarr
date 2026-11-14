@@ -88,6 +88,17 @@ const movieDetails = movies.map((m) => ({
   qualityProfileId: 1,
 }));
 
+// Not in the library: what a lookup by TVDB or TMDB id answers.
+const lookupShows = [
+  {
+    key: "tv:0", kind: "tv", id: 0, title: "Andor", year: 2022, network: "Disney+", status: "ended", monitored: false, have: 0, total: 24, tvdbId: 393189, tmdbId: 83867, inLibrary: false, synthetic: true, runtime: 45,
+    seasons: [1, 2].map((sn) => ({ number: sn, monitored: false, episodes: Array.from({ length: 12 }, (_, i) => ({ id: -(sn * 10000 + i + 1), season: sn, number: i + 1, title: `Episode ${i + 1}`, aired: true, hasFile: false, monitored: false })) })),
+  },
+];
+const lookupMovies = [{ key: "movie:0", kind: "movie", id: 0, title: "Dune", year: 2021, monitored: false, have: 0, total: 1, tmdbId: 438631, inLibrary: false, hasFile: false, runtime: 155 }];
+const showByTvdb = (tvdb) => [...series, ...lookupShows].find((x) => x.tvdbId === tvdb);
+const movieByTmdb = (tmdb) => [...movieDetails, ...lookupMovies].find((x) => x.tmdbId === tmdb);
+
 const library = { items: [...series, ...movieDetails].map(({ seasons: _s, file: _f, ...rest }) => rest), errors: {} };
 
 const activity = {
@@ -96,6 +107,8 @@ const activity = {
     { id: "a2", source: "sonarr", kind: "tv", title: "Sousou no Frieren", subtitle: "S01E21", downloadId: "f00d0021", release: "[SubsPlease] Sousou no Frieren - 21 (1080p) [A1B2C3D4].mkv", href: "/tv/3", status: "queued", progress: 0, size: 0, sizeLeft: 0 },
     { id: "a3", source: "radarr", kind: "movie", title: "Perfect Days", subtitle: "2023", downloadId: "da150014", release: "Perfect.Days.2023.1080p.BluRay.x264-GROUP", href: "/movie/14", status: "warning", progress: 0.1, size: 8e9, sizeLeft: 7.2e9, messages: ["No seeders for 2 days. qBittorrent reports the torrent as stalled."] },
     { id: "a4", source: "sonarr", kind: "tv", title: "Pluribus", subtitle: "S01E05", downloadId: "b1005005", release: "Pluribus.S01E05.720p.HDTV.x264-SYNCOPY", href: "/tv/4", status: "failed", progress: 1, size: 1.1e9, sizeLeft: 0, messages: ["Import failed: sample file detected, no video file found in the download."] },
+    { id: "a5", source: "roarr", kind: "tv", title: "Slow Horses", subtitle: "S04", downloadId: "5104e504", release: "Slow.Horses.S04.1080p.ATVP.WEB-DL.DDP5.1.H.264-NTb", href: "/tv/5", status: "stalled", progress: 0.31, size: 14e9, sizeLeft: 9.7e9 },
+    { id: "a6", source: "radarr", kind: "movie", title: "The French Dispatch", subtitle: "2021", downloadId: "f4e9c012", release: "The.French.Dispatch.2021.1080p.BluRay.x264-GROUP", href: "/movie/12", status: "paused", progress: 0.44, size: 9e9, sizeLeft: 5e9 },
   ],
   errors: {},
 };
@@ -114,7 +127,7 @@ const settings = {
     behaviour: { watchFirst: true, prefetch: true, indexerTimeout: 30, cacheMinutes: 20, seerrAutoFetch: false },
     transcode: { enabled: true, concurrency: 1, nice: 10, crf: 0, preset: 8, filmGrain: 0, minSavings: 15, pathMap: "/tv=/media/tv,/movies=/media/movies", schedule: [{ days: [1, 2, 3, 4, 5], from: "22:00", to: "07:00" }, { days: [6, 0], from: "00:00", to: "24:00" }] },
     verify: { autoRegrab: false, pathMap: "/downloads=/data/downloads" },
-    import: { mode: "arr", transfer: "hardlink", category: "roarr" },
+    import: { mode: "arr", transfer: "hardlink", category: "roarr", missingSearchHours: 12 },
   },
   locked: { PROWLARR_URL: true, PROWLARR_API_KEY: true, TRANSCODE_NICE: true },
 };
@@ -275,8 +288,7 @@ function parseInfo(t) {
   return { title: "Severance", seasons: [...new Set(seasons)], episodes, fullSeason: !episodes.length, resolution: res, source, codec, hdr, audio, channels, tenBit: /10bit/.test(t), group, languages, multi, dualAudio: /\bDL\b/.test(t), subtitles, subbed: subtitles.length > 0, hardSubbed: /-HC\b|KORSUB/.test(t), remux: /REMUX/i.test(t) };
 }
 
-function releasesFor(target) {
-  const s = series.find((x) => x.id === target) ?? series[0];
+function releasesFor(s) {
   const all = s.seasons.flatMap((x) => x.episodes);
   const wanted = all.find((e) => e.aired && !e.hasFile && !e.queued) ?? all.find((e) => e.queued) ?? all[0];
   const season2 = s.seasons[1]?.episodes.map((e) => e.id) ?? [];
@@ -329,8 +341,7 @@ function releasesFor(target) {
   });
 }
 
-function movieReleases(tmdb) {
-  const m = movieDetails.find((x) => x.tmdbId === tmdb) ?? movieDetails[0];
+function movieReleases(m) {
   const base = m.title.replace(/[:']/g, "").replace(/\s+/g, ".");
   const list = [
     [`${base}.${m.year}.1080p.WEB-DL.DDP5.1.H.264-NTb`, 6.2e9, 300, 400, "AlphaRatio", 82],
@@ -347,7 +358,7 @@ function movieReleases(tmdb) {
     info.episodes = [];
     info.fullSeason = false;
     return {
-      key: `m${i}`,
+      key: `m${m.tmdbId}-${i}`,
       title,
       indexer,
       indexerId: 1 + (i % 4),
@@ -358,7 +369,7 @@ function movieReleases(tmdb) {
       ageHours: ageH,
       publishDate: new Date().toISOString(),
       protocol: "torrent",
-      guid: `mg-${i}`,
+      guid: `mg-${m.tmdbId}-${i}`,
       info,
       kind: "movie",
       movieTmdb: m.tmdbId,
@@ -375,23 +386,48 @@ const json = (res, body, status = 200) => {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
 };
+const notFound = (res, what) => json(res, { error: what }, 404);
+const ints = (v) => (v ?? "").split(",").map(Number).filter(Boolean);
+
+// What Get does on the server: the best release that passes the rules, as an app.AutoResult.
+function autoResult(body) {
+  const targets = body.kind === "movie" ? (body.movies ?? []).map(movieByTmdb) : [series.find((x) => x.id === body.seriesId) ?? showByTvdb(body.tvdbId)];
+  if (targets.some((t) => !t)) return null;
+  const grabs = targets.map((t) => {
+    const best = (t.kind === "movie" ? movieReleases(t) : releasesFor(t)).filter((r) => !r.rejected).sort((a, b) => b.score - a.score)[0];
+    const fills = t.kind === "movie" ? 1 : body.episodeIds?.length || 1;
+    return { release: best.title, fills, result: { ok: true, via: t.kind === "movie" ? "radarr" : "sonarr", message: "mock: grabbed", ...(t.id ? { [t.kind === "movie" ? "movieId" : "seriesId"]: t.id } : {}) } };
+  });
+  return { grabs, waitedMs: 900, message: `Grabbed ${grabs.length} of ${grabs.length} planned release(s).` };
+}
 
 // MOCK_LATENCY=300 makes every answer wait like a real Sonarr does, to test
-// how the UI feels on a slow network.
+// how the UI feels on a slow network. MOCK_SEARCH_ERROR="indexers down" ends
+// every search with that error after the first indexer answered.
 const LATENCY = +(process.env.MOCK_LATENCY || 0);
+const SEARCH_ERROR = process.env.MOCK_SEARCH_ERROR;
 
 createServer((req, res) => (LATENCY ? setTimeout(() => handle(req, res), LATENCY) : handle(req, res))).listen(PORT, () =>
   console.log(`mock roarr API on http://localhost:${PORT}`),
 );
 
+// The routes of internal/server/server.go that the UI calls. Anything else is a 404.
 function handle(req, res) {
   const u = new URL(req.url, "http://x");
   const p = u.pathname;
+  const route = `${req.method} ${p}`;
   let m;
-  if (p === "/api/me") return json(res, { authMode: "none", authenticated: true, version: "mock" });
-  if (p === "/api/library") return json(res, library);
-  if (p === "/api/activity") return json(res, activity);
-  if (p === "/api/settings" && req.method === "PUT") {
+  if (route === "GET /api/me") return json(res, { authMode: "none", authenticated: true, version: "mock" });
+  if (route === "POST /api/login" || route === "POST /api/logout") return json(res, { ok: true });
+  if (route === "GET /api/library") return json(res, library);
+  if (route === "GET /api/activity") return json(res, activity);
+  if ((m = route.match(/^DELETE \/api\/activity\/([^/]+)$/))) {
+    const i = activity.items.findIndex((a) => a.id === decodeURIComponent(m[1]));
+    if (i < 0) return notFound(res, "not in the queue");
+    activity.items.splice(i, 1);
+    return json(res, { ok: true });
+  }
+  if (route === "PUT /api/settings") {
     // Like the Go server: the body replaces the whole object.
     readBody(req).then((next) => {
       settings.settings = next;
@@ -399,19 +435,19 @@ function handle(req, res) {
     });
     return;
   }
-  if (p === "/api/settings") return json(res, settings);
-  if (p === "/api/verify") return json(res, { enabled: true, items: verifyRecs, tools: { ffprobe: "/usr/bin/ffprobe", ffmpeg: "/usr/bin/ffmpeg" }, autoRegrab: !!settings.settings.verify?.autoRegrab });
-  if ((m = p.match(/^\/api\/verify\/([^/]+)(?:\/(recheck|regrab|dismiss))?$/))) {
-    const r = findRec(m[1]);
-    if (!r) return json(res, { error: "download not verified" }, 404);
-    if (!m[2]) return json(res, r);
-    if (m[2] === "dismiss") {
+  if (route === "GET /api/settings") return json(res, settings);
+  if (route === "GET /api/verify") return json(res, { enabled: true, items: verifyRecs, tools: { ffprobe: "/usr/bin/ffprobe", ffmpeg: "/usr/bin/ffmpeg" }, autoRegrab: !!settings.settings.verify?.autoRegrab });
+  if ((m = route.match(/^(?:GET \/api\/verify\/([^/]+)|POST \/api\/verify\/([^/]+)\/(recheck|regrab|dismiss))$/))) {
+    const r = findRec(m[1] ?? m[2]);
+    if (!r) return notFound(res, "download not verified");
+    if (!m[3]) return json(res, r);
+    if (m[3] === "dismiss") {
       r.dismissed = true;
       r.rejected = false;
       return json(res, r);
     }
     setTimeout(() => {
-      if (m[2] === "recheck") {
+      if (m[3] === "recheck") {
         if (r.verdict) r.verdict.at = new Date().toISOString();
         r.state = "done";
         return json(res, r);
@@ -427,38 +463,110 @@ function handle(req, res) {
     }, 900);
     return;
   }
-  if (p === "/api/transcode") return json(res, transcodeStatus());
-  if (p === "/api/transcode/pause" || p === "/api/transcode/resume") {
+  if (route === "GET /api/transcode") return json(res, transcodeStatus());
+  if (route === "POST /api/transcode/pause" || route === "POST /api/transcode/resume") {
     transcodePaused = p.endsWith("pause");
     return json(res, transcodeStatus());
   }
-  if (p === "/api/imports") return json(res, importsStatus());
-  if (p === "/api/status") return json(res, { version: "mock", services: { prowlarr: { configured: true, ok: true, version: "2.0", ms: 12 }, sonarr: { configured: true, ok: true, version: "4.0", ms: 20 }, radarr: { configured: true, ok: true, version: "6.0", ms: 18 }, seerr: { configured: false, ok: false }, jellyfin: { configured: false, ok: false }, qbittorrent: { configured: true, ok: false, error: "connection refused" } } });
-  if (p === "/api/requests") return json(res, { items: [], configured: false });
-  if (p.startsWith("/api/profiles")) return json(res, { profiles: [{ id: 1, name: "HD-1080p" }, { id: 2, name: "Ultra-HD" }] });
-  if (p === "/api/discover") return json(res, { results: [{ kind: "movie", title: "Dune", year: 2021, tmdbId: 438631, inLibrary: false }, { kind: "tv", title: "Severance", year: 2022, tmdbId: 95396, tvdbId: 70001, inLibrary: true, libraryId: 1 }] });
-  if ((m = p.match(/^\/api\/tv\/(\d+)$/))) return json(res, series.find((s) => s.id === +m[1]) ?? { error: "not found" });
-  if ((m = p.match(/^\/api\/movie\/(\d+)$/))) return json(res, movieDetails.find((s) => s.id === +m[1]) ?? { error: "not found" });
-  if (p === "/api/plan") {
-    let body = "";
-    req.on("data", (c) => (body += c));
-    req.on("end", () => {
-      const { wanted, options } = JSON.parse(body);
-      const best = options.filter((o) => !o.rejected).sort((a, b) => b.score - a.score)[0];
-      json(res, { picks: best ? [{ key: best.key, fills: wanted, extras: 0 }] : null, missing: best ? [] : wanted });
+  if (route === "GET /api/imports") return json(res, importsStatus());
+  if (route === "GET /api/status") return json(res, { version: "mock", services: { prowlarr: { configured: true, ok: true, version: "2.0", ms: 12 }, sonarr: { configured: true, ok: true, version: "4.0", ms: 20 }, radarr: { configured: true, ok: true, version: "6.0", ms: 18 }, seerr: { configured: false, ok: false }, jellyfin: { configured: false, ok: false }, qbittorrent: { configured: true, ok: false, error: "connection refused" } } });
+  if (route === "GET /api/requests") return json(res, { items: [], configured: false });
+  if (/^POST \/api\/requests\/\d+\/(approve|decline)$/.test(route)) return json(res, { error: "seerr is not configured" }, 424);
+  if (/^GET \/api\/profiles\/(tv|movie)$/.test(route)) return json(res, { profiles: [{ id: 1, name: "HD-1080p" }, { id: 2, name: "Ultra-HD" }] });
+  if (route === "GET /api/discover") return json(res, { results: [{ kind: "movie", title: "Dune", year: 2021, tmdbId: 438631, inLibrary: false }, { kind: "tv", title: "Severance", year: 2022, tmdbId: 95396, tvdbId: 70001, inLibrary: true, libraryId: 1 }, { kind: "tv", title: "Andor", year: 2022, tmdbId: 83867, tvdbId: 393189, inLibrary: false }] });
+
+  if ((m = route.match(/^GET \/api\/tv\/tvdb\/(\d+)$/))) {
+    const d = showByTvdb(+m[1]);
+    return d ? json(res, d) : json(res, { error: `sonarr found nothing for tvdb:${m[1]}` }, 500);
+  }
+  if ((m = route.match(/^GET \/api\/movie\/tmdb\/(\d+)$/))) {
+    const d = movieByTmdb(+m[1]);
+    return d ? json(res, d) : notFound(res, "movie not found");
+  }
+  // A title of the library, and the things done to it.
+  if ((m = route.match(/^(GET|PATCH|DELETE|POST) \/api\/(tv|movie)\/(\d+)(\/episodes|\/file|\/command\/(?:refresh|search))?$/))) {
+    const [, method, kind, id, sub] = m;
+    const d = (kind === "tv" ? series : movieDetails).find((x) => x.id === +id);
+    if (!d) return notFound(res, `${kind === "tv" ? "series" : "movie"} not found`);
+    const item = library.items.find((x) => x.key === d.key);
+    const op = `${method} ${sub ?? ""}`;
+    if (op === "GET ") return json(res, d);
+    if (op === "DELETE ") {
+      library.items = library.items.filter((x) => x !== item);
+      return json(res, { ok: true });
+    }
+    if (op === "PATCH ") {
+      readBody(req).then(({ monitored, qualityProfileId, season }) => {
+        if (qualityProfileId) d.qualityProfileId = qualityProfileId;
+        if (monitored !== undefined && season !== undefined) d.seasons.find((x) => x.number === season).monitored = monitored;
+        else if (monitored !== undefined) d.monitored = item.monitored = monitored;
+        json(res, { ok: true });
+      });
+      return;
+    }
+    if (method === "POST" && sub?.startsWith("/command/")) return json(res, { ok: true, message: sub.endsWith("refresh") ? "Refresh started." : "Search started." });
+    if (op === "DELETE /file" && kind === "movie") {
+      if (!d.hasFile) return notFound(res, "the movie has no file");
+      d.hasFile = false;
+      d.file = undefined;
+      item.have = d.have = 0;
+      return json(res, { ok: true, message: "Deleted the file.", count: 1 });
+    }
+    if (op === "POST /episodes" && kind === "tv") {
+      readBody(req).then(({ action, episodeIds = [] }) => {
+        const eps = d.seasons.flatMap((x) => x.episodes).filter((e) => episodeIds.includes(e.id));
+        if (action === "delete") {
+          for (const e of eps) (e.hasFile = false), (e.file = undefined);
+          item.have = d.have = d.seasons.flatMap((x) => x.episodes).filter((e) => e.aired && e.hasFile).length;
+        } else if (action === "monitor" || action === "unmonitor") for (const e of eps) e.monitored = action === "monitor";
+        else if (action !== "search") return json(res, { error: `unknown action "${action}"` }, 400);
+        json(res, { ok: true, message: `mock: ${action} ${eps.length} episode(s)`, count: eps.length });
+      });
+      return;
+    }
+  }
+
+  if (route === "POST /api/grab") {
+    readBody(req).then((g) => json(res, { ok: true, via: g.kind === "movie" ? "radarr" : "sonarr", message: "mock: grabbed", seriesId: g.seriesId || undefined, movieId: g.movieId || undefined }));
+    return;
+  }
+  if (route === "POST /api/auto") {
+    readBody(req).then((body) => {
+      const r = autoResult(body);
+      setTimeout(() => (r ? json(res, r) : notFound(res, "title not found")), 900);
     });
     return;
   }
-  if (p === "/api/search") {
+  if (route === "GET /api/search") {
+    // The stream opens at once; a failed lookup arrives on it as an error event.
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     const send = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
-    const kind = u.searchParams.get("kind");
-    const all = kind === "movie" ? movieReleases(+u.searchParams.get("tmdb")) : releasesFor(+u.searchParams.get("id"));
+    const fail = (error) => {
+      send({ type: "error", error });
+      res.end();
+    };
+    const q = u.searchParams;
+    let all;
+    if (q.get("kind") === "movie") {
+      const ms = ints(q.get("tmdb")).map(movieByTmdb);
+      if (!ms.length || ms.some((x) => !x)) return fail(ms.length ? "movie not found" : "tmdb ids required");
+      all = ms.flatMap(movieReleases);
+    } else {
+      const s = +q.get("id") ? series.find((x) => x.id === +q.get("id")) : showByTvdb(+q.get("tvdb"));
+      if (!s) return fail("series not found");
+      all = releasesFor(s);
+    }
     const names = ["AlphaRatio", "1337x", "YGG", "TorrentLeech"];
     send({ type: "plan", indexers: names.map((n, i) => ({ id: i + 1, name: n, queries: 1 })) });
+    let failed = false;
     names.forEach((n, i) => {
       setTimeout(() => {
+        if (failed) return;
         send({ type: "batch", batch: { indexerId: i + 1, indexer: n, label: "q", ms: 300 * (i + 1), cached: false }, releases: all.filter((r) => r.indexer === n) });
+        if (SEARCH_ERROR) {
+          failed = true;
+          return fail(SEARCH_ERROR);
+        }
         if (i === names.length - 1) {
           send({ type: "done", ms: 1200, total: all.length });
           res.end();
@@ -467,6 +575,5 @@ function handle(req, res) {
     });
     return;
   }
-  if (req.method !== "GET") return json(res, { ok: true, message: "mock: done" });
-  json(res, { error: "mock: no route " + p }, 404);
+  notFound(res, `mock: no route ${route}`);
 }

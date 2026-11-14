@@ -127,6 +127,9 @@ type Settings struct {
 	AuthMode          string `json:"authMode"`
 	AuthPassword      string `json:"authPassword,omitempty"`
 	JellyfinAdminOnly bool   `json:"jellyfinAdminOnly"`
+	// TrustedProxies lists the reverse proxies (IPs or CIDRs, comma
+	// separated) whose X-Forwarded-For roarr believes for login throttling.
+	TrustedProxies string `json:"trustedProxies,omitempty"`
 
 	Prefs     release.Prefs `json:"prefs"`
 	Behaviour Behaviour     `json:"behaviour"`
@@ -184,6 +187,7 @@ var envSpec = []struct {
 	{"QBIT_PASSWORD", func(s *Settings, v string) { s.QBit.Password = v }},
 	{"AUTH_MODE", func(s *Settings, v string) { s.AuthMode = strings.ToLower(v) }},
 	{"AUTH_PASSWORD", func(s *Settings, v string) { s.AuthPassword = v }},
+	{"TRUSTED_PROXIES", func(s *Settings, v string) { s.TrustedProxies = v }},
 	{"JELLYFIN_ADMIN_ONLY", func(s *Settings, v string) { s.JellyfinAdminOnly = truthy(v) }},
 	{"WATCH_FIRST", func(s *Settings, v string) { s.Behaviour.WatchFirst = truthy(v) }},
 	{"PREFETCH", func(s *Settings, v string) { s.Behaviour.Prefetch = truthy(v) }},

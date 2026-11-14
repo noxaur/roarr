@@ -148,7 +148,7 @@ export function SearchPalette({ open, onOpenChange, commands = [] }: { open: boo
               placeholder="Find a show or movie"
               className="h-full flex-1 bg-transparent text-[16px] outline-none placeholder:text-muted-foreground/70"
             />
-            {loading && <Spinner />}
+            {loading && <Spinner label="Searching" />}
           </div>
           <CommandPrimitive.List className="max-h-[min(60vh,520px)] overflow-y-auto p-2">
             {term.length > 0 && !loading && rows.a.length + rows.b.length + cmds.length === 0 && (

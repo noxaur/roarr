@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/noxaur/roarr/internal/verify"
 )
 
 // Job states.
@@ -88,11 +90,10 @@ type Status struct {
 
 // Manager owns the queue.
 type Manager struct {
-	run     Runner
-	path    string // state file
-	ffmpeg  string
-	ffprobe string
-	onDone  func(Job)
+	run    Runner
+	path   string // state file
+	tools  verify.Tools
+	onDone func(Job)
 
 	mu       sync.Mutex
 	opts     Options
@@ -105,6 +106,8 @@ type Manager struct {
 	kick     chan struct{}
 	paused   bool
 	active   map[*Job]*active
+	workers  sync.WaitGroup // running process calls
+	stopped  chan struct{}  // closed when Loop returns
 
 	now func() time.Time // test hook
 
@@ -121,12 +124,13 @@ type active struct {
 	stopping bool // cancelled because it could not be suspended
 }
 
-// New builds a manager; state is kept in dir/transcode.json.
-func New(r Runner, dir string) *Manager {
+// New builds a manager that runs the given ffmpeg and ffprobe; state is kept
+// in dir/transcode.json.
+func New(r Runner, tools verify.Tools, dir string) *Manager {
 	if r == nil {
 		r = ExecRunner{}
 	}
-	m := &Manager{run: r, path: filepath.Join(dir, "transcode.json"), ffmpeg: "ffmpeg", ffprobe: "ffprobe", kick: make(chan struct{}, 1), active: map[*Job]*active{}, now: time.Now}
+	m := &Manager{run: r, path: filepath.Join(dir, "transcode.json"), tools: tools, kick: make(chan struct{}, 1), active: map[*Job]*active{}, stopped: make(chan struct{}), now: time.Now}
 	m.load()
 	return m
 }
@@ -192,7 +196,7 @@ func (m *Manager) wake() {
 // Detect finds ffmpeg, ffprobe and an AV1 encoder: SVT-AV1 first, libaom
 // only when SVT-AV1 is missing.
 func (m *Manager) Detect(ctx context.Context) {
-	enc, err := detectEncoder(ctx, m.run, m.ffmpeg, m.ffprobe)
+	enc, err := detectEncoder(ctx, m.run, m.tools)
 	m.mu.Lock()
 	m.detected, m.enc = true, enc
 	m.encErr = ""
@@ -208,12 +212,15 @@ func (m *Manager) Detect(ctx context.Context) {
 	m.wake()
 }
 
-func detectEncoder(ctx context.Context, r Runner, ffmpeg, ffprobe string) (string, error) {
-	out, err := r.Output(ctx, ffmpeg, "-hide_banner", "-encoders")
+func detectEncoder(ctx context.Context, r Runner, t verify.Tools) (string, error) {
+	if t.FFmpeg == "" || t.FFprobe == "" {
+		return "", errors.New("ffmpeg or ffprobe not found (looked at FFMPEG_PATH / FFPROBE_PATH, then $PATH)")
+	}
+	out, err := r.Output(ctx, t.FFmpeg, "-hide_banner", "-encoders")
 	if err != nil {
 		return "", fmt.Errorf("ffmpeg not found: %w", err)
 	}
-	if _, err := r.Output(ctx, ffprobe, "-version"); err != nil {
+	if _, err := r.Output(ctx, t.FFprobe, "-version"); err != nil {
 		return "", fmt.Errorf("ffprobe not found: %w", err)
 	}
 	return pickEncoder(string(out))
@@ -310,8 +317,12 @@ func (m *Manager) Status() Status {
 	return st
 }
 
-// Loop starts queued jobs while there is capacity. It returns when ctx ends.
+// Loop repairs what a crash left behind, then starts queued jobs while there
+// is capacity. It returns once ctx has ended and every running job has
+// stopped. A job that is already swapping its file in finishes that first.
 func (m *Manager) Loop(ctx context.Context) {
+	defer close(m.stopped)
+	m.recoverSwaps()
 	m.Detect(ctx)
 	t := time.NewTicker(15 * time.Second) // the schedule is followed to the minute
 	defer t.Stop()
@@ -322,6 +333,7 @@ func (m *Manager) Loop(ctx context.Context) {
 		m.startReady(ctx)
 		select {
 		case <-ctx.Done():
+			m.workers.Wait()
 			return
 		case <-m.kick:
 		case <-t.C:
@@ -329,10 +341,13 @@ func (m *Manager) Loop(ctx context.Context) {
 	}
 }
 
+// Wait blocks until Loop has returned.
+func (m *Manager) Wait() { <-m.stopped }
+
 func (m *Manager) startReady(ctx context.Context) {
 	for {
 		m.mu.Lock()
-		if !m.opts.Enabled || m.enc == "" || m.heldLocked() {
+		if ctx.Err() != nil || !m.opts.Enabled || m.enc == "" || m.heldLocked() {
 			m.mu.Unlock()
 			return
 		}
@@ -353,11 +368,11 @@ func (m *Manager) startReady(ctx context.Context) {
 		next.State, next.StartedAt, next.Percent, next.Message = Running, time.Now(), 0, ""
 		opts, enc := m.opts, m.enc
 		m.mu.Unlock()
-		go func() {
+		m.workers.Go(func() {
 			m.process(ctx, next, opts, enc)
 			m.save()
 			m.wake()
-		}()
+		})
 	}
 }
 
@@ -378,15 +393,22 @@ func (m *Manager) finish(j *Job, state, msg string) {
 }
 
 // process converts one file. The original stays untouched until the very
-// last step, an atomic rename of the verified result.
+// last step, the swap of the verified result. Until then a cancelled ctx
+// (shutdown) puts the job back in the queue; the swap itself is not
+// interrupted.
 func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string) {
+	requeue := func() { m.update(j, func(j *Job) { j.State, j.Percent, j.Speed = Queued, 0, "" }) }
 	path := j.Path
 	st, err := os.Stat(path)
 	if err != nil {
 		m.finish(j, Failed, "cannot read file (is the media folder mounted in roarr at the same path as in Sonarr/Radarr?): "+err.Error())
 		return
 	}
-	src, err := Probe(ctx, m.run, m.ffprobe, path)
+	src, err := Probe(ctx, m.run, m.tools.FFprobe, path)
+	if ctx.Err() != nil {
+		requeue()
+		return
+	}
 	if err != nil {
 		m.finish(j, Failed, err.Error())
 		return
@@ -403,6 +425,7 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 	m.update(j, func(j *Job) { j.SrcBytes, j.CRF, j.Encoder = src.Size, CRFFor(opts, src), enc })
 
 	args := BuildArgs(opts, enc, src, path, tmp)
+	dur := src.Duration()
 	jctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m.mu.Lock()
@@ -416,15 +439,15 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 		m.applyHoldLocked() // a hold set while the file was probed
 		m.mu.Unlock()
 	}
-	err = m.run.Run(jctx, opts.Nice, m.ffmpeg, args, func(line string) {
+	err = m.run.Run(jctx, opts.Nice, m.tools.FFmpeg, args, func(line string) {
 		k, v, ok := strings.Cut(line, "=")
 		if !ok {
 			return
 		}
 		switch k {
 		case "out_time_us":
-			if us, err := strconv.ParseInt(v, 10, 64); err == nil && src.Duration > 0 {
-				p := min(float64(us)/1e6/src.Duration*100, 99.9)
+			if us, err := strconv.ParseInt(v, 10, 64); err == nil && dur > 0 {
+				p := min(float64(us)/1e6/dur*100, 99.9)
 				m.update(j, func(j *Job) { j.Percent = p })
 			}
 		case "speed":
@@ -437,9 +460,8 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 	m.mu.Unlock()
 	if err != nil {
 		if jctx.Err() != nil {
-			// Shutting down, or held where ffmpeg cannot be suspended: put the
-			// file back in the queue.
-			m.update(j, func(j *Job) { j.State, j.Percent, j.Speed = Queued, 0, "" })
+			// Shutting down, or held where ffmpeg cannot be suspended.
+			requeue()
 			return
 		}
 		m.finish(j, Failed, "ffmpeg failed: "+err.Error())
@@ -451,7 +473,11 @@ func (m *Manager) process(ctx context.Context, j *Job, opts Options, enc string)
 		m.finish(j, Failed, "ffmpeg produced no output")
 		return
 	}
-	out, err := Probe(ctx, m.run, m.ffprobe, tmp)
+	out, err := Probe(ctx, m.run, m.tools.FFprobe, tmp)
+	if ctx.Err() != nil {
+		requeue()
+		return
+	}
 	if err != nil {
 		m.finish(j, Failed, "cannot read the result: "+err.Error())
 		return
@@ -494,7 +520,9 @@ func sameFile(a, b os.FileInfo) bool {
 // overwriting (moved in with an atomic no-replace rename when the filesystem
 // has no hard links), so a file that appears in the gap is never clobbered.
 // Where no atomic no-replace move exists the job fails and the backup is
-// kept. The backup is deleted only after the new file is in place.
+// kept. The backup is deleted only after the new file is in place, and
+// before tmp: while the backup exists next to a linked-in result, tmp still
+// names the same file as path, which is how recoverSwaps knows the result.
 // An existing backup from an earlier job is never deleted or overwritten.
 func (m *Manager) swap(path, tmp string, orig os.FileInfo) error {
 	if now, err := os.Stat(path); err != nil || !sameFile(orig, now) {
@@ -507,17 +535,7 @@ func (m *Manager) swap(path, tmp string, orig os.FileInfo) error {
 	if m.beforeSwap != nil {
 		m.beforeSwap()
 	}
-	rename, link := m.renameFn, m.linkFn
-	if rename == nil {
-		rename = os.Rename
-	}
-	if link == nil {
-		link = os.Link
-	}
-	noReplace := m.noReplaceFn
-	if noReplace == nil {
-		noReplace = renameNoReplace
-	}
+	rename, link, noReplace := orDefault(m.renameFn, os.Rename), orDefault(m.linkFn, os.Link), orDefault(m.noReplaceFn, renameNoReplace)
 	if err := rename(path, bak); err != nil {
 		return fmt.Errorf("cannot replace the original: %w", err)
 	}
@@ -531,7 +549,6 @@ func (m *Manager) swap(path, tmp string, orig os.FileInfo) error {
 	err = link(tmp, path)
 	switch {
 	case err == nil:
-		_ = os.Remove(tmp)
 	case errors.Is(err, fs.ErrExist):
 		return restore(noReplace, link, bak, path, "a new file appeared during conversion, result discarded")
 	default:
@@ -548,7 +565,92 @@ func (m *Manager) swap(path, tmp string, orig os.FileInfo) error {
 		}
 	}
 	_ = os.Remove(bak)
+	_ = os.Remove(tmp)
 	return nil
+}
+
+func orDefault(f, def func(a, b string) error) func(a, b string) error {
+	if f != nil {
+		return f
+	}
+	return def
+}
+
+// recoverSwaps repairs what a crash inside swap left next to the files of
+// known jobs. It runs before any job starts, so no temporary file is in use.
+// An original is put back when nothing is in its place. Its backup is
+// deleted only when the file in place is provably the result; otherwise
+// both are kept and the waiting job fails.
+func (m *Manager) recoverSwaps() {
+	m.mu.Lock()
+	jobs := append([]*Job(nil), m.jobs...)
+	m.mu.Unlock()
+	noReplace, link := orDefault(m.noReplaceFn, renameNoReplace), orDefault(m.linkFn, os.Link)
+	seen := map[string]bool{}
+	changed := false
+	for i := len(jobs) - 1; i >= 0; i-- { // newest first: a path's waiting job is its last
+		j := jobs[i]
+		path := j.Path
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		waiting := j.State == Queued
+		bak, tmp := backupPath(path), tempPath(path)
+		if old, err := os.Lstat(bak); err == nil {
+			msg := ""
+			cur, err := os.Stat(path)
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+				// Died between moving the original aside and putting the result in.
+				if err := moveNoReplace(noReplace, link, bak, path); err != nil {
+					msg = fmt.Sprintf("the original is kept as %s and could not be put back: %v", bak, err)
+				} else {
+					slog.Info("transcode: restored the original after an interrupted swap", "file", filepath.Base(path))
+				}
+			case err != nil:
+				msg = fmt.Sprintf("an earlier backup is kept at %s and the file in place cannot be read: %v", bak, err)
+			case os.SameFile(old, cur):
+				// Died while the original was linked back: the backup is a second name for it.
+				_ = os.Remove(bak)
+			default:
+				res, err := os.Lstat(tmp)
+				if err != nil || !os.SameFile(res, cur) {
+					msg = fmt.Sprintf("an earlier backup is kept at %s and roarr cannot tell whether the file in place replaces it; compare the two and remove the backup to allow this file to be converted", bak)
+					break
+				}
+				// Died after the result was linked in: finish the swap.
+				_ = os.Remove(bak)
+				_ = os.Remove(tmp)
+				if waiting {
+					saved := old.Size() - cur.Size()
+					m.mu.Lock()
+					m.saved += saved
+					j.SrcBytes, j.OutBytes, j.SavedBytes = old.Size(), cur.Size(), saved
+					m.mu.Unlock()
+					m.finish(j, Done, "")
+					waiting, changed = false, true
+					slog.Info("transcode: finished an interrupted swap", "file", filepath.Base(path), "saved", saved)
+					if m.onDone != nil {
+						m.onDone(*j)
+					}
+				}
+			}
+			if msg != "" {
+				slog.Warn("transcode: interrupted swap left for you to resolve", "file", filepath.Base(path), "detail", msg)
+				if waiting {
+					m.finish(j, Failed, msg)
+					waiting, changed = false, true
+				}
+			}
+		}
+		if waiting {
+			_ = os.Remove(tmp)
+		}
+	}
+	if changed {
+		m.save()
+	}
 }
 
 // restore moves the backup back to path without overwriting. If another

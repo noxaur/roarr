@@ -16,7 +16,10 @@ export interface IndexerState {
 export interface SearchState {
   releases: Map<string, Release>;
   indexers: Map<number, IndexerState>;
+  /** Every stream finished cleanly: the results are complete. */
   done: boolean;
+  /** The search ended, and at least one stream ended in an error: the results may be partial. */
+  errored: boolean;
   error?: string;
   startedAt: number;
   firstAt?: number;
@@ -24,11 +27,25 @@ export interface SearchState {
   version: number;
 }
 
-const empty = (): SearchState => ({ releases: new Map(), indexers: new Map(), done: false, startedAt: performance.now(), version: 0 });
+const empty = (): SearchState => ({ releases: new Map(), indexers: new Map(), done: false, errored: false, startedAt: performance.now(), version: 0 });
+
+/** How a stream ended; undefined while it is still open. */
+export type StreamEnd = "done" | "error";
 
 interface Stream {
   cancel: () => void;
-  done: boolean;
+  end?: StreamEnd;
+}
+
+/**
+ * The state of a search made of several streams. A stream that ended in an
+ * error (a dropped connection, a failed lookup) leaves partial results, so
+ * the search is never done: Get must not grab a plan built from them.
+ */
+export function settleStreams(ends: (StreamEnd | undefined)[]): { done: boolean; errored: boolean } {
+  const ended = ends.length > 0 && ends.every(Boolean);
+  const errored = ended && ends.includes("error");
+  return { done: ended && !errored, errored };
 }
 
 /**
@@ -53,9 +70,9 @@ export function useSearch(key: string, streams: Record<string, string>[], enable
     if (!raf.current) raf.current = requestAnimationFrame(flush);
   };
   const settle = () => {
-    const all = [...active.current.values()];
     const s = ref.current;
-    const done = all.length > 0 && all.every((x) => x.done);
+    const { done, errored } = settleStreams([...active.current.values()].map((x) => x.end));
+    s.errored = errored;
     if (done && !s.done) {
       s.done = true;
       s.doneAt = performance.now();
@@ -84,7 +101,7 @@ export function useSearch(key: string, streams: Record<string, string>[], enable
     }
     for (const [k, params] of want) {
       if (active.current.has(k)) continue;
-      const st: Stream = { cancel: () => {}, done: false };
+      const st: Stream = { cancel: () => {} };
       active.current.set(k, st);
       st.cancel = streamSearch(params, (ev) => {
         const s = ref.current;
@@ -106,10 +123,10 @@ export function useSearch(key: string, streams: Record<string, string>[], enable
             break;
           case "error":
             s.error = ev.error;
-            st.done = true;
+            st.end = "error";
             break;
           case "done":
-            st.done = true;
+            st.end = "done";
             break;
         }
         settle();

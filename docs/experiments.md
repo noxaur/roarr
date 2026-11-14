@@ -3,29 +3,34 @@
 All numbers come from the lab in `lab/`:
 - Real Sonarr 4.0.20, Radarr 6.4.4, Prowlarr 2.6.5, qBittorrent 5.2.4,
   Jellyfin 12.2 and Seerr 3.5 in Docker on one machine (10 cores, Docker
-  Desktop).
+  Desktop). These are the versions of the measured run; the lab pulls
+  `latest`.
 - Prowlarr feeds seven fake Torznab indexers (`lab/mockindexer`), each with
   its own latency profile and hostname.
 
-The numbers are directional. Real trackers vary more, but the *ratios*
-between strategies are what decided the design.
+`lab/README.md` tells how to run each experiment. The numbers are
+directional. Real trackers vary more, but the *ratios* between strategies
+are what decided the design.
 
 ## 1. Where does search time go?
 
 `go run ./lab/bench -n 5` searches one episode of *The Expanse* (5 different
-episodes) with each strategy. Columns: time until the first results are
+episodes; since the roarr rows, the first of 5 seasons) with each strategy. Columns: time until the first results are
 known, until 90% of the final result count is known, and until the request
-completes.
+completes (for roarr, until the `done` event of its stream).
 
 | strategy | first | 90% | all | results | indexer requests |
 |---|---|---|---|---|---|
-| Sonarr interactive search (`/api/v3/release`, what pulldeck used) | 6.97 s | 6.97 s | 6.97 s | 26 | 6 |
+| Sonarr interactive search (`/api/v3/release`, what roarr used at first) | 6.97 s | 6.97 s | 6.97 s | 26 | 6 |
 | Sonarr season search | 6.79 s | 6.79 s | 6.79 s | 299 | 6 |
 | Prowlarr aggregated `/api/v1/search` | 6.49 s | 6.49 s | 6.49 s | 36 | 7 |
 | one Prowlarr JSON search per indexer, in parallel | **0.52 s** | 5.97 s | 7.33 s | 35 | 7 |
 | one Prowlarr Torznab call per indexer, in parallel | 0.42 s | 5.50 s | 5.50 s | 36 | 7 |
 
-Medians of 5. Raw runs in the bench output.
+Medians of 5. Raw runs in the bench output. The bench also prints
+`roarr-cold` and `roarr-warm` rows, measured on roarr's `/api/search` stream.
+They are newer than this run and are not in the table yet. Section 2 has
+roarr's numbers from the same run, taken by hand.
 
 - Every "single request" strategy is as slow as the slowest indexer. When the
   hanging indexer hangs, it is much worse: up to 48 s for the Prowlarr
@@ -61,12 +66,15 @@ the search engine:
   show-wide query, then prefetching of other seasons (seasons with missing
   episodes first). A query already queued at low priority is bumped when a
   page asks for it.
-- **Abandoned prefetch is dropped.** If nobody waits for a prefetch query by
-  the time its turn comes, it is skipped instead of spending indexer quota.
+- **Abandoned queries are dropped.** If nobody waits for a queued query by
+  the time its turn comes, it is skipped, whatever its priority, so the next
+  click does not wait behind it. A query already sent runs to the end and
+  fills the cache.
 - **Per-episode queries only for 1–3 episodes.** For more, the season query
   already returns them.
 
-These rules are covered by `internal/search/engine_test.go`.
+The queue rules are covered by `internal/search/engine_test.go`. The
+per-episode rule lives in `internal/app`.
 
 ## 2. End-to-end through roarr
 
@@ -86,15 +94,14 @@ Two follow-ups came out of this:
 - **Auto mode does not wait for everything.** It grabs once every wanted
   episode is covered and the plan has not changed for 2 s, with at least
   2.5 s elapsed. Measured: a three-movie collection decided after 8.6 s,
-  and a whole show (62 episodes) after 2.6 s. The slow indexers keep filling
-  the cache in the background.
+  and a whole show (62 episodes) after 2.6 s. Queries already sent to slow
+  indexers still fill the cache; the ones still queued are dropped.
 
 ## 3. Watch-first: the download order for a season pack
 
 **Setup.**
-- The pack: 10 synthetic 11-minute episodes, 30 MB each, made with ffmpeg
-  (see below). They are long enough that Sonarr does not treat them as
-  samples.
+- The pack: 10 synthetic 11-minute episodes, 30 MB each, made with ffmpeg.
+  They are long enough that Sonarr does not treat them as samples.
 - Three qBittorrent seeders capped at 2 MB/s each, with qBittorrent's
   embedded tracker.
 - The lab qBittorrent downloads the pack once per strategy
@@ -126,7 +133,7 @@ read these as ranges.
   complete, the client counts as a seed. Seeders drop the connection, and
   nothing reconnects until the next tracker announce. The "focus" strategy
   sat stalled for 400 s. roarr only uses priority 0 for files it will never
-  need: samples, and episodes already in the library.
+  need: samples, extras, and episodes already in the library.
 
 ### End to end (roarr → qBittorrent → Sonarr → Jellyfin)
 
@@ -153,8 +160,9 @@ seeder held them. roarr imports whatever completes, in any order.
 
 - **An approved `/release/push` is not a grab.** Sonarr approved a release
   and then failed to hand it to qBittorrent (a magnet without trackers). It
-  only logged that failure. roarr confirms through the "grabbed" history
-  event before it reports success.
+  only logged that failure. roarr waits for a new "grabbed"
+  history event before it says the download started. When history cannot
+  be read, it says the grab could not be checked.
 - **Sonarr declines multi-season and complete-series packs on push**
   ("Multi-season releases are not supported"). With qBittorrent configured,
   roarr adds those straight to qBittorrent in Sonarr's category and imports
@@ -175,22 +183,3 @@ seeder held them. roarr imports whatever completes, in any order.
 - **Auto mode re-plans around declines.** If Sonarr refuses a pick (size
   limits, already has it), the episodes it would have filled are re-planned
   with the next best releases.
-
-## Reproduce
-
-```sh
-make lab                                   # stack + bootstrap
-go run ./lab/bench -n 5                    # section 1
-
-# section 3: build the pack, torrent it, seed it, run the strategies
-cd lab/state/swarm/payload && N=Severance.S02.1080p.WEB-DL.DDP5.1.H.264-LABPACK && mkdir -p $N
-for i in 01 02 03 04 05 06 07 08 09 10; do
-  docker run --rm -v "$PWD/$N":/out lscr.io/linuxserver/ffmpeg -loglevel error \
-    -f lavfi -i testsrc=size=320x180:rate=25 -f lavfi -i sine=frequency=440:sample_rate=22050 \
-    -t 660 -c:v libx264 -preset ultrafast -b:v 330k -c:a aac -b:a 32k \
-    /out/Severance.S02E$i.1080p.WEB-DL.DDP5.1.H.264-LABPACK.mkv
-done; cd -
-uv run --with torf python lab/swarm/maketorrent.py
-docker compose -f lab/docker-compose.yml --profile swarm up -d
-python3 lab/swarm/experiment.py 2
-```

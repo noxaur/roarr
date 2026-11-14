@@ -51,10 +51,17 @@ and import tests.
 
 ## Experiments
 
-- `go run ./lab/bench`: search strategies compared (first result, 90%,
-  complete, upstream requests).
-- `swarm/experiment.py`: download-order strategies for season packs on a
-  local throttled swarm (3 seeders). Generate the pack first with ffmpeg; see
-  docs/experiments.md for the exact commands.
+- `make bench` (`go run ./lab/bench -n 5`): search strategies compared (first
+  result, 90%, complete, upstream requests), each on the first episode of a
+  different season. The `roarr` strategy reads roarr's own `/api/search`
+  stream and prints two rows per episode: `roarr-cold`, then `roarr-warm` for
+  the same search repeated at once. A cold row needs a roarr that has not
+  searched that season in the last `CACHE_MINUTES`; the bench warns when it
+  sees cached answers. Restart the `roarr` service before a second run. The
+  lab roarr must run with `AUTH_MODE=none`, its default there.
+- `make swarm`, with the lab running: download-order strategies for season
+  packs on a local throttled swarm (3 seeders, `swarm/experiment.py`). The
+  first run builds the pack with ffmpeg in Docker and its torrent with
+  `swarm/maketorrent.py`, which needs `uv`. The Makefile has the commands.
 
 Results: [../docs/experiments.md](../docs/experiments.md).

@@ -86,6 +86,9 @@ func (a *App) forget(g GrabRequest) {
 	if g.SeriesID != 0 {
 		delete(a.details, fmt.Sprintf("tv:%d", g.SeriesID))
 	}
+	if g.MovieID != 0 {
+		delete(a.details, fmt.Sprintf("movie:%d", g.MovieID))
+	}
 }
 
 // ensureSeries returns the Sonarr series id, adding the show if needed.
@@ -203,7 +206,7 @@ func realEpisodes(d *SeriesDetail, g GrabRequest) (wanted, covers []int) {
 	return wanted, covers
 }
 
-func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, error) {
+func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (res GrabResult, err error) {
 	d, err := a.ensureSeries(ctx, &g)
 	if err != nil {
 		return GrabResult{}, err
@@ -247,7 +250,7 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 		slog.Warn("could not monitor seasons", "err", err)
 	}
 
-	res := GrabResult{SeriesID: d.ID}
+	res = GrabResult{SeriesID: d.ID}
 	watch := a.Settings.Get().Behaviour.WatchFirst
 	if g.WatchFirst != nil {
 		watch = *g.WatchFirst
@@ -278,13 +281,15 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 		push.SeriesID = d.ID
 		push.TvdbID = d.TvdbID
 		a.pushTarget(ctx, c.Sonarr.Client, "Sonarr", g.Release, &push)
+		grabbed := confirmGrab(ctx, c.Sonarr.Client, g.Release.Title)
 		decisions, err := c.Sonarr.Push(ctx, push)
 		if err != nil {
 			return GrabResult{}, err
 		}
 		bypassed := false
 		if ok, _ := approved(decisions); !ok {
-			decisions, err = a.withAnyQuality(ctx, c.Sonarr.Client,
+			var stuck string
+			decisions, stuck, err = a.withAnyQuality(ctx, c.Sonarr.Client,
 				func(ctx context.Context) (int, error) {
 					s, err := c.Sonarr.Series(ctx, d.ID)
 					return s.QualityProfile, err
@@ -295,6 +300,9 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 				return GrabResult{}, err
 			}
 			bypassed = true
+			if stuck != "" {
+				defer func() { res.Message += " " + stuck }()
+			}
 		}
 		forced := false
 		if ok, rej := approved(decisions); !ok {
@@ -310,14 +318,21 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 			}
 			forced = true
 		}
-		if !forced && !confirmGrab(ctx, c.Sonarr.Client, g.Release.Title) {
-			res.Message = "Sonarr accepted the release but its download client did not take it (see Sonarr → System → Logs)"
-			res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
-			return res, nil
+		var unknown error
+		if !forced {
+			ok, err := grabbed()
+			if err == nil && !ok {
+				res.Message = "Sonarr accepted the release but its download client did not take it (see Sonarr → System → Logs)"
+				res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
+				return res, nil
+			}
+			unknown = err
 		}
 		res.OK, res.Via, res.Hash = true, "sonarr", strings.ToLower(g.Release.InfoHash)
 		res.Message = "Sonarr is downloading it."
 		switch {
+		case unknown != nil:
+			res.Message = unconfirmed("Sonarr", unknown)
 		case forced:
 			res.Message = "Sonarr is downloading it (all Sonarr checks skipped)."
 		case bypassed:
@@ -332,7 +347,7 @@ func (a *App) grabEpisodes(ctx context.Context, g GrabRequest) (GrabResult, erro
 	return res, nil
 }
 
-func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) {
+func (a *App) grabMovie(ctx context.Context, g GrabRequest) (res GrabResult, err error) {
 	c := a.C()
 	if c.Radarr == nil {
 		return GrabResult{}, fmt.Errorf("radarr %w", ErrNotConfigured)
@@ -359,7 +374,7 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 	} else if err := c.Radarr.Monitor(ctx, g.MovieID); err != nil {
 		slog.Warn("could not monitor movie", "err", err)
 	}
-	res := GrabResult{MovieID: g.MovieID}
+	res = GrabResult{MovieID: g.MovieID}
 	if g.Force {
 		hash, err := a.directAdd(ctx, c.Radarr.Client, "movieCategory", g.Release, false)
 		if err != nil {
@@ -372,13 +387,15 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 	push.MovieID = g.MovieID
 	push.TmdbID = g.TmdbID
 	a.pushTarget(ctx, c.Radarr.Client, "Radarr", g.Release, &push)
+	grabbed := confirmGrab(ctx, c.Radarr.Client, g.Release.Title)
 	decisions, err := c.Radarr.Push(ctx, push)
 	if err != nil {
 		return GrabResult{}, err
 	}
 	bypassed := false
 	if ok, _ := approved(decisions); !ok {
-		decisions, err = a.withAnyQuality(ctx, c.Radarr.Client,
+		var stuck string
+		decisions, stuck, err = a.withAnyQuality(ctx, c.Radarr.Client,
 			func(ctx context.Context) (int, error) {
 				m, err := c.Radarr.Movie(ctx, g.MovieID)
 				return m.QualityProfileID, err
@@ -389,6 +406,9 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 			return GrabResult{}, err
 		}
 		bypassed = true
+		if stuck != "" {
+			defer func() { res.Message += " " + stuck }()
+		}
 	}
 	forced := false
 	if ok, rej := approved(decisions); !ok {
@@ -398,13 +418,20 @@ func (a *App) grabMovie(ctx context.Context, g GrabRequest) (GrabResult, error) 
 		}
 		forced = true
 	}
-	if !forced && !confirmGrab(ctx, c.Radarr.Client, g.Release.Title) {
-		res.Message = "Radarr accepted the release but its download client did not take it (see Radarr → System → Logs)"
-		res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
-		return res, nil
+	var unknown error
+	if !forced {
+		ok, err := grabbed()
+		if err == nil && !ok {
+			res.Message = "Radarr accepted the release but its download client did not take it (see Radarr → System → Logs)"
+			res.CanForce = c.QBit != nil && g.Release.Protocol != "usenet"
+			return res, nil
+		}
+		unknown = err
 	}
 	res.OK, res.Via, res.Hash, res.Message = true, "radarr", strings.ToLower(g.Release.InfoHash), "Radarr is downloading it."
 	switch {
+	case unknown != nil:
+		res.Message = unconfirmed("Radarr", unknown)
 	case forced:
 		res.Message = "Radarr is downloading it (all Radarr checks skipped)."
 	case bypassed:
@@ -471,53 +498,92 @@ func (a *App) grabAnyway(ctx context.Context, c *arr.Client, q url.Values, extra
 
 // withAnyQuality runs push with the title moved to the permissive bypass
 // profile and moves it back afterwards. The *arr hands an approved push to
-// its download client inside the push request, and imports do not check
-// the profile's allowed qualities, so the original profile is back in place
-// before anything else looks at it.
-func (a *App) withAnyQuality(ctx context.Context, c *arr.Client, current func(context.Context) (int, error), set func(context.Context, int) error, push func(context.Context) ([]arr.PushDecision, error)) ([]arr.PushDecision, error) {
+// its download client inside the push request, and imports do not check the
+// profile's allowed qualities, so the bypass only has to last for the push.
+// When the title cannot be moved back it stays on the bypass profile, which
+// changes what the *arr grabs for it from then on: stuck says so, for the
+// grab result.
+func (a *App) withAnyQuality(ctx context.Context, c *arr.Client, current func(context.Context) (int, error), set func(context.Context, int) error, push func(context.Context) ([]arr.PushDecision, error)) (decisions []arr.PushDecision, stuck string, err error) {
 	a.bypassMu.Lock()
 	defer a.bypassMu.Unlock()
 	orig, err := current(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	anyID, err := c.EnsureBypassProfile(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if orig != anyID {
 		if err := set(ctx, anyID); err != nil {
-			return nil, fmt.Errorf("switching to the %q profile: %w", arr.BypassProfileName, err)
+			return nil, "", fmt.Errorf("switching to the %q profile: %w", arr.BypassProfileName, err)
 		}
 		defer func() {
 			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 			defer cancel()
-			if err := set(rctx, orig); err != nil {
-				slog.Error("could not restore quality profile", "service", c.Service, "profile", orig, "err", err)
+			rerr := set(rctx, orig)
+			if rerr != nil {
+				rerr = set(rctx, orig)
+			}
+			if rerr == nil {
+				return
+			}
+			slog.Error("could not restore quality profile", "service", c.Service, "profile", orig, "err", rerr)
+			stuck = fmt.Sprintf("Its quality profile could not be put back (%v): the title is still on %q, so set its profile again in %s.", rerr, arr.BypassProfileName, strings.ToUpper(c.Service[:1])+c.Service[1:])
+			if err != nil {
+				err = fmt.Errorf("%w. %s", err, stuck)
 			}
 		}()
 	}
-	return push(ctx)
+	decisions, err = push(ctx)
+	return decisions, "", err
 }
 
-// confirmGrab waits briefly for the *arr to record a "grabbed" history
-// event. An approved push only means the decision engine liked it; the
-// event appears once the download client actually accepted it.
-func confirmGrab(ctx context.Context, c *arr.Client, title string) bool {
-	deadline := time.Now().Add(8 * time.Second)
-	for time.Now().Before(deadline) {
-		if ok, err := c.RecentlyGrabbed(ctx, title, time.Minute); err == nil && ok {
-			return true
-		} else if err != nil {
-			return true // cannot verify; do not report a false failure
+// How long a grab waits for the *arr to record its "grabbed" history event.
+var (
+	grabConfirmWait = 8 * time.Second
+	grabConfirmPoll = 400 * time.Millisecond
+)
+
+// confirmGrab is called before a push and notes the newest "grabbed" history
+// event (ids grow with time). The func it returns then waits briefly for a
+// newer one for title. An approved push only means the decision engine liked
+// it; the event appears once the download client actually accepted it. An
+// error means history could not be read, which says nothing either way.
+func confirmGrab(ctx context.Context, c *arr.Client, title string) func() (bool, error) {
+	last := 0
+	rows, err := c.Grabs(ctx, 1)
+	if len(rows) > 0 {
+		last = rows[0].ID
+	}
+	return func() (bool, error) {
+		if err != nil {
+			return false, err
 		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(400 * time.Millisecond):
+		deadline := time.Now().Add(grabConfirmWait)
+		for {
+			rows, err = c.Grabs(ctx, 25)
+			for _, r := range rows {
+				if r.ID > last && strings.EqualFold(r.SourceTitle, title) {
+					return true, nil
+				}
+			}
+			if !time.Now().Before(deadline) {
+				return false, err
+			}
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			case <-time.After(grabConfirmPoll):
+			}
 		}
 	}
-	return false
+}
+
+// unconfirmed is the grab message for an approved push whose "grabbed" event
+// could not be looked up.
+func unconfirmed(app string, err error) string {
+	return fmt.Sprintf("%s accepted the release, but roarr could not check that its download client took it (%v). Look in %s → Activity.", app, err, app)
 }
 
 func pushFor(r Release) arr.PushRelease {
@@ -705,23 +771,33 @@ func (a *App) addToQBit(ctx context.Context, add qbit.Add, r Release) (string, e
 	}
 	// Adding is asynchronous for magnets and links; make sure it landed.
 	if hash != "" {
-		deadline := time.Now().Add(6 * time.Second)
+		deadline := time.Now().Add(qbitListWait)
 		for {
-			if ts, err := c.QBit.Torrents(ctx, hash); err != nil || len(ts) > 0 {
+			ts, err := c.QBit.Torrents(ctx, hash)
+			if err == nil && len(ts) > 0 {
 				break
 			}
 			if time.Now().After(deadline) {
+				if err != nil {
+					return "", fmt.Errorf("qBittorrent accepted the torrent but could not list it: %w", err)
+				}
 				return "", errors.New("qBittorrent accepted the torrent but it never showed up in its list")
 			}
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
-			case <-time.After(300 * time.Millisecond):
+			case <-time.After(qbitListPoll):
 			}
 		}
 	}
 	return hash, nil
 }
+
+// How long an add waits for qBittorrent to list the new torrent.
+var (
+	qbitListWait = 6 * time.Second
+	qbitListPoll = 300 * time.Millisecond
+)
 
 var btihRe = regexp.MustCompile(`(?i)xt=urn:btih:([0-9a-z]{32,40})`)
 

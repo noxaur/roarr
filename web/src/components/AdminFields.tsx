@@ -1,8 +1,10 @@
-import { useId, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { LabelledBy } from "@/lib/label";
+import { parseNum } from "@/lib/num";
 import { Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+import { Segmented as SegmentedControl } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 
 // Form rows for the Admin page. A lock means an environment variable sets
@@ -121,53 +123,39 @@ export function Num({
   label?: string;
   onChange: (v: number) => void;
 }) {
+  // What is being typed. It may be empty or half a number; only a number
+  // inside min/max reaches `onChange`, and leaving the field shows the value again.
+  const [draft, setDraft] = useState<string | null>(null);
   return (
     <div className="flex items-center gap-2">
-      <Input type="number" aria-label={label} min={min} max={max} step={step} value={value} disabled={disabled} onChange={(e) => onChange(+e.target.value)} className="w-24" />
+      <Input
+        type="number"
+        aria-label={label}
+        min={min}
+        max={max}
+        step={step}
+        value={draft ?? value}
+        disabled={disabled}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          const n = parseNum(e.target.value, min, max);
+          if (n !== null) onChange(n);
+        }}
+        onBlur={() => setDraft(null)}
+        className="w-24"
+      />
       {unit && <span className="font-mono text-xs text-muted-foreground">{unit}</span>}
       {disabled && <EnvLock />}
     </div>
   );
 }
 
-/** A small set of exclusive choices as one segmented control. */
-export function Segmented<T extends string>({
-  label,
-  value,
-  options,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: readonly (readonly [T, string])[];
-  disabled?: boolean;
-  onChange: (v: T) => void;
-}) {
+/** A segmented control for a setting, with the lock when an environment variable sets it. */
+export function Segmented<T extends string>(p: { label: string; value: T; options: readonly (readonly [T, string])[]; disabled?: boolean; onChange: (v: T) => void }) {
   return (
     <div className="flex items-center gap-2">
-      <div role="radiogroup" aria-label={label} className={cn("inline-flex max-w-full flex-wrap gap-1 rounded-[2px] bg-card p-1", disabled && "opacity-60")}>
-        {options.map(([k, name]) => {
-          const on = value === k;
-          return (
-            <button
-              key={k}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              disabled={disabled}
-              onClick={() => onChange(k)}
-              className={cn(
-                "h-8 cursor-pointer rounded-[2px] px-3 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:hover:text-muted-foreground",
-                on && "bg-accent text-foreground disabled:hover:text-foreground",
-              )}
-            >
-              {name}
-            </button>
-          );
-        })}
-      </div>
-      {disabled && <EnvLock />}
+      <SegmentedControl {...p} />
+      {p.disabled && <EnvLock />}
     </div>
   );
 }

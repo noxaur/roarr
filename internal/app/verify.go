@@ -20,6 +20,7 @@ import (
 	"github.com/noxaur/roarr/internal/arr"
 	"github.com/noxaur/roarr/internal/config"
 	"github.com/noxaur/roarr/internal/httpx"
+	"github.com/noxaur/roarr/internal/importer"
 	"github.com/noxaur/roarr/internal/qbit"
 	"github.com/noxaur/roarr/internal/verify"
 )
@@ -29,15 +30,17 @@ import (
 // pack is judged by its first episode as soon as that file is complete, so a
 // fake is caught long before the whole pack has downloaded. A release that
 // fails is hidden from roarr's picks; it can be re-grabbed, automatically
-// when Verify.AutoRegrab is on.
+// when Verify.AutoRegrab is on. A native download is judged by beforeImport
+// instead, on the first of its files to reach the importer.
 
 // VerifyRecord is one download followed by the verifier.
 type VerifyRecord struct {
 	Hash       string          `json:"hash"`   // download id, lowercase
-	Source     string          `json:"source"` // sonarr | radarr
+	Source     string          `json:"source"` // sonarr | radarr | roarr (native import)
 	Kind       string          `json:"kind"`   // tv | movie
 	SeriesID   int             `json:"seriesId,omitempty"`
 	MovieID    int             `json:"movieId,omitempty"`
+	TmdbID     int             `json:"tmdbId,omitempty"` // native imports, which have no *arr id
 	EpisodeIDs []int           `json:"episodeIds,omitempty"`
 	Title      string          `json:"title"`
 	Release    string          `json:"release"`
@@ -73,10 +76,11 @@ type VerifyRegrab struct {
 
 // Verification follows downloads and verifies them.
 type Verification struct {
-	app   *App
-	path  string
-	tools verify.Tools
-	sem   chan struct{} // one verification at a time: ffmpeg is heavy
+	app    *App
+	path   string
+	tools  verify.Tools
+	runner verify.Runner
+	sem    chan struct{} // one verification at a time: ffmpeg is heavy
 
 	mu   sync.Mutex
 	recs map[string]*VerifyRecord
@@ -86,7 +90,7 @@ type Verification struct {
 }
 
 func newVerification(a *App, dir string) *Verification {
-	v := &Verification{app: a, path: filepath.Join(dir, "verify.json"), tools: verify.FindTools(), sem: make(chan struct{}, 1), recs: map[string]*VerifyRecord{}}
+	v := &Verification{app: a, path: filepath.Join(dir, "verify.json"), tools: verify.FindTools(), runner: verify.ExecRunner{}, sem: make(chan struct{}, 1), recs: map[string]*VerifyRecord{}}
 	if b, err := os.ReadFile(v.path); err == nil {
 		var recs []*VerifyRecord
 		if json.Unmarshal(b, &recs) == nil {
@@ -261,7 +265,7 @@ func (v *Verification) tick(ctx context.Context) {
 	v.mu.Lock()
 	var pending []*VerifyRecord
 	for _, r := range v.recs {
-		if r.State == "pending" {
+		if r.State == "pending" && r.Source != "roarr" { // native downloads: beforeImport
 			cp := *r
 			pending = append(pending, &cp)
 		}
@@ -289,7 +293,7 @@ func (v *Verification) tick(ctx context.Context) {
 			}
 		}
 	}
-	pathMap := parsePathMap(v.app.Settings.Get().Verify.PathMap)
+	pm := pathMap("VERIFY_PATH_MAP", v.app.Settings.Get().Verify.PathMap)
 	for _, r := range pending {
 		if ctx.Err() != nil {
 			return
@@ -297,7 +301,7 @@ func (v *Verification) tick(ctx context.Context) {
 		var files []verify.File
 		ready, final := false, true
 		if t, ok := torrents[r.Hash]; ok {
-			files, ready = v.torrentFiles(ctx, c, t, r.Kind, pathMap)
+			files, ready = v.torrentFiles(ctx, c, t, r.Kind, pm)
 			final = t.Progress >= 1
 			if !final && r.triedEarly {
 				ready = false
@@ -306,7 +310,7 @@ func (v *Verification) tick(ctx context.Context) {
 				v.update(r.Hash, func(rec *VerifyRecord) { rec.Added = time.Unix(t.AddedOn, 0) })
 			}
 		} else if r.outputPath != "" {
-			files = walkFiles(mapVerifyPath(pathMap, r.outputPath))
+			files = walkFiles(pm.Map(r.outputPath))
 			ready = len(files) > 0
 		}
 		if !ready {
@@ -399,7 +403,7 @@ func (v *Verification) update(hash string, fn func(*VerifyRecord)) {
 // torrentFiles lists a torrent's files as roarr sees them, and whether the
 // download is ready to judge: finished, or its first episode is, or its file
 // list alone already shows junk.
-func (v *Verification) torrentFiles(ctx context.Context, c *Clients, t qbit.Torrent, kind string, pm []pathPair) ([]verify.File, bool) {
+func (v *Verification) torrentFiles(ctx context.Context, c *Clients, t qbit.Torrent, kind string, pm importer.PathMap) ([]verify.File, bool) {
 	fctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	qf, err := c.QBit.Files(fctx, t.Hash)
 	cancel()
@@ -412,10 +416,10 @@ func (v *Verification) torrentFiles(ctx context.Context, c *Clients, t qbit.Torr
 		name := strings.TrimSuffix(filepath.ToSlash(f.Name), ".!qB")
 		// Episodes watch-first skipped are never downloaded; judge the rest.
 		// Other skipped files still count: a deselected .exe is still junk.
-		if f.Priority == qbit.PrioSkip && videoExt[strings.ToLower(path.Ext(name))] {
+		if f.Priority == qbit.PrioSkip && importer.IsVideo(name) {
 			continue
 		}
-		files = append(files, verify.File{Name: name, Size: f.Size, Path: mapVerifyPath(pm, joinClientPath(t.SavePath, name))})
+		files = append(files, verify.File{Name: name, Size: f.Size, Path: pm.Map(joinClientPath(t.SavePath, name))})
 		progress[name] = f.Progress
 	}
 	if t.Progress >= 1 {
@@ -445,7 +449,7 @@ func (v *Verification) run(ctx context.Context, hash string, files []verify.File
 		return nil
 	}
 	v.update(hash, func(rec *VerifyRecord) { rec.State = "checking" })
-	vf := verify.New(v.tools)
+	vf := &verify.Verifier{Tools: v.tools, Run: v.runner}
 	vd := vf.Verify(ctx, verify.Target{Release: r.Release, Kind: r.Kind, RuntimeMin: v.runtime(ctx, r), Files: files})
 	if ctx.Err() != nil {
 		v.update(hash, func(rec *VerifyRecord) { rec.State = "pending" })
@@ -474,6 +478,41 @@ func (v *Verification) run(ctx context.Context, hash string, files []verify.File
 	return &vd
 }
 
+// beforeImport is the before-import hook of the native backend. The first
+// file of a download to reach the importer is verified and stands for the
+// whole download; a failing verdict keeps every file of it out of the
+// library until someone dismisses it.
+func (v *Verification) beforeImport(ctx context.Context, c importer.Candidate) error {
+	if !v.Enabled() || c.Hash == "" {
+		return nil
+	}
+	hash := strings.ToLower(c.Hash)
+	v.mu.Lock()
+	r, ok := v.recs[hash]
+	if !ok {
+		r = &VerifyRecord{Hash: hash, Source: "roarr", Kind: c.Title.Kind, TmdbID: c.Title.TmdbID, Title: c.Title.Title, Release: c.Release, Added: time.Now(), State: "pending"}
+		v.recs[hash] = r
+	}
+	judged := r.Verdict != nil
+	v.mu.Unlock()
+	if !judged {
+		var size int64
+		if st, err := os.Stat(c.Source); err == nil {
+			size = st.Size()
+		}
+		vctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
+		vd := v.run(vctx, hash, []verify.File{{Name: filepath.Base(c.Source), Path: c.Source, Size: size}}, false)
+		cancel()
+		if vd == nil {
+			return fmt.Errorf("verification was interrupted: %w", importer.ErrRetryLater)
+		}
+	}
+	if r := v.mustRecord(hash); r.Failed() {
+		return errors.New("failed verification: " + r.Verdict.Summary)
+	}
+	return nil
+}
+
 // runtime is the expected minutes per episode or for the movie.
 func (v *Verification) runtime(ctx context.Context, r VerifyRecord) int {
 	c := v.app.C()
@@ -487,6 +526,14 @@ func (v *Verification) runtime(ctx context.Context, r VerifyRecord) int {
 	case r.Kind == "movie" && r.MovieID != 0 && c.Radarr != nil:
 		if m, err := c.Radarr.Movie(rctx, r.MovieID); err == nil {
 			return m.Runtime
+		}
+	case r.Kind == "movie" && r.TmdbID != 0 && c.Seerr != nil:
+		if m, err := c.Seerr.Movie(rctx, r.TmdbID); err == nil {
+			return m.Runtime
+		}
+	case r.Kind == "tv" && r.TmdbID != 0 && c.Seerr != nil:
+		if s, err := c.Seerr.TV(rctx, r.TmdbID); err == nil && len(s.EpisodeRunTime) > 0 {
+			return s.EpisodeRunTime[0]
 		}
 	}
 	return 0
@@ -503,7 +550,7 @@ func (v *Verification) Recheck(ctx context.Context, hash string) (VerifyRecord, 
 		return VerifyRecord{}, fmt.Errorf("ffprobe %w", ErrNotConfigured)
 	}
 	c := v.app.C()
-	pm := parsePathMap(v.app.Settings.Get().Verify.PathMap)
+	pm := pathMap("VERIFY_PATH_MAP", v.app.Settings.Get().Verify.PathMap)
 	var files []verify.File
 	if c.QBit != nil && len(hash) == 40 {
 		ts, err := c.QBit.Torrents(ctx, hash)
@@ -515,7 +562,7 @@ func (v *Verification) Recheck(ctx context.Context, hash string) (VerifyRecord, 
 		}
 	}
 	if files == nil && r.outputPath != "" {
-		files = walkFiles(mapVerifyPath(pm, r.outputPath))
+		files = walkFiles(pm.Map(r.outputPath))
 	}
 	if files == nil {
 		return VerifyRecord{}, errors.New("the download's files are gone")
@@ -826,38 +873,18 @@ func samePath(a, b string) bool {
 	return a != "" && normClientPath(a) == normClientPath(b)
 }
 
-// pathPair maps a download-client path prefix to roarr's.
-type pathPair struct{ from, to string }
-
-// parsePathMap reads "client=roarr,client2=roarr2".
-func parsePathMap(s string) []pathPair {
-	var out []pathPair
-	for _, part := range strings.Split(s, ",") {
-		from, to, ok := strings.Cut(part, "=")
-		from, to = strings.TrimSpace(from), strings.TrimSpace(to)
-		if !ok || from == "" || to == "" {
-			continue
-		}
-		out = append(out, pathPair{normClientPath(from), to})
+// pathMap reads a path-map setting. A rule it cannot read is logged under
+// the setting's name and left out.
+func pathMap(setting, spec string) importer.PathMap {
+	pm, err := importer.ParsePathMap(spec)
+	if err != nil {
+		slog.Warn(setting+" is invalid", "err", err)
 	}
-	// Longest prefix first.
-	sort.SliceStable(out, func(i, j int) bool { return len(out[i].from) > len(out[j].from) })
-	return out
+	return pm
 }
 
 func normClientPath(p string) string {
 	return strings.TrimRight(strings.ReplaceAll(p, `\`, "/"), "/")
-}
-
-// mapPath rewrites a client path with the first matching prefix.
-func mapVerifyPath(pm []pathPair, p string) string {
-	p = normClientPath(p)
-	for _, m := range pm {
-		if p == m.from || strings.HasPrefix(p, m.from+"/") {
-			return filepath.FromSlash(strings.TrimRight(m.to, "/") + p[len(m.from):])
-		}
-	}
-	return filepath.FromSlash(p)
 }
 
 func joinClientPath(dir, name string) string {

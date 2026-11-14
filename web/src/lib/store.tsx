@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, type ActivityItem, type LibraryItem, type VerifyRecord } from "./api";
+import { ApiError, api, type ActivityItem, type LibraryItem, type VerifyRecord } from "./api";
+import { needsYou } from "./activity";
 import { isBlocking, orphans } from "./verify";
+
+export { isActive, needsYou } from "./activity";
 
 // App-wide data that many pages share: the library (shipped once, then
 // filtered locally), activity for the nav badge, and the request count.
@@ -8,12 +11,16 @@ import { isBlocking, orphans } from "./verify";
 interface Store {
   user?: string;
   library: LibraryItem[];
+  /** What could not be loaded, by upstream; `library` when the library request itself failed. */
   libraryErrors: Record<string, string>;
+  /** False until the first answer, good or bad. */
   libraryLoaded: boolean;
   reloadLibrary: (hard?: boolean) => Promise<void>;
   /** Changes titles in the browser at once, before the server confirms. */
   patchLibrary: (keys: Iterable<string>, patch: Partial<LibraryItem>) => void;
   activity: ActivityItem[];
+  /** Upstreams whose queue could not be read. */
+  activityErrors: Record<string, string>;
   reloadActivity: () => void;
   /** Download check records, newest first. Empty when checks are off. */
   verify: VerifyRecord[];
@@ -59,29 +66,40 @@ export function forgetLocalCopy() {
 }
 
 const snapshot = readSnapshot();
-const fetchLibrary = (etag: string | null, hard = false) =>
-  fetch(`/api/library${hard ? "?refresh=1" : ""}`, { headers: etag && !hard ? { "If-None-Match": etag } : {} });
 // Sent while the module loads, in parallel with /api/me, not after it.
-let early: Promise<Response> | null = fetchLibrary(snapshot?.etag ?? null);
+let early: ReturnType<typeof api.library> | null = api.library(snapshot?.etag ?? null);
+early.catch(() => {}); // reloadLibrary reports it
 
 export function StoreProvider({ children, user }: { children: ReactNode; user?: string }) {
   const [library, setLibrary] = useState<LibraryItem[]>(() => snapshot?.items ?? []);
   const [libraryErrors, setLibraryErrors] = useState<Record<string, string>>(() => snapshot?.errors ?? {});
   const [libraryLoaded, setLoaded] = useState(!!snapshot);
+  const [libraryFailure, setLibraryFailure] = useState("");
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [activityErrors, setActivityErrors] = useState<Record<string, string>>({});
   const [verify, setVerify] = useState<VerifyRecord[]>([]);
   const [pendingRequests, setPending] = useState<number | null>(null);
   const etag = useRef<string | null>(snapshot?.etag ?? null);
 
   const reloadLibrary = useCallback(async (hard = false) => {
-    const first = early;
+    const first = hard ? null : early;
     early = null;
-    let res = await (first && !hard ? first : fetchLibrary(etag.current, hard)).catch(() => null);
-    // The early request can go out before the sign-in that mounted us.
-    if (first && !hard && res?.status === 401) res = await fetchLibrary(etag.current).catch(() => null);
-    if (!res || res.status === 304 || !res.ok) return;
-    etag.current = res.headers.get("ETag");
-    const j = (await res.json()) as { items: LibraryItem[]; errors: Record<string, string> };
+    let j;
+    try {
+      j = await (first ?? api.library(etag.current, hard)).catch((e) => {
+        // The early request can go out before the sign-in that mounted us.
+        if (first && e instanceof ApiError && e.status === 401) return api.library(etag.current);
+        throw e;
+      });
+    } catch (e) {
+      // Not a skeleton forever: the shelf shows what it has, and why it is not fresh.
+      setLibraryFailure(e instanceof Error ? e.message : String(e));
+      setLoaded(true);
+      return;
+    }
+    setLibraryFailure("");
+    if (!j) return;
+    etag.current = j.etag;
     setLibrary(j.items);
     setLibraryErrors(j.errors ?? {});
     setLoaded(true);
@@ -97,7 +115,10 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
   const reloadActivity = useCallback(() => {
     api
       .activity()
-      .then((r) => setActivity(r.items))
+      .then((r) => {
+        setActivity(r.items);
+        setActivityErrors(r.errors ?? {});
+      })
       .catch(() => {});
   }, []);
 
@@ -136,8 +157,9 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
     };
   }, [reloadLibrary, reloadActivity, reloadVerify, reloadRequests]);
 
+  const errors = libraryFailure ? { ...libraryErrors, library: libraryFailure } : libraryErrors;
   return (
-    <Ctx.Provider value={{ user, library, libraryErrors, libraryLoaded, reloadLibrary, patchLibrary, activity, reloadActivity, verify, reloadVerify, pendingRequests, reloadRequests }}>
+    <Ctx.Provider value={{ user, library, libraryErrors: errors, libraryLoaded, reloadLibrary, patchLibrary, activity, activityErrors, reloadActivity, verify, reloadVerify, pendingRequests, reloadRequests }}>
       {children}
     </Ctx.Provider>
   );
@@ -148,11 +170,6 @@ export function useStore(): Store {
   if (!s) throw new Error("useStore outside provider");
   return s;
 }
-
-/** Downloads that are moving (or about to). */
-export const isActive = (a: ActivityItem) => a.status === "downloading" || a.status === "queued" || a.status === "importing";
-/** Downloads that need a human. */
-export const needsYou = (a: ActivityItem) => a.status === "warning" || a.status === "failed";
 
 /** How many things wait on a person: stuck downloads and failed checks. */
 export function problemCount(activity: ActivityItem[], verify: VerifyRecord[]): number {

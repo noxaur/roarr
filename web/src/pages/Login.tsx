@@ -46,7 +46,7 @@ export function Login({ mode, onDone }: { mode: string; onDone: () => void }) {
         />
         {error && <Notice tone="bad">{error}</Notice>}
         <Button size="lg" disabled={busy} className="mt-1 justify-between">
-          {busy ? <Spinner /> : <>Sign in <ArrowRight /></>}
+          {busy ? <Spinner label="Signing in" /> : <>Sign in <ArrowRight /></>}
         </Button>
       </form>
     </div>

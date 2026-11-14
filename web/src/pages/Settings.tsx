@@ -259,6 +259,11 @@ export function SettingsPage() {
               <Input type="password" disabled={locked.AUTH_PASSWORD} value={s.authPassword ?? ""} onChange={(e) => update((x) => (x.authPassword = e.target.value))} className="max-w-72" />
             </Field>
           )}
+          {s.authMode !== "none" && (
+            <Field label="Trusted proxies" hint="Reverse proxy IPs or CIDRs, comma separated. Failed sign-ins are counted per client behind them; leave empty when roarr is reached directly.">
+              <Input disabled={locked.TRUSTED_PROXIES} value={s.trustedProxies ?? ""} placeholder="172.16.0.0/12" onChange={(e) => update((x) => (x.trustedProxies = e.target.value))} className="max-w-72" />
+            </Field>
+          )}
         </TabsContent>
       </div>
 

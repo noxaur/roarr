@@ -9,23 +9,14 @@ import (
 	"time"
 )
 
-// Hook points for features that run around an import, such as download
-// verification (before) and transcoding (after). Register them once at
-// startup through App.Hooks; they apply to every native import.
-//
-//	a.Hooks.BeforeImport(func(ctx context.Context, c importer.Candidate) error {
-//		if !verified(c.Source) {
-//			return importer.ErrRetryLater // keep the file pending
-//		}
-//		return nil
-//	})
-//	a.Hooks.AfterImport(func(ctx context.Context, e importer.Event) {
-//		go transcode(e.Path) // do slow work in your own goroutine
-//	})
+// Hook points for features that run around an import: download verification
+// (before) and transcoding (after). app.App.importHooks registers them once
+// at startup; they apply to every native import.
 
 // ErrRetryLater, returned (or wrapped) by a before-import hook, leaves the
 // file pending; roarr tries the import again on a later pass. Any other
-// error fails the file with that message.
+// error fails the file with that message, after the retries every failed
+// import gets.
 var ErrRetryLater = errors.New("not ready to import yet")
 
 // Candidate is a file about to be imported.

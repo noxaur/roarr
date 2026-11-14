@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -107,37 +108,93 @@ func isHTTPS(r *http.Request) bool {
 var errThrottled = errors.New("too many attempts, wait a minute")
 
 // throttle allows 8 failed logins per client per 5 minutes.
-func (a *auth) throttle(r *http.Request) error {
-	ip := clientIP(r)
+func (a *auth) throttle(client string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	cut := time.Now().Add(-5 * time.Minute)
-	keep := a.failures[ip][:0]
-	for _, t := range a.failures[ip] {
+	keep := a.failures[client][:0]
+	for _, t := range a.failures[client] {
 		if t.After(cut) {
 			keep = append(keep, t)
 		}
 	}
-	a.failures[ip] = keep
+	if len(keep) == 0 {
+		delete(a.failures, client)
+		return nil
+	}
+	a.failures[client] = keep
 	if len(keep) >= 8 {
 		return errThrottled
 	}
 	return nil
 }
 
-func (a *auth) fail(r *http.Request) {
-	ip := clientIP(r)
+func (a *auth) fail(client string) {
 	a.mu.Lock()
-	a.failures[ip] = append(a.failures[ip], time.Now())
+	a.failures[client] = append(a.failures[client], time.Now())
 	a.mu.Unlock()
 }
 
-func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		return strings.TrimSpace(strings.Split(f, ",")[0])
+// clientIP is the peer address, unless the peer is a trusted proxy: then it
+// is the nearest X-Forwarded-For hop that is not one. trusted is a comma
+// separated list of IPs and CIDRs; anyone else can forge the header.
+func clientIP(r *http.Request, trusted string) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
 	}
-	h, _, _ := net.SplitHostPort(r.RemoteAddr)
-	return h
+	nets := parseTrusted(trusted)
+	if !isTrusted(host, nets) {
+		return host
+	}
+	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		h := strings.TrimSpace(hops[i])
+		if h == "" {
+			continue
+		}
+		if !isTrusted(h, nets) {
+			return h
+		}
+		host = h
+	}
+	return host
+}
+
+func parseTrusted(list string) []*net.IPNet {
+	var out []*net.IPNet
+	for _, f := range strings.Split(list, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if !strings.Contains(f, "/") {
+			if ip := net.ParseIP(f); ip != nil {
+				bits := 128
+				if ip.To4() != nil {
+					bits = 32
+				}
+				f += "/" + strconv.Itoa(bits)
+			}
+		}
+		if _, n, err := net.ParseCIDR(f); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func isTrusted(host string, nets []*net.IPNet) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func passwordOK(given, want string) bool {

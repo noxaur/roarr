@@ -2,6 +2,7 @@ import { Ban, Copy, ExternalLink, ListChecks, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type ActivityItem, type VerifyRecord } from "@/lib/api";
 import { errText } from "@/lib/actions";
+import { copyText } from "@/lib/copy";
 import { bytes, pct, speed } from "@/lib/format";
 import { Link, useRouter } from "@/lib/router";
 import { needsYou, useStore } from "@/lib/store";
@@ -128,7 +129,7 @@ export function DownloadsDrawer({ open, onOpenChange }: { open: boolean; onOpenC
               <ListChecks /> Pick release manually
             </ContextMenuItem>
           )}
-          <ContextMenuItem onSelect={() => navigator.clipboard?.writeText(a.release).then(() => toast("Copied release name"), () => {})}>
+          <ContextMenuItem onSelect={() => copyText(a.release, "Copied release name")}>
             <Copy /> Copy release name
           </ContextMenuItem>
           <ContextMenuSeparator />

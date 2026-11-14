@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // scene draws a frame that looks like footage: a gradient with shapes whose
@@ -204,6 +205,9 @@ func TestCheckDuration(t *testing.T) {
 		{100 * 60, 0, 1, "movie", Pass},
 		{11 * 60, 0, 1, "tv", Pass}, // kids' show
 		{0, 45, 1, "tv", Warn},
+		{58, 1, 1, "movie", Pass},  // a one-minute short that runs its length
+		{58, 90, 1, "movie", Fail}, // the same file as a feature: a sample
+		{58, 0, 1, "tv", Fail},     // runtime unknown: under two minutes is a sample
 	}
 	for _, c := range cases {
 		if got := CheckDuration(c.sec, c.runtime, c.eps, c.kind); got.Level != c.want {
@@ -400,4 +404,42 @@ func mustJSON(t *testing.T, v any) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func TestSkippedPictureCheckIsNotAPass(t *testing.T) {
+	v, _, file := newFake(t, "multi.json", func(at float64) image.Image { return scene(int(at)) })
+	v.Tools.FFmpeg = "" // not installed
+	vd := v.Verify(context.Background(), Target{
+		Release:    "Movie.2024.1080p.BluRay.x265-GRP",
+		Kind:       "movie",
+		RuntimeMin: 44,
+		Files:      []File{{Name: "Movie/movie.mkv", Path: file, Size: 1 << 30}},
+	})
+	if c, _ := checkByName(vd.Checks, "picture"); c.Level != Skip {
+		t.Fatalf("picture: %s %s", c.Level, c.Reason)
+	}
+	if vd.Level != Skip || !strings.Contains(vd.Summary, "ffmpeg is not installed") {
+		t.Fatalf("verdict %s: %s", vd.Level, vd.Summary)
+	}
+	// What was checked still counts when it is worse than "unknown".
+	vd = v.Verify(context.Background(), Target{
+		Release: "Movie.2024.2160p.BluRay.x265-GRP",
+		Kind:    "movie",
+		Files:   []File{{Name: "Movie/movie.mkv", Path: file, Size: 1 << 30}},
+	})
+	if vd.Level != Warn {
+		t.Fatalf("verdict %s: %s\n%+v", vd.Level, vd.Summary, vd.Checks)
+	}
+}
+
+func TestVerdictTimesItself(t *testing.T) {
+	v, fr, file := newFake(t, "multi.json", nil)
+	fr.frame = func(at float64) image.Image {
+		time.Sleep(2 * time.Millisecond)
+		return scene(int(at))
+	}
+	vd := v.Verify(context.Background(), Target{Kind: "movie", Files: []File{{Name: "m.mkv", Path: file, Size: 1 << 30}}})
+	if vd.TookMS <= 0 {
+		t.Fatalf("TookMS = %d", vd.TookMS)
+	}
 }

@@ -54,12 +54,10 @@ services:
       # IMPORT_TRANSFER: hardlink       # hardlink | copy | move
       # QBIT_PATH_MAP: /downloads=/data/torrents   # qBittorrent path=roarr path
       # QBIT_CATEGORY: roarr
-      # Grab releases Sonarr/Radarr decline anyway, still through them
-      # (quality profile, custom formats, release profiles, blocklist, ...).
-      # BYPASS_ARR_QUALITY: "true"
       # jellyfin (default when JELLYFIN_URL is set) | password | none
       # AUTH_MODE: jellyfin
       # AUTH_PASSWORD: something-long
+      # TRUSTED_PROXIES: 172.16.0.0/12   # your reverse proxy, for sign-in throttling
       TZ: Etc/UTC
     # Optional: let Watchtower keep roarr up to date.
     # labels:

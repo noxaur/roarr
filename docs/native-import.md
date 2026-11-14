@@ -188,11 +188,15 @@ Limits:
   (for example, a new episode that TMDB does not list yet) is still
   placed. roarr keeps all episode numbers from the name. The placement
   has the flag `unverified`.
-- **Two files for one episode:** roarr keeps the larger file.
+- **Two files for one episode:** roarr keeps the larger file. A
+  multi-episode file is dropped only when every one of its episodes has a
+  larger copy.
 - **Samples:** `sample` in the name, or a `Sample/` folder.
-- **Extras:** featurettes, trailers, behind the scenes, deleted scenes,
-  interviews and similar names, or folders such as `Extras/` and
-  `Featurettes/`. roarr does not download or import them.
+- **Extras:** a file in a folder such as `Extras/` or `Featurettes/`, or a
+  file whose name ends in a marker such as `-trailer`, `.Featurette` or
+  `Deleted Scenes`. The same word earlier in the name is part of the
+  title, and a name with an episode number is never an extra. roarr does
+  not download or import extras.
 - **Movies:** roarr imports the largest video that is not a sample. It
   skips the other videos as extras.
 - **Subtitles** belong to a video when one of these is true:
@@ -236,6 +240,12 @@ paths (`D:\Torrents=/mnt/t`) also work. When qBittorrent keeps unfinished
 torrents in a separate folder, roarr also looks in that folder
 (`download_path`).
 
+`VERIFY_PATH_MAP`, `TRANSCODE_PATH_MAP` and the remote path mappings read
+from Sonarr and Radarr go through the same mapper (`importer.PathMap`), so
+these rules hold for all of them. Three hand-written mappers had drifted:
+one took the first match instead of the longest, and two missed a drive
+letter in another case.
+
 A hardlink is only possible when the source and the destination are in
 one filesystem and in one Docker bind mount. If the link fails (`EXDEV`,
 `EPERM` and similar errors), roarr copies the file. roarr writes a copy to
@@ -244,33 +254,42 @@ part of a file.
 
 ## Hook points
 
-Other features (download verification, AV1 transcoding) can register
-hooks with `App.Hooks`. Do this one time, at startup, after `app.New`:
+The importer runs hooks around each file (`importer.Hooks`): before-import
+hooks can refuse or postpone it, after-import hooks see it once it is in
+`library.json`. `App.importHooks` registers two at startup, before the
+import loop starts. They give native imports what arr mode gets from
+polling Sonarr and Radarr, which see nothing of a native import.
 
-```go
-a.Hooks.BeforeImport(func(ctx context.Context, c importer.Candidate) error {
-	// c.Source: the download file, c.Dest: its library path, c.Hash: the torrent.
-	if !verified(c.Source) {
-		return importer.ErrRetryLater // keep the file pending; roarr tries again
-	}
-	return nil // or an error: the file fails with that message
-})
+- **Verification, before the import.** The first file of a download that
+  reaches the importer is verified, and its verdict counts for the whole
+  download, as in arr mode. A `fail` keeps every file of the download out
+  of the library. The file fails like any other import that cannot be
+  done: after about one minute of tries, with the verdict as its message
+  in the activity feed. `warn` and `skip` do not hold a file back, and
+  nothing is checked when verification is off. A dismissed verdict lets a
+  later import of the download through.
+  - Arr mode cannot hold a file back, because Sonarr and Radarr import it
+    themselves. Native mode can, so the fake never reaches Jellyfin.
+  - Only the file that is imported is checked, not the torrent's file
+    list. roarr imports only the videos it planned, so an executable in
+    the torrent never reaches the library. The importer already knows the
+    path, so `VERIFY_PATH_MAP` is not necessary.
+  - The check runs in the import loop, like a copy or an unpack. A check
+    in the background, with the file kept pending until it is done, was
+    rejected: it adds state for a wait of one check per download.
+- **Conversion, after the import.** The library file goes to the same
+  transcode queue as an import from the Sonarr/Radarr history, so the
+  same rules decide if it is converted. The converter keeps the path, so
+  `library.json` stays correct.
 
-a.Hooks.AfterImport(func(ctx context.Context, e importer.Event) {
-	// e.Path: the library file, e.Subtitles, e.Method, e.Replaced, e.Title...
-	go transcode(e.Path) // the loop waits for this function: return quickly
-})
-```
+Rules for a hook:
 
 - Before-import hooks run in sequence. The first error stops the import.
-- After-import hooks run after the file is in `library.json`. They run
-  before the Jellyfin refresh. A hook that changes the file (for example,
-  a transcode to a new extension) must call
-  `a.Native.Store().Put/Forget` to keep the store correct. When the
-  hook's work is done, it must ask Jellyfin to refresh.
+  An error that wraps `importer.ErrRetryLater` keeps the file pending.
+- After-import hooks run on the import loop, before the Jellyfin refresh,
+  and must return quickly. A hook that moves or renames the file must
+  update the store (`Store().Put/Forget`).
 - roarr recovers from a panic in a hook and writes it to the log.
-- The hooks apply only to native imports. In arr mode, Sonarr and Radarr
-  import outside roarr, so roarr cannot see the final files.
 
 ## Endpoints
 
@@ -282,7 +301,7 @@ a.Hooks.AfterImport(func(ctx context.Context, e importer.Event) {
 | `GET /api/imports` | New. Shows the native settings, all jobs with the placement and errors of each file, the tracked titles and the imported files. `?title=tv:tmdb:1399` shows the files of one title. |
 | `GET /api/status` | Adds `importMode`. |
 | `GET /api/tv/tvdb/{tvdb}?tmdb=`, `GET /api/movie/tmdb/{tmdb}` | When Sonarr/Radarr are not configured, these use TMDB through Seerr. Before, they returned an error. |
-| `PUT /api/settings` | When the request has no `import` object, the stored import settings stay. The current UI does not know these settings yet. |
+| `PUT /api/settings` | When the request has no `import` object, the stored import settings stay. |
 | `GET /api/library`, `GET /api/tv/{id}`, `GET /api/movie/{id}` | Without Sonarr/Radarr: titles from `library.json` (see [Native library](#native-library-no-sonarrradarr)). An unknown id gives 404. |
 | `POST /api/tv/{id}/episodes`, `PATCH /api/{kind}/{id}`, `POST /api/{kind}/{id}/command/{refresh\|search}`, `DELETE /api/movie/{id}/file`, `DELETE /api/{kind}/{id}` | Without Sonarr/Radarr: delete, monitor, search and remove in the native library. New option `removeTorrent`. A quality profile change gives an error. |
 | `POST /api/grab` | In the native library, `seriesId`/`movieId` in the result is the library id of the title. |
@@ -320,11 +339,12 @@ Native mode does not do these things yet:
   changed season splits. With TMDB-only metadata, such files can go to the
   wrong episode. Configure Sonarr for those shows, or check
   `GET /api/imports`.
+- **Re-grab after a failed verification.** Re-grab removes the download
+  through Sonarr/Radarr, so it does not work for a native download. Remove
+  the download in the activity feed and get another release.
 - **Quality comparison** uses only the release name (resolution, source,
   proper/repack). It does not read the media (codec, bitrate, audio) and
   does not use custom formats.
 - **Season packs that finish while roarr is stopped:** roarr imports them
   at the next start. Torrents that you add to qBittorrent outside roarr
   are ignored, also when they are in the `roarr` category.
-- **The settings UI** does not show the import settings yet. Use the
-  environment variables, or `settings.json` → `import`.

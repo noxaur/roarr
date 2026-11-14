@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -17,8 +18,11 @@ type PathMap []PathRule
 
 // ParsePathMap reads "remote=local" pairs separated by commas or
 // semicolons, e.g. "/downloads=/data/downloads,D:\Torrents=/mnt/torrents".
+// A pair it cannot read is left out and named in the error; the map still
+// holds the others.
 func ParsePathMap(s string) (PathMap, error) {
 	var m PathMap
+	var err error
 	for _, part := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ';' || r == '\n' }) {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -27,11 +31,12 @@ func ParsePathMap(s string) (PathMap, error) {
 		remote, local, ok := strings.Cut(part, "=")
 		remote, local = strings.TrimSpace(remote), strings.TrimSpace(local)
 		if !ok || remote == "" || local == "" {
-			return nil, fmt.Errorf("path mapping %q: want remote=local", part)
+			err = errors.Join(err, fmt.Errorf("path mapping %q: want remote=local", part))
+			continue
 		}
 		m = append(m, PathRule{Remote: remote, Local: local})
 	}
-	return m, nil
+	return m, err
 }
 
 // String renders the map in ParsePathMap's format.
@@ -47,6 +52,13 @@ func (m PathMap) String() string {
 // remote path are accepted; the result uses forward slashes after the
 // prefix. Paths no rule matches are returned unchanged.
 func (m PathMap) Map(p string) string {
+	out, _ := m.Match(p)
+	return out
+}
+
+// Match is Map that also reports whether a rule matched, for callers that
+// fall back to another map.
+func (m PathMap) Match(p string) (string, bool) {
 	pp := strings.ReplaceAll(p, `\`, "/")
 	best, bestLen := -1, -1
 	for i, r := range m {
@@ -60,7 +72,7 @@ func (m PathMap) Map(p string) string {
 		}
 	}
 	if best < 0 {
-		return p
+		return p, false
 	}
-	return strings.TrimRight(m[best].Local, `/\`) + pp[bestLen:]
+	return strings.TrimRight(m[best].Local, `/\`) + pp[bestLen:], true
 }

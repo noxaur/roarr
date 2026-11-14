@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/noxaur/roarr/internal/httpx"
+	"github.com/noxaur/roarr/internal/importer"
 )
 
 // Client is a Servarr API client.
@@ -389,26 +390,15 @@ func (c *Client) RemoveQueue(ctx context.Context, id int, removeFromClient, bloc
 	return c.Do(ctx, http.MethodDelete, fmt.Sprintf("%s/queue/%d", c.prefix, id), q, nil, nil)
 }
 
-// RecentlyGrabbed reports whether a release with this title was grabbed
-// within the window (history event type 1 = grabbed).
-func (c *Client) RecentlyGrabbed(ctx context.Context, title string, within time.Duration) (bool, error) {
+// Grabs lists the newest "grabbed" history events (event type 1), newest
+// first.
+func (c *Client) Grabs(ctx context.Context, pageSize int) ([]HistoryRecord, error) {
 	var res struct {
-		Records []struct {
-			SourceTitle string    `json:"sourceTitle"`
-			EventType   string    `json:"eventType"`
-			Date        time.Time `json:"date"`
-		} `json:"records"`
+		Records []HistoryRecord `json:"records"`
 	}
-	q := url.Values{"page": {"1"}, "pageSize": {"25"}, "sortKey": {"date"}, "sortDirection": {"descending"}, "eventType": {"1"}}
-	if err := c.get(ctx, "/history", q, &res); err != nil {
-		return false, err
-	}
-	for _, r := range res.Records {
-		if strings.EqualFold(r.SourceTitle, title) && time.Since(r.Date) < within {
-			return true, nil
-		}
-	}
-	return false, nil
+	q := url.Values{"page": {"1"}, "pageSize": {strconv.Itoa(pageSize)}, "sortKey": {"date"}, "sortDirection": {"descending"}, "eventType": {"1"}}
+	err := c.get(ctx, "/history", q, &res)
+	return res.Records, err
 }
 
 // RemotePathMapping translates a download client's path to the *arr's.
@@ -429,24 +419,18 @@ func (c *Client) RemotePathMappings(ctx context.Context) ([]RemotePathMapping, e
 // to the path the *arr sees, using the longest matching mapping. Mappings
 // for host are preferred; others apply when none of host's match.
 func MapRemotePath(ms []RemotePathMapping, host, p string) string {
-	best, bestLen, bestHost := -1, -1, false
-	for i, m := range ms {
-		rp := strings.TrimRight(strings.ReplaceAll(m.RemotePath, `\`, "/"), "/")
-		pp := strings.ReplaceAll(p, `\`, "/")
-		if pp != rp && !strings.HasPrefix(pp, rp+"/") {
-			continue
-		}
-		hostOK := strings.EqualFold(m.Host, host)
-		if (hostOK && !bestHost) || (hostOK == bestHost && len(rp) > bestLen) {
-			best, bestLen, bestHost = i, len(rp), hostOK
+	var mine, all importer.PathMap
+	for _, m := range ms {
+		r := importer.PathRule{Remote: m.RemotePath, Local: m.LocalPath}
+		all = append(all, r)
+		if strings.EqualFold(m.Host, host) {
+			mine = append(mine, r)
 		}
 	}
-	if best < 0 {
-		return p
+	if out, ok := mine.Match(p); ok {
+		return out
 	}
-	m := ms[best]
-	rest := strings.TrimPrefix(strings.ReplaceAll(p, `\`, "/"), strings.TrimRight(strings.ReplaceAll(m.RemotePath, `\`, "/"), "/"))
-	return strings.TrimRight(m.LocalPath, `/\`) + rest
+	return all.Map(p)
 }
 
 // BypassProfileName is the permissive quality profile roarr creates to get

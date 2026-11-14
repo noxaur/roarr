@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Bookmark, FolderSync, Gauge, MoreHorizontal, Radar, Settings2, Trash2, X } from "lucide-react";
 import { api, type FileInfo, type Kind } from "@/lib/api";
-import { run } from "@/lib/actions";
+import { errText, run } from "@/lib/actions";
 import { bytes } from "@/lib/format";
 import { useRouter } from "@/lib/router";
 import { useStore } from "@/lib/store";
@@ -22,19 +22,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useConfirm } from "./Confirm";
-
-/** "WEBDL-1080p  x265  HDR10  1.4 GB  NTb" */
-export function fileBits(f: FileInfo, withSize = true): string[] {
-  return [f.quality, f.codec, f.hdr, withSize && bytes(f.size), f.group].filter((x): x is string => !!x);
-}
-
-export function FileLine({ file, className }: { file: FileInfo; className?: string }) {
-  return (
-    <span className={cn("block truncate font-mono text-[11px] text-muted-foreground", className)} title={file.path}>
-      {fileBits(file).join("  ")}
-    </span>
-  );
-}
 
 /** A labelled list of a file's properties, for a title's "on disk" card. */
 export function FileFacts({ file }: { file: FileInfo }) {
@@ -93,6 +80,7 @@ export function ManageMenu({
   const { reloadLibrary } = useStore();
   const [open, setOpen] = useState(false);
   const [profiles, setProfiles] = useState<{ id: number; name: string }[] | null>(null);
+  const [profilesError, setProfilesError] = useState<string | null>(null);
   const app = kind === "tv" ? "Sonarr" : "Radarr";
 
   useEffect(() => {
@@ -100,7 +88,7 @@ export function ManageMenu({
       api
         .profiles(kind)
         .then((r) => setProfiles(r.profiles))
-        .catch(() => setProfiles([]));
+        .catch((e) => setProfilesError(errText(e)));
   }, [open, profiles, kind]);
 
   const patch = async (p: { monitored?: boolean; qualityProfileId?: number }, msg: string) => {
@@ -144,7 +132,13 @@ export function ManageMenu({
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
             {profiles === null ? (
-              <DropdownMenuLabel className="font-normal text-muted-foreground">Loading…</DropdownMenuLabel>
+              profilesError ? (
+                <DropdownMenuLabel role="alert" className="max-w-64 font-normal text-bad">
+                  {profilesError}
+                </DropdownMenuLabel>
+              ) : (
+                <DropdownMenuLabel className="font-normal text-muted-foreground">Loading…</DropdownMenuLabel>
+              )
             ) : (
               <DropdownMenuRadioGroup
                 value={String(profileId ?? "")}

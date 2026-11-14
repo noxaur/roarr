@@ -45,9 +45,7 @@ type App struct {
 	Transcode *transcode.Manager
 	// Native is roarr's own download + import backend (IMPORT_MODE=native).
 	Native *Native
-	// Hooks run around every native import. Register at startup:
-	// a.Hooks.BeforeImport(...) to verify or hold back a file,
-	// a.Hooks.AfterImport(...) to post-process it (e.g. transcode).
+	// Hooks run around every native import; importHooks registers them.
 	Hooks *importer.Hooks
 
 	bypassMu sync.Mutex // serializes temporary quality profile swaps
@@ -67,6 +65,8 @@ func New(ctx context.Context, store *config.Store, dataDir string) *App {
 	a.Watch = newWatchFirst(a, dataDir)
 	a.Verify = newVerification(a, dataDir)
 	a.Native = newNative(a, dataDir)
+	a.startTranscode(ctx)
+	a.importHooks()
 	go a.Library.loop(ctx)
 	go a.Watch.loop(ctx)
 	go a.Verify.loop(ctx)
@@ -74,8 +74,17 @@ func New(ctx context.Context, store *config.Store, dataDir string) *App {
 	go a.Native.missingLoop(ctx)
 	go a.sweepLoop(ctx)
 	go a.seerrLoop(ctx)
-	a.startTranscode(ctx)
 	return a
+}
+
+// importHooks gives native imports what polling Sonarr and Radarr gives the
+// others: no file enters the library before its download is verified, and
+// every file that does is offered to the converter.
+func (a *App) importHooks() {
+	a.Hooks.BeforeImport(a.Verify.beforeImport)
+	a.Hooks.AfterImport(func(_ context.Context, e importer.Event) {
+		a.queueTranscode(transcode.Item{Path: e.Path, Title: e.Title.Title, Kind: e.Title.Kind})
+	})
 }
 
 func (a *App) rebuild(s config.Settings) {

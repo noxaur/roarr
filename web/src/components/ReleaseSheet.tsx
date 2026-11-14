@@ -113,8 +113,9 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
       if (p.kind === "tv" && shape !== "all" && ((r.covers?.length ?? 0) > 1) !== (shape === "packs")) return false;
       return true;
     });
+    const fit = new Map(sort.key === "best" ? xs.map((r) => [r.key, fitScore(r, want, p.kind)]) : []);
     const by: Record<SortKey, (a: Release, b: Release) => number> = {
-      best: (a, b) => fitScore(a, want, p.kind) - fitScore(b, want, p.kind) || a.seeders - b.seeders,
+      best: (a, b) => fit.get(a.key)! - fit.get(b.key)! || a.seeders - b.seeders,
       score: (a, b) => a.score - b.score,
       res: (a, b) => (a.info.resolution ?? 0) - (b.info.resolution ?? 0),
       size: (a, b) => a.size - b.size,
@@ -150,7 +151,7 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
             <SheetDescription className="truncate font-mono text-[12px]">{p.detail ?? ""}</SheetDescription>
           </div>
           <div className="flex items-center gap-2 font-mono text-[12px] text-muted-foreground tabular">
-            {!state.done && <Spinner />}
+            {!state.done && !state.errored && <Spinner />}
             <span>
               {answered}/{live.length || "…"} indexers
             </span>
@@ -264,13 +265,14 @@ export function ReleaseSheet(p: ReleaseSheetProps) {
             </Th>
           </div>
 
-          {list.length === 0 && <div className="py-12 text-center text-[13px] text-muted-foreground">{state.done ? (plan.all.length ? "No releases match." : "Nothing found.") : "Waiting for indexers…"}</div>}
+          {list.length === 0 && <div className="py-12 text-center text-[13px] text-muted-foreground">{state.done ? (plan.all.length ? "No releases match." : "Nothing found.") : state.errored ? "The search did not finish." : "Waiting for indexers…"}</div>}
 
           {list.slice(0, limit).map((r) => (
             <Row
               key={r.key}
               r={r}
               p={p}
+              want={want}
               cols={cols}
               cells={cells}
               fills={picks.get(r.key)}
@@ -390,7 +392,7 @@ function LangSpecs({ r }: { r: Release }) {
   return (
     <>
       {l.audio.map((a) => (
-        <Spec key={a} tone={a === "English" || a === "Multi" ? "have" : undefined} title={a}>
+        <Spec key={a} title={a}>
           {langCode(a)}
         </Spec>
       ))}
@@ -410,7 +412,7 @@ function SubSpecs({ r }: { r: Release }) {
     return (
       <>
         {l.subs.map((s) => (
-          <Spec key={s} tone={s === "English" || s === "Multi" ? "have" : undefined} title={s}>
+          <Spec key={s} title={s}>
             {langCode(s)}
           </Spec>
         ))}
@@ -423,6 +425,7 @@ function SubSpecs({ r }: { r: Release }) {
 function Row({
   r,
   p,
+  want,
   cols,
   cells,
   fills,
@@ -437,6 +440,7 @@ function Row({
 }: {
   r: Release;
   p: ReleaseSheetProps;
+  want: Set<number>;
   cols: string;
   cells: { id: number; tone: Tone }[];
   fills?: number[];
@@ -451,7 +455,6 @@ function Row({
 }) {
   const i = r.info;
   const picked = !!fills;
-  const want = new Set(p.wanted);
   const nFills = (r.covers ?? []).filter((id) => want.has(id)).length;
   const extras = (r.covers?.length ?? 0) - nFills;
   const cover = coverLabel(r, p);
@@ -480,7 +483,7 @@ function Row({
   const box = sent ? (
     <Check className="size-4 text-have" aria-label="Sent to the download client" />
   ) : busy ? (
-    <Spinner />
+    <Spinner label="Sending to the download client" />
   ) : (
     <Checkbox checked={chosen} onCheckedChange={(v) => onChoose(v === true)} onClick={(e) => e.stopPropagation()} aria-label={`Select ${r.title}`} />
   );
@@ -495,6 +498,8 @@ function Row({
         aria-expanded={open}
         onClick={onToggle}
         onKeyDown={(e) => {
+          // Keys pressed on the checkbox inside the row are the checkbox's.
+          if (e.target !== e.currentTarget) return;
           if (e.key === "Enter") {
             e.preventDefault();
             onToggle();
@@ -511,7 +516,7 @@ function Row({
         </span>
         <span className="flex flex-wrap gap-1">
           {tags.map((v) => (
-            <Spec key={v} tone={v === "DV" || v.startsWith("HDR") ? "live" : r.rejected && /CAM|TS|TC/i.test(v) ? "bad" : undefined}>
+            <Spec key={v} tone={r.rejected && /CAM|TS|TC/i.test(v) ? "bad" : undefined}>
               {v}
             </Spec>
           ))}

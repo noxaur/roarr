@@ -21,7 +21,9 @@ const (
 	Pass Level = "pass"
 	Warn Level = "warn"
 	Fail Level = "fail"
-	// Skip means the check could not run (no ffmpeg, file not visible).
+	// Skip means the check could not run (no ffmpeg, file not visible). For a
+	// verdict it means the download was not fully checked and nothing checked
+	// was wrong.
 	Skip Level = "skip"
 )
 
@@ -79,14 +81,16 @@ func (v *Verdict) add(c Check) {
 }
 
 // finish sets the overall level and a one-line summary: the reason of the
-// first, most severe check.
+// first, most severe check. A check that could not run proves nothing, so
+// without a warning or failure the verdict is Skip, never Pass.
 func (v *Verdict) finish() {
 	v.Level = Skip
-	worst := -1
-	unprobed := -1 // a passing file list alone proves nothing
+	worst, skipped := -1, -1
 	for i, c := range v.Checks {
-		if c.Name == "streams" && c.Level == Skip {
-			unprobed = i
+		if c.Level == Skip {
+			if skipped < 0 {
+				skipped = i
+			}
 			continue
 		}
 		v.Level = Worse(v.Level, c.Level)
@@ -97,10 +101,10 @@ func (v *Verdict) finish() {
 	switch {
 	case worst >= 0:
 		v.Summary = v.Checks[worst].Reason
-	case unprobed >= 0:
-		v.Level, v.Summary = Skip, "could not be checked: "+v.Checks[unprobed].Reason
-	case v.Level == Skip && len(v.Checks) > 0:
-		v.Summary = "could not be checked: " + v.Checks[0].Reason
+	case skipped >= 0 && v.Checks[skipped].Name == "streams":
+		v.Level, v.Summary = Skip, "could not be checked: "+v.Checks[skipped].Reason
+	case skipped >= 0:
+		v.Level, v.Summary = Skip, v.Checks[skipped].Name+" could not be checked: "+v.Checks[skipped].Reason
 	case v.Level == Skip:
 		v.Summary = "nothing was checked"
 	default:

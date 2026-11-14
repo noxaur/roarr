@@ -222,7 +222,8 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
   };
 
   // One button: grab exactly the plan we are showing once every indexer has
-  // answered; until then let the server wait for a stable plan.
+  // answered; until then, or when the search failed, let the server search
+  // and wait for a stable plan.
   const get = async () => {
     const have = lib ? onDisk(selArr) : [];
     if (have.length) {

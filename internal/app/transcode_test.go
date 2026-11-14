@@ -8,19 +8,23 @@ import (
 	"github.com/noxaur/roarr/internal/arr"
 )
 
-func TestMapPath(t *testing.T) {
-	spec := "/tv=/media/tv, /movies/=/media/films"
+func TestTranscodePathMap(t *testing.T) {
+	// "/gone=" has no local side: the rule is left out, not read as "strip".
+	pm := pathMap("TRANSCODE_PATH_MAP", `/tv=/media/tv, /movies/=/media/films,/tv/anime=/media/anime,D:\TV=/media/win,/gone=`)
 	for in, want := range map[string]string{
 		"/tv/Show/S01E01.mkv":    "/media/tv/Show/S01E01.mkv",
 		"/movies/A (2020)/a.mkv": "/media/films/A (2020)/a.mkv",
+		"/tv/anime/x.mkv":        "/media/anime/x.mkv", // longest prefix wins, whatever the order
+		`D:\TV\Show\x.mkv`:       "/media/win/Show/x.mkv",
 		"/tvshows/x.mkv":         "/tvshows/x.mkv",
 		"/other/x.mkv":           "/other/x.mkv",
+		"/gone/x.mkv":            "/gone/x.mkv",
 	} {
-		if got := mapPath(spec, in); got != want {
-			t.Errorf("mapPath(%q) = %q, want %q", in, got, want)
+		if got := pm.Map(in); got != want {
+			t.Errorf("Map(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if mapPath("", "/a/b") != "/a/b" {
+	if pathMap("TRANSCODE_PATH_MAP", "").Map("/a/b") != "/a/b" {
 		t.Error("empty map must not change paths")
 	}
 }

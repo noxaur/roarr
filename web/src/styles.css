@@ -53,6 +53,16 @@
   --bad-soft: #33191a;
   /* Not aired: an unlit cell. */
   --unlit: #26262a;
+  /* A title without artwork, as a tape spine: near-black, tinted too little to read as a state. */
+  --spine-1: #1f2a2e;
+  --spine-2: #2a241f;
+  --spine-3: #24221f;
+  --spine-4: #2a1f1f;
+  --spine-5: #22261f;
+  --spine-6: #1f2330;
+  --spine-7: #261f2c;
+  --spine-8: #1c2626;
+  --spine-9: #2c1f26;
 
   --ink: #0a0a0b;
   --paper: #ffffff;

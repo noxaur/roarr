@@ -73,3 +73,39 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("verify after auto round trip: %+v", v)
 	}
 }
+
+// A client that does not know an import setting sends the object without
+// it. That must not reset the setting: 0 turns the missing search off.
+func TestSettingsPartialImportKeepsStoredFields(t *testing.T) {
+	for _, k := range []string{"IMPORT_MODE", "TV_ROOT", "MOVIES_ROOT", "IMPORT_TRANSFER", "QBIT_PATH_MAP", "QBIT_CATEGORY", "QBIT_SAVE_PATH", "MISSING_SEARCH_HOURS", "AUTH_MODE", "AUTH_PASSWORD"} {
+		t.Setenv(k, "")
+	}
+	store, err := config.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Update(func(s *config.Settings) {
+		s.Import = config.Import{Mode: "native", TVRoot: "/media/tv", MissingSearchHours: 6}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{app: &app.App{Settings: store}}
+	put := func(body string) config.Import {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.putSettings(w, httptest.NewRequest("PUT", "/api/settings", bytes.NewReader([]byte(body))))
+		if w.Code != 200 {
+			t.Fatalf("PUT %s: %d %s", body, w.Code, w.Body)
+		}
+		return store.Get().Import
+	}
+	if got := put(`{"import":{"mode":"native","tvRoot":"/tv"}}`); got.MissingSearchHours != 6 || got.TVRoot != "/tv" {
+		t.Fatalf("a PUT without missingSearchHours must keep it and apply the rest: %+v", got)
+	}
+	if got := put(`{}`); got.Mode != "native" || got.TVRoot != "/tv" || got.MissingSearchHours != 6 {
+		t.Fatalf("a PUT without import must keep it all: %+v", got)
+	}
+	if got := put(`{"import":{"mode":"native","tvRoot":"","missingSearchHours":0}}`); got.MissingSearchHours != 0 || got.TVRoot != "" {
+		t.Fatalf("an explicit 0 or empty value must be stored: %+v", got)
+	}
+}

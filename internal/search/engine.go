@@ -12,7 +12,6 @@ package search
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -83,13 +82,21 @@ type Engine struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	cache    map[string]*entry
-	queues   map[int]*queue
-	seq      uint64
-	ixAt     time.Time
+	mu        sync.Mutex
+	cache     map[string]*entry
+	queues    map[int]*queue
+	seq       uint64
+	ixAt      time.Time
+	ix        []arr.Indexer
+	disabled  map[int]time.Time
+	ixRefresh *ixRefresh // in flight, shared by every caller
+}
+
+type ixRefresh struct {
+	done     chan struct{}
 	ix       []arr.Indexer
 	disabled map[int]time.Time
+	err      error
 }
 
 type entry struct {
@@ -111,10 +118,11 @@ type queue struct {
 	wake    chan struct{}
 }
 
-var errAbandoned = errors.New("abandoned")
-
 // errTTL is how long a failed query is remembered before it is retried.
 const errTTL = 90 * time.Second
+
+// ixTTL is how long the indexer list is used before it is refreshed.
+const ixTTL = 3 * time.Minute
 
 // NewEngine returns an engine with defaults.
 func NewEngine(p *arr.Prowlarr) *Engine {
@@ -126,21 +134,42 @@ func NewEngine(p *arr.Prowlarr) *Engine {
 // Close stops the per-indexer workers.
 func (e *Engine) Close() { e.cancel() }
 
-// Indexers returns enabled indexers (cached for a few minutes).
+// Indexers returns enabled indexers and the ones Prowlarr has disabled for
+// now. A list older than ixTTL is still returned at once and refreshed in the
+// background, so only the first search ever waits for Prowlarr here.
 func (e *Engine) Indexers(ctx context.Context) ([]arr.Indexer, map[int]time.Time, error) {
 	e.mu.Lock()
-	if time.Since(e.ixAt) < 3*time.Minute && e.ix != nil {
-		ix, dis := e.ix, e.disabled
-		e.mu.Unlock()
-		return ix, dis, nil
+	ix, dis, r := e.ix, e.disabled, e.ixRefresh
+	if r == nil && (ix == nil || time.Since(e.ixAt) >= ixTTL) {
+		r = &ixRefresh{done: make(chan struct{})}
+		e.ixRefresh = r
+		go e.refreshIndexers(r)
 	}
 	e.mu.Unlock()
-	all, err := e.Prowlarr.AllIndexers(ctx)
-	if err != nil {
-		return nil, nil, err
+	if ix != nil {
+		return ix, dis, nil
 	}
-	dis, _ := e.Prowlarr.DisabledIndexers(ctx)
-	var on []arr.Indexer
+	select {
+	case <-r.done:
+		return r.ix, r.disabled, r.err
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+}
+
+func (e *Engine) refreshIndexers(r *ixRefresh) {
+	ctx, cancel := context.WithTimeout(e.ctx, e.Timeout)
+	defer cancel()
+	var dis map[int]time.Time
+	var disErr error
+	disDone := make(chan struct{})
+	go func() {
+		dis, disErr = e.Prowlarr.DisabledIndexers(ctx)
+		close(disDone)
+	}()
+	all, err := e.Prowlarr.AllIndexers(ctx)
+	<-disDone
+	on := []arr.Indexer{} // nil means not loaded yet
 	for _, i := range all {
 		if i.Enable {
 			on = append(on, i)
@@ -149,10 +178,26 @@ func (e *Engine) Indexers(ctx context.Context) ([]arr.Indexer, map[int]time.Time
 	sort.Slice(on, func(a, b int) bool {
 		return on[a].Priority < on[b].Priority || on[a].Priority == on[b].Priority && on[a].ID < on[b].ID
 	})
+
 	e.mu.Lock()
-	e.ix, e.disabled, e.ixAt = on, dis, time.Now()
+	if disErr != nil {
+		// Keep what was known rather than treating every indexer as healthy.
+		slog.Debug("indexer status lookup failed", "err", disErr)
+		dis = map[int]time.Time{}
+		for id, until := range e.disabled {
+			if until.After(time.Now()) {
+				dis[id] = until
+			}
+		}
+	}
+	if err == nil {
+		e.ix, e.disabled, e.ixAt = on, dis, time.Now()
+		r.ix, r.disabled = on, dis
+	}
+	r.err = err
+	e.ixRefresh = nil
 	e.mu.Unlock()
-	return on, dis, nil
+	close(r.done)
 }
 
 type job struct {
@@ -338,7 +383,7 @@ func (e *Engine) fetch(ctx context.Context, j job) Batch {
 		case <-en.done:
 			// Failures are remembered briefly so one dead indexer does not
 			// add its full timeout to every search.
-			if time.Since(en.at) > e.TTL || (en.err != nil && time.Since(en.at) > errTTL) || errors.Is(en.err, errAbandoned) {
+			if time.Since(en.at) > e.TTL || (en.err != nil && time.Since(en.at) > errTTL) {
 				ok = false
 			}
 		default:
@@ -426,12 +471,10 @@ func (e *Engine) worker(q *queue) {
 		en := q.next()
 		if en != nil {
 			en.queued = false
-			// Nobody is waiting for background prefetch any more (the user
-			// left the page): drop it instead of spending indexer quota.
-			if en.waiters == 0 && en.prio == PPrefetch {
+			// Nobody is waiting for it any more (the user moved on): drop it
+			// instead of making the next click wait behind it.
+			if en.waiters == 0 {
 				delete(e.cache, en.j.q.Key())
-				en.err = errAbandoned
-				close(en.done)
 				e.mu.Unlock()
 				continue
 			}
@@ -470,17 +513,6 @@ func (e *Engine) Sweep() {
 	defer e.mu.Unlock()
 	for k, en := range e.cache {
 		if isClosed(en.done) && time.Since(en.at) > e.TTL {
-			delete(e.cache, k)
-		}
-	}
-}
-
-// Flush clears finished cache entries.
-func (e *Engine) Flush() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	for k, en := range e.cache {
-		if isClosed(en.done) {
 			delete(e.cache, k)
 		}
 	}

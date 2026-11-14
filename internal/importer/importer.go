@@ -96,10 +96,7 @@ func (im *Importer) Destination(t Title, p Placement) (string, error) {
 // already renamed to "Show - S01E02.mkv").
 func QualityRank(name string) int {
 	i := release.Parse(name)
-	src := map[release.Source]int{
-		release.SourceCam: 1, release.SourceTS: 2, release.SourceScreen: 3, release.SourceDVD: 4, release.SourceHDTV: 5,
-		release.SourceWEBRip: 6, release.SourceWEB: 7, release.SourceWEBDL: 7, release.SourceBluRay: 8, release.SourceRemux: 9,
-	}[i.Source]
+	src := release.SourceRank(i.Source)
 	if i.Resolution == 0 && src == 0 {
 		return -1
 	}
@@ -204,13 +201,21 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 	}
 	existing := im.Existing(t, p.Season, p.Episodes)
 	var replace []string
+	var keeps string // a file left alone because it holds more episodes
 	for _, old := range existing {
 		if oi, err := os.Stat(old); err == nil && os.SameFile(si, oi) {
 			return Result{Path: old, Skipped: true, Reason: "already in the library"}, nil
 		}
+		// The planner already chose between the files of one download. Two
+		// of them overlap only when a multi-episode file is the sole copy of
+		// one of its episodes, and then both belong in the library.
+		if r, ok := im.store.Record(old); ok && req.Hash != "" && r.Hash == req.Hash && old != dest {
+			continue
+		}
 		if t.Kind == "tv" {
 			if extra := extraEpisodes(old, p.Season, p.Episodes); extra != "" {
-				return Result{Skipped: true, Reason: fmt.Sprintf("%s also holds %s; not replacing it", filepath.Base(old), extra)}, nil
+				keeps = fmt.Sprintf("%s also holds %s; not replacing it", filepath.Base(old), extra)
+				continue
 			}
 		}
 		oldRank := im.rankOf(old)
@@ -222,6 +227,9 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 			return Result{Skipped: true, Reason: filepath.Base(old) + " is already there and is as good or better"}, nil
 		}
 		replace = append(replace, old)
+	}
+	if keeps != "" && len(replace) == 0 {
+		return Result{Skipped: true, Reason: keeps}, nil
 	}
 
 	cand := Candidate{Title: t, Season: p.Season, Episodes: p.Episodes, Source: src, Dest: dest, Release: req.Release, Hash: req.Hash, Replacing: replace}

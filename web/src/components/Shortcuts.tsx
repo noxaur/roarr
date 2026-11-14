@@ -48,7 +48,7 @@ export function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenC
             <section key={name}>
               <div className="label-caps mb-2">{name}</div>
               {rows.map(([label, k]) => (
-                <div key={label} className="flex h-8 items-center justify-between border-b text-[13px]">
+                <div key={k} className="flex h-8 items-center justify-between border-b text-[13px]">
                   <span className="text-muted-foreground">{label}</span>
                   <Kbd>{k}</Kbd>
                 </div>

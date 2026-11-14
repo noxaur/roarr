@@ -8,8 +8,7 @@ show, a movie or a whole collection. Let roarr pick the best release, or pick
 it yourself. Season packs download episode by episode, and each episode lands
 in Jellyfin as soon as it is done.
 
-One Docker image (~17 MB, or ~17 MB + ffmpeg if you want the optional AV1
-converter), one port, one volume.
+One Docker image, one port, one volume.
 
 ## Quick start
 
@@ -51,8 +50,9 @@ discovers in Prowlarr or Sonarr) is retried on the Docker host
 (`host.docker.internal`, then the default gateway) when nothing answers inside
 the container. Release links handed to Sonarr/Radarr are rewritten to the
 Prowlarr address *they* use, so the apps do not need to resolve the same names
-as roarr. Everything except connection
-settings can also be changed under **Admin** (account menu), and is saved in `/config`.
+as roarr. Settings, connections included, can also be changed under
+**Admin** (account menu) and are saved in `/config`. A setting given as an
+environment variable is locked there.
 
 ### Configuration
 
@@ -66,6 +66,7 @@ settings can also be changed under **Admin** (account menu), and is saved in `/c
 | `QBIT_URL`, `QBIT_USERNAME`, `QBIT_PASSWORD` | host/user from Sonarr | Watch-first packs and "download anyway". Sonarr hides the password, so set `QBIT_PASSWORD`. |
 | `AUTH_MODE` | `jellyfin` if `JELLYFIN_URL` set, else `none` | `jellyfin`, `password` (with `AUTH_PASSWORD`), or `none`. |
 | `JELLYFIN_ADMIN_ONLY` | `true` | Only Jellyfin admins may sign in. |
+| `TRUSTED_PROXIES` | — | Reverse proxies (IPs or CIDRs, comma separated) whose `X-Forwarded-For` roarr believes when it throttles failed sign-ins. Without it, every client behind the proxy shares one limit. |
 | `WATCH_FIRST` | `true` | Download packs in episode order and import as each finishes. |
 | `PREFETCH` | `true` | Start searching a show as soon as its page opens. |
 | `SEERR_AUTO_FETCH` | `false` | Grab newly approved Seerr requests automatically. Turn on Seerr's "prevent search" for its Sonarr/Radarr servers so they don't search too. |
@@ -79,7 +80,7 @@ settings can also be changed under **Admin** (account menu), and is saved in `/c
 | `INDEXER_TIMEOUT` | `30` | Seconds before giving up on a slow indexer. |
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |
 | `PORT` | `3847` | |
-| `VERIFY_MEDIA` | `auto` | Check finished downloads with ffprobe/ffmpeg. `auto` is on when `ffprobe` is installed (`FFPROBE_PATH`, `FFMPEG_PATH` override the lookup). |
+| `VERIFY_MEDIA` | `auto` | Check finished downloads with ffprobe/ffmpeg. `auto` is on when `ffprobe` is installed (`FFPROBE_PATH`, `FFMPEG_PATH` override the lookup, for the AV1 converter too). |
 | `VERIFY_AUTO_REGRAB` | `false` | When a download fails the checks, blocklist it and grab the next best release. |
 | `VERIFY_PATH_MAP` | — | `client=roarr` path prefixes, comma-separated, when roarr sees qBittorrent's files under another path (`/downloads=/data/downloads`). |
 
@@ -109,9 +110,11 @@ How it works:
   (the Dolby layer would be lost), are skipped.
 - The result is written next to the original under a temporary name and
   checked with ffprobe: duration within 1 s, same number of video, audio and
-  subtitle streams, same chapters, AV1 video. Only then does it replace the
-  original with an atomic rename. If anything fails, or the result is not
-  `TRANSCODE_MIN_SAVINGS` smaller, the original stays as it was.
+  subtitle streams, same chapters, AV1 video. Only then is it swapped in: the
+  original is moved aside, the result is put in its place without overwriting
+  anything, and the original is deleted last. If roarr stops in the middle, it
+  puts the original back at the next start. If anything fails, or the result
+  is not `TRANSCODE_MIN_SAVINGS` smaller, the original stays as it was.
 - Afterwards roarr asks Sonarr/Radarr to rescan and Jellyfin to refresh.
 - `GET /api/transcode` shows the queue, progress and bytes saved.
 
@@ -137,8 +140,8 @@ existing install, give the config volume to that uid once:
 The torrent's own hard-linked copy is not touched, so seeding goes on, but the
 old data stays on disk until that torrent is removed.
 
-The image includes a static ffmpeg, which adds roughly 100-150 MB (estimate).
-Leave it out with `docker build --build-arg FFMPEG=false .`; the converter
+The image includes a static ffmpeg and ffprobe, which are most of its size.
+Leave them out with `docker build --build-arg FFMPEG=false .`; the converter
 then reports itself as unavailable.
 
 Bind-mounting a host folder on `/config` instead of a named volume? The image
@@ -301,7 +304,7 @@ write-up in [docs/experiments.md](docs/experiments.md).
 
 | Episode search, 7 indexers (median of 5) | first results | everything |
 |---|---|---|
-| Sonarr interactive search (what pulldeck used) | 6.97 s | 6.97 s |
+| Sonarr interactive search (what roarr used at first) | 6.97 s | 6.97 s |
 | Prowlarr aggregated search | 6.49 s | 6.49 s (48 s when an indexer hangs) |
 | **roarr** | **0.52 s** | streamed as indexers answer |
 | **roarr**, after opening the show page (prefetched) | **0.01 s** | cached |

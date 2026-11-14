@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -82,13 +81,16 @@ func (c *Client) tryLogin(ctx context.Context) error {
 		return nil
 	}
 	form := url.Values{"username": {c.Username}, "password": {c.Password}}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+"/api/v2/auth/login", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+"/api/v2/auth/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	// Referer only: the login that is known to work sends no Origin header.
 	req.Header.Set("Referer", c.Base)
 	res, err := c.http.Do(req)
 	if err != nil {
-		return &httpx.Error{Service: "qbittorrent", Message: httpx.Unreachable(err)}
+		return httpx.TransportError("qbittorrent", err)
 	}
 	defer res.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 512))
@@ -161,7 +163,7 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, b
 		req.Header.Set("Referer", c.Base)
 		res, err := c.http.Do(req)
 		if err != nil {
-			return &httpx.Error{Service: "qbittorrent", Message: httpx.Unreachable(err)}
+			return httpx.TransportError("qbittorrent", err)
 		}
 		if res.StatusCode == http.StatusForbidden && attempt == 0 && c.Password != "" {
 			res.Body.Close()
@@ -214,7 +216,6 @@ type Torrent struct {
 	ContentPath  string  `json:"content_path"`
 	DownloadPath string  `json:"download_path"` // incomplete-files folder, when qBittorrent uses one
 	SeqDL        bool    `json:"seq_dl"`
-	FirstLast    bool    `json:"f_l_piece_prio"`
 	AddedOn      int64   `json:"added_on"`
 	CompletionOn int64   `json:"completion_on"`
 }
@@ -282,27 +283,13 @@ func (c *Client) SetSequential(ctx context.Context, hash string, on bool) error 
 	return c.do(ctx, http.MethodPost, "/api/v2/torrents/toggleSequentialDownload", url.Values{"hashes": {strings.ToLower(hash)}}, nil, "", nil)
 }
 
-// SetFirstLast turns first/last piece priority on or off.
-func (c *Client) SetFirstLast(ctx context.Context, hash string, on bool) error {
-	ts, err := c.Torrents(ctx, hash)
-	if err != nil || len(ts) == 0 {
-		return err
-	}
-	if ts[0].FirstLast == on {
-		return nil
-	}
-	return c.do(ctx, http.MethodPost, "/api/v2/torrents/toggleFirstLastPiecePrio", url.Values{"hashes": {strings.ToLower(hash)}}, nil, "", nil)
-}
-
 // Add adds a torrent by URL/magnet or raw .torrent bytes.
 type Add struct {
-	URL       string
-	Torrent   []byte
-	Category  string
-	SavePath  string
-	Paused    bool
-	Sequental bool
-	FirstLast bool
+	URL      string
+	Torrent  []byte
+	Category string
+	SavePath string
+	Paused   bool
 }
 
 // ErrRejected means qBittorrent answered "Fails." to an add: it did not take
@@ -337,12 +324,6 @@ func (c *Client) AddTorrent(ctx context.Context, a Add) error {
 		_ = w.WriteField("paused", "true")
 		_ = w.WriteField("stopped", "true")
 	}
-	if a.Sequental {
-		_ = w.WriteField("sequentialDownload", "true")
-	}
-	if a.FirstLast {
-		_ = w.WriteField("firstLastPiecePrio", "true")
-	}
 	_ = w.Close()
 	var reply string
 	if err := c.do(ctx, http.MethodPost, "/api/v2/torrents/add", nil, &buf, w.FormDataContentType(), &reply); err != nil {
@@ -368,6 +349,3 @@ func (c *Client) Start(ctx context.Context, hash string) error {
 func (c *Client) Delete(ctx context.Context, hash string, deleteFiles bool) error {
 	return c.do(ctx, http.MethodPost, "/api/v2/torrents/delete", url.Values{"hashes": {strings.ToLower(hash)}, "deleteFiles": {strconv.FormatBool(deleteFiles)}}, nil, "", nil)
 }
-
-// ErrNotFound is returned when a torrent is not (yet) known.
-var ErrNotFound = fmt.Errorf("torrent not found")

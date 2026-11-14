@@ -1,7 +1,6 @@
 package app
 
 import (
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -10,17 +9,20 @@ import (
 )
 
 func TestVerifyPathMap(t *testing.T) {
-	pm := parsePathMap(` /downloads = /data/downloads , D:\Torrents=/torrents,/downloads/tv=/tv,broken`)
+	pm := pathMap("VERIFY_PATH_MAP", ` /downloads = /data/downloads , D:\Torrents=/torrents,/downloads/tv=/tv,broken`)
 	cases := map[string]string{
 		"/downloads/movies/M (2020)/m.mkv": "/data/downloads/movies/M (2020)/m.mkv",
 		"/downloads/tv/Show/s01e01.mkv":    "/tv/Show/s01e01.mkv", // longest prefix wins
 		`D:\Torrents\Show\e01.mkv`:         "/torrents/Show/e01.mkv",
-		"/downloadsX/a.mkv":                "/downloadsX/a.mkv", // not a path prefix
+		`d:\torrents\Show\e01.mkv`:         "/torrents/Show/e01.mkv", // drive letters ignore case
+		"/downloadsX/a.mkv":                "/downloadsX/a.mkv",      // not a path prefix
 		"/other/a.mkv":                     "/other/a.mkv",
+		// What the download client joins from a Windows save path.
+		joinClientPath(`D:\Torrents\`, "Show/e01.mkv"): "/torrents/Show/e01.mkv",
 	}
 	for in, want := range cases {
-		if got := mapVerifyPath(pm, in); got != filepath.FromSlash(want) {
-			t.Errorf("mapVerifyPath(%q) = %q, want %q", in, got, want)
+		if got := pm.Map(in); got != want {
+			t.Errorf("Map(%q) = %q, want %q", in, got, want)
 		}
 	}
 	if got := joinClientPath(`D:\Torrents\`, "Show/e01.mkv"); got != "D:/Torrents/Show/e01.mkv" {

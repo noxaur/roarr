@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -166,7 +167,9 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if err := s.auth.throttle(r); err != nil {
+	st := s.app.Settings.Get()
+	client := clientIP(r, st.TrustedProxies)
+	if err := s.auth.throttle(client); err != nil {
 		writeErr(w, http.StatusTooManyRequests, err)
 		return
 	}
@@ -178,13 +181,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	st := s.app.Settings.Get()
 	switch st.AuthMode {
 	case "none":
 		writeJSON(w, 200, map[string]any{"ok": true})
 	case "password":
 		if !passwordOK(body.Password, st.AuthPassword) {
-			s.auth.fail(r)
+			s.auth.fail(client)
 			writeErr(w, http.StatusUnauthorized, errors.New("wrong password"))
 			return
 		}
@@ -197,7 +199,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			var he *httpx.Error
 			if errors.As(err, &he) && (he.Status == 401 || he.Status == 400) {
-				s.auth.fail(r)
+				s.auth.fail(client)
 				writeErr(w, http.StatusUnauthorized, errors.New("wrong username or password"))
 				return
 			}
@@ -504,47 +506,13 @@ func ints(s string) []int {
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	ctx := r.Context()
-	var t app.Target
-	var sc app.Scope
-	switch q.Get("kind") {
-	case "movie":
-		t.Kind = "movie"
-		for _, id := range ints(q.Get("tmdb")) {
-			m, err := s.app.MovieByTmdb(ctx, id)
-			if err != nil {
-				writeErr(w, statusFor(err), err)
-				return
-			}
-			t.Movies = append(t.Movies, m)
-		}
-		if len(t.Movies) == 0 {
-			writeErr(w, 400, errors.New("tmdb ids required"))
-			return
-		}
-	default:
-		t.Kind = "tv"
-		var d *app.SeriesDetail
-		var err error
-		if id, _ := strconv.Atoi(q.Get("id")); id > 0 {
-			d, err = s.app.Series(ctx, id, false)
-		} else {
-			tvdb, _ := strconv.Atoi(q.Get("tvdb"))
-			tmdb, _ := strconv.Atoi(q.Get("tmdb"))
-			d, err = s.app.SeriesByTvdb(ctx, tvdb, tmdb)
-		}
-		if err != nil {
-			writeErr(w, statusFor(err), err)
-			return
-		}
-		t.Series = d
-		sc = app.Scope{Show: q.Get("show") == "1", Seasons: ints(q.Get("seasons")), Episodes: ints(q.Get("episodes"))}
-	}
-
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		writeErr(w, 500, errors.New("streaming unsupported"))
 		return
 	}
+	// The stream opens before any upstream is asked, so the browser is
+	// connected at once. From here on a failure is an error event.
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
@@ -579,7 +547,48 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	defer close(stop)
-	if _, err := s.app.Search(ctx, t, sc, func(ev app.SearchEvent) { send(ev) }); err != nil && !errors.Is(err, context.Canceled) {
+
+	var t app.Target
+	var sc app.Scope
+	var err error
+	switch q.Get("kind") {
+	case "movie":
+		t.Kind = "movie"
+		ids := ints(q.Get("tmdb"))
+		if len(ids) == 0 {
+			err = errors.New("tmdb ids required")
+		}
+		t.Movies = make([]*app.MovieDetail, len(ids))
+		errs := make([]error, len(ids))
+		var wg sync.WaitGroup
+		for i, id := range ids {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				t.Movies[i], errs[i] = s.app.MovieTarget(ctx, id)
+			}()
+		}
+		wg.Wait()
+		for _, e := range errs {
+			if err == nil {
+				err = e
+			}
+		}
+	default:
+		t.Kind = "tv"
+		if id, _ := strconv.Atoi(q.Get("id")); id > 0 {
+			t.Series, err = s.app.Series(ctx, id, false)
+		} else {
+			tvdb, _ := strconv.Atoi(q.Get("tvdb"))
+			tmdb, _ := strconv.Atoi(q.Get("tmdb"))
+			t.Series, err = s.app.SeriesByTvdb(ctx, tvdb, tmdb)
+		}
+		sc = app.Scope{Show: q.Get("show") == "1", Seasons: ints(q.Get("seasons")), Episodes: ints(q.Get("episodes"))}
+	}
+	if err == nil {
+		_, err = s.app.Search(ctx, t, sc, func(ev app.SearchEvent) { send(ev) })
+	}
+	if err != nil && !errors.Is(err, context.Canceled) {
 		send(app.SearchEvent{Type: "error", Error: err.Error()})
 	}
 }
@@ -738,8 +747,13 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
 	var in config.Settings
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	if err := json.Unmarshal(body, &in); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
@@ -752,7 +766,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			*next = prev
 		}
 	}
-	_, err := s.app.Settings.Update(func(cur *config.Settings) {
+	_, err = s.app.Settings.Update(func(cur *config.Settings) {
 		pairs := []struct{ next, prev *config.Service }{
 			{&in.Sonarr, &cur.Sonarr}, {&in.Radarr, &cur.Radarr}, {&in.Prowlarr, &cur.Prowlarr},
 			{&in.Seerr, &cur.Seerr}, {&in.Jellyfin, &cur.Jellyfin}, {&in.QBit, &cur.QBit},
@@ -762,9 +776,13 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			keep(&p.next.Password, p.prev.Password)
 		}
 		keep(&in.AuthPassword, cur.AuthPassword)
-		if in.Import == (config.Import{}) {
-			in.Import = cur.Import // a client that does not know these settings
-		}
+		// A client that does not know an import setting leaves it out: read
+		// the request over the stored values, so only what it sent changes.
+		imp := struct {
+			Import config.Import `json:"import"`
+		}{cur.Import}
+		_ = json.Unmarshal(body, &imp) // the same bytes decoded above
+		in.Import = imp.Import
 		*cur = in
 	})
 	if err != nil {

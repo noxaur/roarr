@@ -105,7 +105,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	}
 	res, err := c.HTTP.Do(req)
 	if err != nil {
-		return c.wrap(err)
+		return TransportError(c.Service, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode >= 300 {
@@ -127,15 +127,17 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values, out any
 	return c.Do(ctx, http.MethodGet, path, query, nil, out)
 }
 
-func (c *Client) wrap(err error) error {
+// TransportError turns a failed round trip to service into an error a user
+// can read. A cancelled request stays context.Canceled.
+func TransportError(service string, err error) error {
 	var ne net.Error
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
-		return &Error{Service: c.Service, Message: "timed out"}
+		return &Error{Service: service, Message: "timed out"}
 	case errors.Is(err, context.Canceled):
 		return err
 	}
-	return &Error{Service: c.Service, Message: Unreachable(err)}
+	return &Error{Service: service, Message: Unreachable(err)}
 }
 
 // Unreachable turns a transport error into a short message with a hint for

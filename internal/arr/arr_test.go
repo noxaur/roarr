@@ -7,6 +7,7 @@ func TestMapRemotePath(t *testing.T) {
 		{Host: "qbittorrent", RemotePath: "/downloads/", LocalPath: "/data/torrents/"},
 		{Host: "qbittorrent", RemotePath: "/downloads/tv", LocalPath: "/tv-dl"},
 		{Host: "other", RemotePath: "/downloads/", LocalPath: "/wrong/"},
+		{Host: "qbittorrent", RemotePath: `D:\Torrents\`, LocalPath: "/mnt/t/"},
 	}
 	cases := []struct{ host, in, want string }{
 		{"qbittorrent", "/downloads/movies/X", "/data/torrents/movies/X"},
@@ -14,6 +15,7 @@ func TestMapRemotePath(t *testing.T) {
 		{"qbittorrent", "/downloadsx/a", "/downloadsx/a"},
 		{"other", "/downloads/a", "/wrong/a"},
 		{"unknown", "/downloads/tv/a", "/tv-dl/a"},
+		{"qbittorrent", `d:\torrents\Show S01`, "/mnt/t/Show S01"}, // drive letters ignore case
 	}
 	for _, c := range cases {
 		if got := MapRemotePath(ms, c.host, c.in); got != c.want {

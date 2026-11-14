@@ -3,6 +3,7 @@ import { Check, ChevronDown, Copy, Download, ExternalLink, Eye, FolderSync, Layo
 import { toast } from "sonner";
 import { api, type LibraryItem } from "@/lib/api";
 import { autoGet, run } from "@/lib/actions";
+import { copyText } from "@/lib/copy";
 import { bytes, fold } from "@/lib/format";
 import { libraryHref } from "@/lib/rank";
 import { Link, useRouter } from "@/lib/router";
@@ -28,8 +29,8 @@ import {
 } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useConfirm } from "@/components/Confirm";
 import { Bar, CellStrip, Dot, Empty, Kbd, Notice, SameWidth, libraryCells, type Tone } from "@/components/kit";
 import { SelectionBar } from "@/components/Manage";
@@ -275,7 +276,7 @@ export function Home({ kind }: { kind?: Kind }) {
     }
   };
 
-  const copyTitle = (it: LibraryItem) => navigator.clipboard?.writeText(it.title).then(() => toast(`Copied “${it.title}”`), () => {});
+  const copyTitle = (it: LibraryItem) => copyText(it.title, `Copied “${it.title}”`);
 
   const toggle = (key: string, range = false) => {
     const n = new Set(selected);
@@ -343,7 +344,8 @@ export function Home({ kind }: { kind?: Kind }) {
         } else if (selected.size) setSelected(new Set());
         return;
       }
-      if (keyIsBusy(e) || e.altKey) return;
+      // A key a focused control already used (arrows in a segmented control) is not a library shortcut.
+      if (keyIsBusy(e) || e.altKey || e.defaultPrevented) return;
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
       let i = items.findIndex((x) => x.key === cursor);
@@ -569,8 +571,10 @@ export function Home({ kind }: { kind?: Kind }) {
           </Button>
           <Segmented
             label="Poster size"
+            size="sm"
+            className="h-8"
             value={size}
-            onChange={(v) => setSize(v as Size)}
+            onChange={setSize}
             options={[
               ["s", "S", "Small posters (−)"],
               ["m", "M", "Medium posters"],
@@ -596,8 +600,10 @@ export function Home({ kind }: { kind?: Kind }) {
           </DropdownMenu>
           <Segmented
             label="View"
+            size="sm"
+            className="h-8"
             value={view}
-            onChange={(v) => setView(v as View)}
+            onChange={setView}
             options={[
               ["grid", <LayoutGrid key="g" className="size-4" />, "Grid (V)"],
               ["list", <List key="l" className="size-4" />, "List (V)"],
@@ -643,7 +649,9 @@ export function Home({ kind }: { kind?: Kind }) {
               </Grid>
             ) : items.length === 0 ? (
               <Empty>
-                {library.length === 0 ? (
+                {libraryErrors.library ? (
+                  "The library could not be loaded."
+                ) : library.length === 0 ? (
                   <>
                     Nothing in Sonarr or Radarr yet. <Kbd>⌘K</Kbd> finds a title.
                   </>
@@ -808,44 +816,6 @@ function Grid({ min, children }: { min: number; children: ReactNode }) {
   return (
     <div className="grid gap-x-6 gap-y-8" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(${min}px, 42vw), 1fr))` }}>
       {children}
-    </div>
-  );
-}
-
-function Segmented({
-  label,
-  value,
-  onChange,
-  options,
-  disabled,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: [string, ReactNode, string][];
-  disabled?: boolean;
-}) {
-  return (
-    <div role="group" aria-label={label} className={cn("flex h-8 gap-1 rounded-[2px] bg-card p-1", disabled && "opacity-50")}>
-      {options.map(([v, content, title]) => (
-        <Tooltip key={v}>
-          <TooltipTrigger asChild>
-            <button
-              disabled={disabled}
-              aria-pressed={value === v}
-              aria-label={title}
-              onClick={() => onChange(v)}
-              className={cn(
-                "grid min-w-6 cursor-pointer place-items-center rounded-[2px] px-1 font-mono text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-default",
-                value === v && "bg-accent text-foreground",
-              )}
-            >
-              {content}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{title}</TooltipContent>
-        </Tooltip>
-      ))}
     </div>
   );
 }
