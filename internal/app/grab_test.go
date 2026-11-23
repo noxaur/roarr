@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -319,5 +320,33 @@ func TestAwaitEpisodesWaitsForSonarrRefresh(t *testing.T) {
 	d, err = awaitEpisodes(context.Background(), func(context.Context) (*SeriesDetail, error) { return &SeriesDetail{}, nil })
 	if err != nil || d == nil || hasEpisodes(d) || time.Since(start) > time.Second {
 		t.Fatalf("empty show: d=%v err=%v took=%v", d, err, time.Since(start))
+	}
+}
+
+// A slow interactive search inside the *arr must not use up the caller's
+// whole budget: an auto run grabs its other picks on the same deadline.
+func TestGrabAnywayIsBounded(t *testing.T) {
+	defer func(d time.Duration) { grabAnywayWait = d }(grabAnywayWait)
+	grabAnywayWait = 50 * time.Millisecond
+	unblock := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-unblock:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(unblock)
+	c := arr.NewSonarr(srv.URL, "k")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	err := testApp(t, &Clients{Sonarr: c}).grabAnyway(ctx, c.Client, url.Values{"seriesId": {"1"}}, nil, Release{Title: "x"})
+	if err == nil || time.Since(start) > time.Second {
+		t.Fatalf("err=%v took=%v, want a timeout after %v", err, time.Since(start), grabAnywayWait)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("the caller's deadline was spent")
 	}
 }
