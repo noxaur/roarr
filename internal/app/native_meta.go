@@ -207,10 +207,20 @@ func (a *App) seriesFromSeerr(tv *seerr.TV, tvdbID int) *SeriesDetail {
 	for _, g := range tv.Genres {
 		d.Genres = append(d.Genres, g.Name)
 	}
+	// TMDB counts announced episodes too; only those up to the last one
+	// that aired count as aired, so nothing grabs a fake of a future one.
+	last := tv.LastEpisodeToAir
+	hasAired := func(season, ep int, premiere string) bool {
+		if last == nil || season == 0 {
+			return aired(premiere)
+		}
+		return season < last.SeasonNumber || season == last.SeasonNumber && ep <= last.EpisodeNumber
+	}
 	for _, sn := range tv.Seasons {
 		sd := SeasonDetail{Number: sn.SeasonNumber, Episodes: []EpisodeDetail{}}
 		for e := 1; e <= sn.EpisodeCount; e++ {
-			sd.Episodes = append(sd.Episodes, EpisodeDetail{ID: SyntheticID(sn.SeasonNumber, e), Season: sn.SeasonNumber, Number: e, Title: fmt.Sprintf("Episode %d", e), Aired: true})
+			sd.Episodes = append(sd.Episodes, EpisodeDetail{ID: SyntheticID(sn.SeasonNumber, e), Season: sn.SeasonNumber, Number: e, Title: fmt.Sprintf("Episode %d", e),
+				Aired: hasAired(sn.SeasonNumber, e, sn.AirDate)})
 		}
 		d.Seasons = append(d.Seasons, sd)
 	}

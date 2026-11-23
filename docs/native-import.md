@@ -317,7 +317,8 @@ The pass:
 2. Every Radarr movie becomes a title the same way.
 3. Title folders in `TV_ROOT` and `MOVIES_ROOT` that no title owns are
    identified through Seerr: by a `[tmdbid-N]` tag in the name, or by a
-   search whose result has the same name and year. Their videos get
+   search whose result has the same name and year. A folder without a year
+   needs a name only one TMDB title has. Their videos get
    records. Shows found this way monitor only episodes that air from now
    on, so the takeover does not download a backlog nobody asked for.
 4. roarr sets `IMPORT_MODE=native` and `import.standalone`.
@@ -325,7 +326,8 @@ The pass:
 Paths: Sonarr and Radarr name paths as their containers see them. roarr
 tries the path as it is, then the AV1 and verify path maps (`*arr path =
 roarr path`), then the path relative to the *arr root folder under
-`TV_ROOT` / `MOVIES_ROOT`. A title whose folder roarr cannot see is
+`TV_ROOT` / `MOVIES_ROOT`. When Sonarr or Radarr cannot list its root
+folders, the takeover stops and roarr keeps using them. A title whose folder roarr cannot see is
 skipped with the reason, and so is a folder Seerr cannot identify. A title
 roarr already tracks keeps its monitoring, and files roarr placed keep
 their records, so running it again changes nothing.

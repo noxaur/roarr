@@ -169,7 +169,12 @@ func (a *App) TakeoverPlan(ctx context.Context) TakeoverPlan {
 	return p
 }
 
+// allOK reports whether roarr sees every root folder; no root folders (or
+// none that could be listed) is not OK.
 func allOK(ds []TakeoverDir) bool {
+	if len(ds) == 0 {
+		return false
+	}
 	for _, d := range ds {
 		if !d.OK {
 			return false
@@ -379,11 +384,9 @@ func (a *App) takeOverSonarr(ctx context.Context, son *arr.Sonarr, root string, 
 	if err != nil {
 		return err
 	}
-	var roots []string
-	if rs, err := son.RootFolders(ctx); err == nil {
-		for _, r := range rs {
-			roots = append(roots, r.Path)
-		}
+	roots, err := rootPaths(ctx, son.Client, len(series))
+	if err != nil {
+		return err
 	}
 	for i, sr := range series {
 		if ctx.Err() != nil {
@@ -473,11 +476,9 @@ func (a *App) takeOverRadarr(ctx context.Context, rad *arr.Radarr, root string, 
 	if err != nil {
 		return err
 	}
-	var roots []string
-	if rs, err := rad.RootFolders(ctx); err == nil {
-		for _, r := range rs {
-			roots = append(roots, r.Path)
-		}
+	roots, err := rootPaths(ctx, rad.Client, len(movies))
+	if err != nil {
+		return err
 	}
 	for i, m := range movies {
 		if ctx.Err() != nil {
@@ -511,6 +512,24 @@ func (a *App) takeOverRadarr(ctx context.Context, rad *arr.Radarr, root string, 
 		n.setTakeover(func(st *TakeoverState) { st.Movies++; st.Files += len(recs) })
 	}
 	return nil
+}
+
+// rootPaths lists an *arr's root folders. Titles without a root folder
+// cannot be placed, so the takeover stops (and roarr keeps using the *arr)
+// rather than finish without them.
+func rootPaths(ctx context.Context, c *arr.Client, titles int) ([]string, error) {
+	rs, err := c.RootFolders(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing root folders: %w", err)
+	}
+	if len(rs) == 0 && titles > 0 {
+		return nil, errors.New("it has titles but no root folders")
+	}
+	var out []string
+	for _, r := range rs {
+		out = append(out, r.Path)
+	}
+	return out, nil
 }
 
 // arrFile is where roarr sees a Sonarr/Radarr file: in the title folder
@@ -684,16 +703,21 @@ func (a *App) identifyFolder(ctx context.Context, sc *seerr.Client, kind, name s
 		if err != nil {
 			return importer.Title{}, err
 		}
-		want := map[string]string{"tv": "tv", "movie": "movie"}[kind]
+		// Without a year in the folder name, the name alone must be
+		// unambiguous: "The Office" is two shows.
+		var hits []int
 		for _, r := range res {
-			if r.MediaType == want && release.Normalize(r.DisplayTitle()) == release.Normalize(title) && (year == 0 || r.Year() == year) {
-				tmdbID = r.ID
-				break
+			if r.MediaType == kind && release.Normalize(r.DisplayTitle()) == release.Normalize(title) && (year == 0 || r.Year() == year) {
+				hits = append(hits, r.ID)
 			}
 		}
-		if tmdbID == 0 {
+		switch {
+		case len(hits) == 0:
 			return importer.Title{}, errors.New("no TMDB title has this name and year")
+		case len(hits) > 1 && year == 0:
+			return importer.Title{}, errors.New("several TMDB titles have this name; add the year to the folder name, as in \"Name (2005)\"")
 		}
+		tmdbID = hits[0]
 	}
 	if kind == "movie" {
 		m, err := sc.Movie(ctx, tmdbID)

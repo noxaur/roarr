@@ -11,6 +11,10 @@ import (
 	"github.com/noxaur/roarr/internal/importer"
 )
 
+// errSearchBusy: another search holds the title; the tick offers the job
+// again.
+var errSearchBusy = errors.New("another search for this title is running; roarr tries again shortly")
+
 // replaceLoop replaces jobs that failed because of their release, one at
 // a time, so a burst of dead torrents does not start a burst of searches.
 func (n *Native) replaceLoop(ctx context.Context) {
@@ -20,7 +24,10 @@ func (n *Native) replaceLoop(ctx context.Context) {
 			return
 		case hash := <-n.bad:
 			rctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			if _, err := n.Replace(rctx, hash, "", false); err != nil {
+			switch _, err := n.Replace(rctx, hash, "", false); {
+			case errors.Is(err, errSearchBusy):
+				slog.Debug("native: replacement waits for a running search", "hash", hash)
+			case err != nil:
 				slog.Warn("native: could not replace a failed download", "hash", hash, "err", err)
 			}
 			cancel()
@@ -57,6 +64,13 @@ func (n *Native) Replace(ctx context.Context, hash, reason string, discard bool)
 	if reason == "" {
 		reason = job.Message
 	}
+	// Claim the title before anything changes: a search that runs now has
+	// skipped these episodes as queued, so the job must stay replaceable
+	// (Replacement empty) until a search of its own can run.
+	if !n.claimSearch(job.TitleKey) {
+		return AutoResult{}, errSearchBusy
+	}
+	defer n.releaseSearch(job.TitleKey)
 	n.blocklist.Add(Blocked{Release: job.Release, Hash: hash, Indexer: job.Indexer, Kind: job.Kind, TitleKey: job.TitleKey, Title: job.TitleName, Reason: reason})
 	if c := n.app.C(); c.QBit != nil {
 		if err := c.QBit.Delete(ctx, hash, true); err != nil {
@@ -83,11 +97,8 @@ func (n *Native) Replace(ctx context.Context, hash, reason string, discard bool)
 	case err != nil:
 	case req.Kind == "":
 		res.Message = "Nothing is missing."
-	case !n.claimSearch(job.TitleKey):
-		err = errors.New("another search for " + job.TitleName + " is running")
 	default:
 		res, err = n.app.Auto(ctx, req)
-		n.releaseSearch(job.TitleKey)
 	}
 	var got []string
 	for _, g := range res.Grabs {

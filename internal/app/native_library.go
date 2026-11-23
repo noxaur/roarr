@@ -345,7 +345,9 @@ func (n *Native) keepNumbering(t importer.Title, fresh []importer.Episode) []imp
 	last, known := "", map[[2]int]bool{}
 	for _, e := range out {
 		known[[2]int{e.Season, e.Number}] = true
-		last = max(last, e.AirDate)
+		if e.Season > 0 { // a special can be dated far ahead
+			last = max(last, e.AirDate)
+		}
 	}
 	added := 0
 	for _, e := range fresh {
@@ -623,6 +625,11 @@ func (a *App) nativeRemoveTitle(ctx context.Context, kind string, id int, delete
 		}
 		n.Remove(j.Hash)
 	}
+	if removeTorrent {
+		// Jobs are forgotten a week after they finish; the files still
+		// name the torrent they came from.
+		n.removeTorrents(ctx, n.store.Files(key))
+	}
 	if err := n.store.RemoveTitle(key); err != nil {
 		return err
 	}
@@ -686,7 +693,7 @@ func (n *Native) deleteFiles(ctx context.Context, t importer.Title, paths []stri
 	return ActionResult{OK: true, Count: len(res.Deleted), Message: msg}, nil
 }
 
-// removeTorrents removes the torrents the deleted files came from, with
+// removeTorrents removes the torrents the given files came from, with
 // their data, unless the torrent is still downloading or other library
 // files came from it.
 func (n *Native) removeTorrents(ctx context.Context, deleted []importer.FileRecord) (removed, kept int) {
@@ -700,9 +707,15 @@ func (n *Native) removeTorrents(ctx context.Context, deleted []importer.FileReco
 			hashes[strings.ToLower(r.Hash)] = true
 		}
 	}
+	gone := map[string]bool{}
+	for _, r := range deleted {
+		gone[r.Path] = true
+	}
 	inUse := map[string]bool{}
 	for _, r := range n.store.Files("") {
-		inUse[strings.ToLower(r.Hash)] = true
+		if !gone[r.Path] {
+			inUse[strings.ToLower(r.Hash)] = true
+		}
 	}
 	for _, j := range n.Jobs() {
 		if !j.final() {

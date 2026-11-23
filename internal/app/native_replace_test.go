@@ -312,3 +312,44 @@ func TestUpgradeSearchGrabsOnlyCutoffReleases(t *testing.T) {
 		t.Fatal("a release below the cutoff was not rejected")
 	}
 }
+
+// A failed download whose title is being searched stays replaceable: it is
+// neither blocklisted nor removed until its own search can run.
+func TestReplaceWaitsForARunningSearch(t *testing.T) {
+	a, fq, show := replaceApp(t)
+	n := a.Native
+	fq.mu.Lock()
+	fq.torrents[deadHash] = qbit.Torrent{Hash: deadHash}
+	fq.mu.Unlock()
+	n.Track(NativeJob{Hash: deadHash, Release: "Show.S01E01.1080p.WEB-DL-DEAD", Kind: "tv", TitleKey: show.Key(), TitleName: show.Title, Wanted: [][2]int{{1, 1}}})
+	n.failRelease(n.jobs[deadHash], "stalled")
+	n.claimSearch(show.Key())
+	if _, err := n.Replace(context.Background(), deadHash, "", false); err == nil {
+		t.Fatal("replaced while another search held the title")
+	}
+	n.mu.Lock()
+	j := *n.jobs[deadHash]
+	n.mu.Unlock()
+	if j.Replacement != "" || !fq.has(deadHash) {
+		t.Fatalf("the job is no longer replaceable: %+v", j)
+	}
+	if _, ok := n.blocklist.Match(j.Release, ""); ok {
+		t.Fatal("blocklisted before it could be replaced")
+	}
+}
+
+// Removing a title with its torrents also removes torrents of jobs that
+// were forgotten after they finished.
+func TestRemoveTitleRemovesForgottenTorrents(t *testing.T) {
+	a, fq, show := replaceApp(t)
+	fq.mu.Lock()
+	fq.torrents[goodHash] = qbit.Torrent{Hash: goodHash}
+	fq.mu.Unlock()
+	_ = a.Native.Store().Put(importer.FileRecord{TitleKey: show.Key(), Season: 1, Episodes: []int{1}, Path: "/nowhere/Show - S01E01.mkv", Hash: goodHash})
+	if err := a.nativeRemoveTitle(context.Background(), "tv", NativeID(show), false, true); err != nil {
+		t.Fatal(err)
+	}
+	if fq.has(goodHash) {
+		t.Fatal("the finished torrent still seeds")
+	}
+}

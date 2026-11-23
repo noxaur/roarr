@@ -12,6 +12,7 @@ import (
 	"github.com/noxaur/roarr/internal/arr"
 	"github.com/noxaur/roarr/internal/config"
 	"github.com/noxaur/roarr/internal/importer"
+	"github.com/noxaur/roarr/internal/seerr"
 )
 
 // fakeArr answers Sonarr's and Radarr's library calls from fixed JSON.
@@ -132,5 +133,55 @@ func TestStandaloneDropsSonarrAndRadarr(t *testing.T) {
 	}
 	if son, _ := a.arrSources(); son == nil {
 		t.Fatal("a takeover can no longer read the configured Sonarr")
+	}
+}
+
+// Review round 1 fixes.
+
+func TestTakeoverStopsWhenRootFoldersCannotBeListed(t *testing.T) {
+	a, _, _ := nativeLibraryApp(t)
+	son := fakeArr(t, map[string]string{"/api/v3/series": `[{"id":3,"title":"Show","tvdbId":11,"tmdbId":22,"path":"/tv/Show"}]`})
+	a.clients.Sonarr = arr.NewSonarr(son, "k")
+	if err := a.runTakeover(context.Background()); err == nil {
+		t.Fatal("the takeover finished without Sonarr's root folders")
+	}
+	if a.Settings.Get().Import.Standalone {
+		t.Fatal("roarr stopped using Sonarr although it took over none of its shows")
+	}
+	if allOK(nil) {
+		t.Fatal("no root folders counts as every root folder seen")
+	}
+}
+
+func TestFolderWithoutYearNeedsAnUnambiguousName(t *testing.T) {
+	a, _, _ := nativeLibraryApp(t)
+	results := `{"results":[{"id":1,"mediaType":"tv","name":"The Office","firstAirDate":"2001-07-09"},{"id":2,"mediaType":"tv","name":"The Office","firstAirDate":"2005-03-24"}]}`
+	srv := fakeArr(t, map[string]string{"/api/v1/search": results, "/api/v1/tv/2": `{"id":2,"name":"The Office","firstAirDate":"2005-03-24"}`})
+	sc := seerr.New(srv, "k")
+	if _, err := a.identifyFolder(context.Background(), sc, "tv", "The Office"); err == nil || !strings.Contains(err.Error(), "several") {
+		t.Fatalf("an ambiguous folder was identified: %v", err)
+	}
+	got, err := a.identifyFolder(context.Background(), sc, "tv", "The Office (2005)")
+	if err != nil || got.TmdbID != 2 {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestSeerrShowPageMarksOnlyAiredEpisodes(t *testing.T) {
+	a, _, _ := nativeLibraryApp(t)
+	var tv seerr.TV
+	_ = json.Unmarshal([]byte(`{"id":5,"name":"Show","seasons":[{"seasonNumber":1,"episodeCount":3,"airDate":"2020-01-01"},{"seasonNumber":2,"episodeCount":8,"airDate":"2026-01-01"}],
+		"lastEpisodeToAir":{"seasonNumber":2,"episodeNumber":3}}`), &tv)
+	d := a.seriesFromSeerr(&tv, 0)
+	aired := 0
+	for _, s := range d.Seasons {
+		for _, e := range s.Episodes {
+			if e.Aired {
+				aired++
+			}
+		}
+	}
+	if aired != 6 {
+		t.Fatalf("%d episodes count as aired, want 6", aired)
 	}
 }

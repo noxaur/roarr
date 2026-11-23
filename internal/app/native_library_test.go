@@ -428,3 +428,17 @@ func TestRefreshKeepsNumberingOfFilesTMDBDoesNotList(t *testing.T) {
 		t.Fatalf("fresh list not taken: %+v", got)
 	}
 }
+
+func TestKeepNumberingIgnoresSpecialsDatedAhead(t *testing.T) {
+	a, _, _ := nativeLibraryApp(t)
+	n := a.Native
+	show := importer.Title{Kind: "tv", Title: "Spec", TmdbID: 8, Episodes: []importer.Episode{
+		{Season: 1, Number: 1, AirDate: "2020-01-01"}, {Season: 0, Number: 1, AirDate: "2099-12-25"}}}
+	_ = n.Store().PutTitle(show)
+	_ = n.Store().Put(importer.FileRecord{TitleKey: show.Key(), Season: 1, Episodes: []int{1}, Path: "/tv/Spec/a.mkv"})
+	tmdb := []importer.Episode{{Season: 1, Number: 2, AirDate: "2020-01-01"}, {Season: 2, Number: 1, AirDate: "2021-06-01"}}
+	got := n.keepNumbering(show, tmdb)
+	if len(got) != 3 || got[2].Season != 2 {
+		t.Fatalf("a special dated ahead hid a new episode: %+v", got)
+	}
+}
