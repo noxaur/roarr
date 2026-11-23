@@ -483,7 +483,12 @@ func sonarrSearchFor(d *SeriesDetail, covers, wanted []int) (url.Values, map[str
 // can be grabbed from its cache regardless of rejections — what the "grab
 // anyway" button in Sonarr/Radarr does. So roarr runs that search, finds the
 // same release among the results and grabs it from the cache.
+//
+// That search is as slow as the *arr's slowest indexer, so it gets its own
+// deadline: an auto run grabs its other picks on the caller's budget.
 func (a *App) grabAnyway(ctx context.Context, c *arr.Client, q url.Values, extra map[string]any, r Release) error {
+	ctx, cancel := context.WithTimeout(ctx, grabAnywayWait)
+	defer cancel()
 	results, err := c.InteractiveSearch(ctx, q)
 	if err != nil {
 		return err
@@ -539,9 +544,11 @@ func (a *App) withAnyQuality(ctx context.Context, c *arr.Client, current func(co
 	return decisions, "", err
 }
 
-// How long a grab waits for the *arr to record its "grabbed" history event.
+// How long a grab waits for the *arr to record its "grabbed" history event,
+// and how long its "grab anyway" search may take.
 var (
 	grabConfirmWait = 8 * time.Second
+	grabAnywayWait  = 40 * time.Second
 	grabConfirmPoll = 400 * time.Millisecond
 )
 
