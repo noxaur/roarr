@@ -508,7 +508,7 @@ func (v *Verification) beforeImport(ctx context.Context, c importer.Candidate) e
 		}
 	}
 	if r := v.mustRecord(hash); r.Failed() {
-		return errors.New("failed verification: " + r.Verdict.Summary)
+		return importer.BadRelease("failed verification: " + r.Verdict.Summary)
 	}
 	return nil
 }
@@ -588,6 +588,12 @@ func (v *Verification) Regrab(ctx context.Context, hash string, auto bool) (Veri
 	// Hide the release from roarr's picks even if it only warned: a person
 	// asked for something else.
 	v.update(hash, func(rec *VerifyRecord) { rec.Rejected, rec.Dismissed = true, false })
+	if r.Source == "roarr" {
+		// A native download: the verdict kept its files out of the library,
+		// so the native backend only has to drop it and pick again.
+		res, err := v.app.Native.Replace(ctx, hash, "thrown away after verification", true)
+		return v.finishRegrab(hash, auto, "", &res, err)
+	}
 	if err := v.removeDownload(ctx, c, r); err != nil {
 		return v.finishRegrab(hash, auto, "", nil, err)
 	}

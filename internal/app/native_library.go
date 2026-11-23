@@ -103,7 +103,7 @@ func episodeMonitored(t importer.Title, season, number int, airDate string) bool
 func (n *Native) queued(key string) map[[2]int]bool {
 	out := map[[2]int]bool{}
 	for _, j := range n.Jobs() {
-		if j.TitleKey != key || j.State == "done" || j.State == "failed" {
+		if j.TitleKey != key || j.final() {
 			continue
 		}
 		if j.Kind == "movie" {
@@ -237,6 +237,32 @@ func (n *Native) libraryItem(t importer.Title) LibraryItem {
 	return it
 }
 
+// LibraryApp is who keeps titles of kind: "roarr" (the native library),
+// "sonarr" or "radarr".
+func (a *App) LibraryApp(kind string) string {
+	switch {
+	case a.nativeLib(kind):
+		return "roarr"
+	case kind == "movie":
+		return "radarr"
+	}
+	return "sonarr"
+}
+
+// nativeTitleID is the library id of a title roarr's own library tracks,
+// or 0.
+func (a *App) nativeTitleID(kind string, tvdbID, tmdbID int) int {
+	if !a.nativeLib(kind) || a.Native == nil || (tvdbID == 0 && tmdbID == 0) {
+		return 0
+	}
+	for _, t := range a.Native.store.Titles() {
+		if t.Kind == kind && (tmdbID != 0 && t.TmdbID == tmdbID || tvdbID != 0 && t.TvdbID == tvdbID) {
+			return NativeID(t)
+		}
+	}
+	return 0
+}
+
 // libraryItems lists the native titles of kind for the library list.
 func (n *Native) libraryItems(kind string) []LibraryItem {
 	var out []LibraryItem
@@ -289,6 +315,49 @@ func (a *App) nativeSeriesDetail(ctx context.Context, id int, fresh bool) (*Seri
 	return d, nil
 }
 
+// keepNumbering guards a show's episode numbers when TMDB loads a new
+// list. TMDB can number a show differently from the scene/TVDB numbers its
+// files carry (a list taken over from Sonarr, some anime, re-split
+// seasons). When the new list lacks an episode that has a file, the stored
+// numbers stay, and only episodes that air after the last stored one are
+// added from TMDB; otherwise the files would go to other episodes and the
+// missing search would grab the same episodes again under the new numbers.
+func (n *Native) keepNumbering(t importer.Title, fresh []importer.Episode) []importer.Episode {
+	if len(t.Episodes) == 0 {
+		return fresh
+	}
+	have := map[[2]int]bool{}
+	for _, e := range fresh {
+		have[[2]int{e.Season, e.Number}] = true
+	}
+	lost := 0
+	for _, f := range n.store.Files(t.Key()) {
+		for _, e := range f.Episodes {
+			if !have[[2]int{f.Season, e}] {
+				lost++
+			}
+		}
+	}
+	if lost == 0 {
+		return fresh
+	}
+	out := append([]importer.Episode(nil), t.Episodes...)
+	last, known := "", map[[2]int]bool{}
+	for _, e := range out {
+		known[[2]int{e.Season, e.Number}] = true
+		last = max(last, e.AirDate)
+	}
+	added := 0
+	for _, e := range fresh {
+		if last != "" && e.AirDate > last && !known[[2]int{e.Season, e.Number}] {
+			out = append(out, e)
+			added++
+		}
+	}
+	slog.Info("native library: TMDB numbers this show differently; kept its episode numbers", "title", t.Title, "filesNotInTMDB", lost, "newEpisodes", added)
+	return out
+}
+
 func metaStale(at string) bool {
 	t, err := time.Parse(time.RFC3339, at)
 	return err != nil || time.Since(t) > metaMaxAge
@@ -306,6 +375,7 @@ func (a *App) refreshShowMeta(ctx context.Context, t importer.Title, tv *seerr.T
 		slog.Warn("native library: episode list not refreshed", "title", t.Title, "err", err)
 		return t
 	}
+	eps = a.Native.keepNumbering(t, eps)
 	poster := seerr.Poster(tv.PosterPath, "w342")
 	_, err = a.Native.store.UpdateTitle(t.Key(), func(x *importer.Title) {
 		x.Episodes, x.Partial, x.MetaAt = eps, false, time.Now().UTC().Format(time.RFC3339)
@@ -545,7 +615,7 @@ func (a *App) nativeRemoveTitle(ctx context.Context, kind string, id int, delete
 		if j.TitleKey != key {
 			continue
 		}
-		active := j.State != "done" && j.State != "failed"
+		active := !j.final()
 		if (active || removeTorrent) && c.QBit != nil {
 			if err := c.QBit.Delete(ctx, j.Hash, true); err != nil {
 				return fmt.Errorf("removing the torrent %s: %w", j.Release, err)
@@ -635,7 +705,7 @@ func (n *Native) removeTorrents(ctx context.Context, deleted []importer.FileReco
 		inUse[strings.ToLower(r.Hash)] = true
 	}
 	for _, j := range n.Jobs() {
-		if j.State != "done" && j.State != "failed" {
+		if !j.final() {
 			inUse[j.Hash] = true
 		}
 	}
@@ -776,7 +846,8 @@ func (n *Native) missingLoop(ctx context.Context) {
 }
 
 // searchAllMissing runs one missing search over every monitored title of
-// the native library.
+// the native library. A title with files below the quality cutoff is also
+// searched for upgrades, at most once every upgradeEvery.
 func (n *Native) searchAllMissing(ctx context.Context) {
 	a := n.app
 	slog.Info("missing search: start")
@@ -787,13 +858,152 @@ func (n *Native) searchAllMissing(ctx context.Context) {
 		if t.Unmonitored || NativeID(t) == 0 || !a.nativeLib(t.Kind) {
 			continue
 		}
-		tctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		req, count, err := a.missingRequest(tctx, t, false)
-		if err == nil && count > 0 && n.claimSearch(t.Key()) {
-			a.logAuto(tctx, t, req)
-			n.releaseSearch(t.Key())
-		} else if err != nil {
+		run := func(req AutoRequest) {
+			tctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancel()
+			if n.claimSearch(t.Key()) {
+				a.logAuto(tctx, t, req)
+				n.releaseSearch(t.Key())
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(missingPause):
+			}
+		}
+		mctx, cancel := context.WithTimeout(ctx, time.Minute)
+		req, count, err := a.missingRequest(mctx, t, false)
+		cancel()
+		if err != nil {
 			slog.Warn("missing search", "title", t.Title, "err", err)
+		} else if count > 0 {
+			run(req)
+		}
+		if at, err := time.Parse(time.RFC3339, t.UpgradeAt); err == nil && time.Since(at) < upgradeEvery {
+			continue
+		}
+		_, _ = n.store.UpdateTitle(t.Key(), func(x *importer.Title) { x.UpgradeAt = time.Now().UTC().Format(time.RFC3339) })
+		if req, count := a.upgradeRequest(t); count > 0 {
+			run(req)
+		}
+	}
+	slog.Info("missing search: done")
+}
+
+// upgradeEvery is how often a title is searched for upgrades. Upgrades
+// are rarely urgent, and a library taken over from Sonarr can hold
+// hundreds of titles below the cutoff: once a week keeps indexers calm.
+const upgradeEvery = 7 * 24 * time.Hour
+
+// upgradeRequest is the upgrade search of a native title: its monitored
+// episodes (or the movie) whose file is below the quality cutoff. A file
+// of unknown quality (renamed, no release recorded) is left alone, so
+// roarr never replaces it in a loop.
+func (a *App) upgradeRequest(t importer.Title) (AutoRequest, int) {
+	n := a.Native
+	prefs := a.Settings.Get().Prefs
+	below := func(f importer.LibraryFile) bool {
+		name := filepath.Base(f.Path)
+		if f.Record != nil && f.Record.Release != "" {
+			name = f.Record.Release
+		}
+		i := release.Parse(name)
+		return i.Resolution > 0 && !prefs.AtCutoff(i)
+	}
+	queued := n.queued(t.Key())
+	if t.Unmonitored {
+		return AutoRequest{}, 0
+	}
+	if t.Kind == "movie" {
+		if f, ok := n.movieFile(t); ok && t.TmdbID != 0 && below(f) && !queued[[2]int{}] {
+			return AutoRequest{Kind: "movie", MovieTmdb: []int{t.TmdbID}, Upgrade: true}, 1
+		}
+		return AutoRequest{}, 0
+	}
+	airs := map[[2]int]string{}
+	for _, e := range t.Episodes {
+		airs[[2]int{e.Season, e.Number}] = e.AirDate
+	}
+	var ids []int
+	for _, f := range n.Importer().OnDisk(t) {
+		if !below(f) {
+			continue
+		}
+		for _, e := range f.Episodes {
+			se := [2]int{f.Season, e}
+			if episodeMonitored(t, f.Season, e, airs[se]) && !queued[se] {
+				ids = append(ids, importer.EpisodeID(f.Season, e))
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return AutoRequest{}, 0
+	}
+	sort.Ints(ids)
+	ids = slices.Compact(ids) // two files can hold one episode
+	return AutoRequest{Kind: "tv", SeriesID: NativeID(t), TvdbID: t.TvdbID, TmdbID: t.TmdbID, EpisodeIDs: ids, Upgrade: true}, len(ids)
+}
+
+// airLoop grabs new episodes soon after they air, and keeps the episode
+// lists of monitored shows current so new episodes are known at all. Air
+// dates are days and releases appear hours after a broadcast, so a missing
+// episode is searched from its air date on: often at first, then less
+// often (airedSearchEvery), for two weeks. After that the periodic missing
+// search covers it. The schedule is in memory; after a restart every
+// recent episode is searched once more.
+func (n *Native) airLoop(ctx context.Context) {
+	start := time.Now()
+	last := map[string]time.Time{}
+	var metaAt time.Time
+	t := time.NewTicker(airTick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if !n.app.Settings.Get().Import.Native() || !n.app.nativeLib("tv") || time.Since(start) < 2*time.Minute {
+			continue
+		}
+		if time.Since(metaAt) > metaMaxAge {
+			metaAt = time.Now()
+			n.refreshShows(ctx)
+		}
+		n.searchAired(ctx, last, time.Now())
+	}
+}
+
+// airTick is how often airLoop looks for new episodes; it searches only
+// when airedSearchEvery says so.
+var airTick = 15 * time.Minute
+
+// airedSearchEvery is how often a show is searched for an episode that
+// aired days ago and is missing; 0 means not any more.
+func airedSearchEvery(days int) time.Duration {
+	switch {
+	case days <= 1:
+		return time.Hour
+	case days <= 6:
+		return 4 * time.Hour
+	case days <= 14:
+		return 12 * time.Hour
+	}
+	return 0
+}
+
+// refreshShows reloads the episode lists of monitored native shows whose
+// list is older than metaMaxAge, one show at a time.
+func (n *Native) refreshShows(ctx context.Context) {
+	for _, t := range n.store.Titles() {
+		if t.Kind != "tv" || t.Unmonitored || NativeID(t) == 0 || !metaStale(t.MetaAt) {
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		tctx, cancel := context.WithTimeout(ctx, time.Minute)
+		if _, err := n.app.nativeSeriesDetail(tctx, NativeID(t), false); err != nil {
+			slog.Warn("native library: episode list not refreshed", "title", t.Title, "err", err)
 		}
 		cancel()
 		select {
@@ -802,7 +1012,49 @@ func (n *Native) searchAllMissing(ctx context.Context) {
 		case <-time.After(missingPause):
 		}
 	}
-	slog.Info("missing search: done")
+	n.forgetShows()
+}
+
+// searchAired searches every monitored native show for its recently aired,
+// missing episodes that are due (airedSearchEvery). last holds when each
+// show was last searched this way.
+func (n *Native) searchAired(ctx context.Context, last map[string]time.Time, now time.Time) {
+	a := n.app
+	for _, t := range n.store.Titles() {
+		if t.Kind != "tv" || t.Unmonitored || NativeID(t) == 0 {
+			continue
+		}
+		var ids []int
+		every := time.Duration(0)
+		for _, s := range n.showState(t).seasons {
+			for _, e := range s.Episodes {
+				aired, err := time.ParseInLocation(time.DateOnly, e.AirDate, time.Local)
+				if err != nil || !e.Monitored || e.HasFile || e.Queued || aired.After(now) {
+					continue
+				}
+				if d := airedSearchEvery(int(now.Sub(aired).Hours() / 24)); d > 0 {
+					ids = append(ids, e.ID)
+					if every == 0 || d < every {
+						every = d
+					}
+				}
+			}
+		}
+		key := t.Key()
+		if len(ids) == 0 || now.Sub(last[key]) < every || !n.claimSearch(key) {
+			continue
+		}
+		last[key] = now
+		tctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		a.logAuto(tctx, t, AutoRequest{Kind: "tv", SeriesID: NativeID(t), TvdbID: t.TvdbID, TmdbID: t.TmdbID, EpisodeIDs: ids})
+		cancel()
+		n.releaseSearch(key)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(missingPause):
+		}
+	}
 }
 
 // missingPause is the wait between two titles of a missing search.

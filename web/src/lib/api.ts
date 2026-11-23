@@ -378,8 +378,10 @@ export interface ImportSettings {
   pathMap?: string;
   category?: string;
   savePath?: string;
-  /** Hours between searches for monitored items that are not on disk (native library only); 0 or absent = off. */
+  /** Hours between searches for monitored items that are not on disk (native library only); 0 = off. */
   missingSearchHours?: number;
+  /** roarr keeps the library itself, without Sonarr or Radarr. */
+  standalone?: boolean;
 }
 
 export type VerifyLevel = "pass" | "warn" | "fail" | "skip";
@@ -506,6 +508,75 @@ export interface ImportsStatus {
   category: string;
   jobs: NativeJob[];
   files: { titleKey: string; path: string; size: number; release?: string; importedAt: string }[];
+  takeover: TakeoverState;
+  blocklist: Blocked[];
+  standalone: boolean;
+  missingSearchHours: number;
+}
+
+export interface Blocked {
+  id: string;
+  release: string;
+  hash?: string;
+  indexer?: string;
+  kind?: Kind;
+  titleKey?: string;
+  title?: string;
+  reason: string;
+  /** RFC3339 */
+  at: string;
+}
+
+export interface TakeoverState {
+  running: boolean;
+  started?: string;
+  finished?: string;
+  step?: string;
+  shows: number;
+  movies: number;
+  files: number;
+  skipped?: string[];
+  error?: string;
+}
+
+export interface TakeoverCheck {
+  id: string;
+  ok: boolean;
+  /** False: a warning, not a blocker. */
+  need: boolean;
+  label: string;
+  hint?: string;
+}
+
+export interface TakeoverSource {
+  titles: number;
+  roots: { path: string; local?: string; ok: boolean }[];
+  error?: string;
+}
+
+export interface TakeoverPlan {
+  standalone: boolean;
+  sonarr?: TakeoverSource;
+  radarr?: TakeoverSource;
+  checks: TakeoverCheck[];
+  ready: boolean;
+  state: TakeoverState;
+}
+
+/** Who keeps each kind of title. */
+export interface LibraryKeepers {
+  tv: "roarr" | "sonarr";
+  movie: "roarr" | "radarr";
+}
+
+export interface AppStatus {
+  services: Record<string, ServiceStatus>;
+  version: string;
+  importMode: string;
+  standalone: boolean;
+  library: LibraryKeepers;
+  /** On when the setting is on or roarr runs the library. */
+  seerrAutoFetch: boolean;
 }
 
 export interface AutoResult {
@@ -557,7 +628,7 @@ export const api = {
   me: () => call<{ authMode: string; authenticated: boolean; user?: string; version: string }>("GET", "/api/me"),
   login: (username: string, password: string) => call<{ ok: boolean }>("POST", "/api/login", { username, password }),
   logout: () => call<{ ok: boolean }>("POST", "/api/logout", {}),
-  status: (fresh = false) => call<{ services: Record<string, ServiceStatus>; version: string }>("GET", `/api/status${fresh ? "?fresh=1" : ""}`),
+  status: (fresh = false) => call<AppStatus>("GET", `/api/status${fresh ? "?fresh=1" : ""}`),
   /** The library, or null when the copy with `etag` is still current. A refresh rebuilds it from the upstreams first. */
   library: async (etag: string | null = null, refresh = false) => {
     const res = await send("GET", `/api/library${refresh ? "?refresh=1" : ""}`, undefined, etag && !refresh ? { "If-None-Match": etag } : undefined);
@@ -587,14 +658,14 @@ export const api = {
     call<{ ok: boolean }>("DELETE", `/api/activity/${encodeURIComponent(id)}${blocklist ? "?blocklist=1" : ""}`),
   requests: (filter: string) => call<{ items: RequestItem[]; configured: boolean }>("GET", `/api/requests?filter=${filter}`),
   requestAction: (id: number, action: "approve" | "decline") => call<{ ok: boolean }>("POST", `/api/requests/${id}/${action}`, {}),
-  episodes: (seriesId: number, action: EpisodeAction, episodeIds: number[]) =>
-    call<ActionResult>("POST", `/api/tv/${seriesId}/episodes`, { action, episodeIds }),
+  episodes: (seriesId: number, action: EpisodeAction, episodeIds: number[], removeTorrent = false) =>
+    call<ActionResult>("POST", `/api/tv/${seriesId}/episodes`, { action, episodeIds, ...(removeTorrent && { removeTorrent }) }),
   patchTitle: (kind: Kind, id: number, patch: { monitored?: boolean; qualityProfileId?: number; season?: number }) =>
     call<{ ok: boolean }>("PATCH", `/api/${kind}/${id}`, patch),
-  removeTitle: (kind: Kind, id: number, deleteFiles: boolean) =>
-    call<{ ok: boolean }>("DELETE", `/api/${kind}/${id}${deleteFiles ? "?deleteFiles=1" : ""}`),
+  removeTitle: (kind: Kind, id: number, deleteFiles: boolean, removeTorrent = false) =>
+    call<{ ok: boolean }>("DELETE", `/api/${kind}/${id}${deleteFiles ? `?deleteFiles=1${removeTorrent ? "&removeTorrent=1" : ""}` : ""}`),
   titleCommand: (kind: Kind, id: number, name: "refresh" | "search") => call<ActionResult>("POST", `/api/${kind}/${id}/command/${name}`, {}),
-  deleteMovieFile: (id: number) => call<ActionResult>("DELETE", `/api/movie/${id}/file`),
+  deleteMovieFile: (id: number, removeTorrent = false) => call<ActionResult>("DELETE", `/api/movie/${id}/file${removeTorrent ? "?removeTorrent=1" : ""}`),
   profiles: (kind: Kind) => call<{ profiles: { id: number; name: string }[] }>("GET", `/api/profiles/${kind}`),
   settings: () => call<{ settings: Settings; locked: Record<string, boolean> }>("GET", "/api/settings"),
   verify: () => call<VerifyList>("GET", "/api/verify"),
@@ -604,6 +675,10 @@ export const api = {
   transcode: () => call<TranscodeStatus>("GET", "/api/transcode"),
   transcodePause: (paused: boolean) => call<TranscodeStatus>("POST", `/api/transcode/${paused ? "pause" : "resume"}`, {}),
   imports: () => call<ImportsStatus>("GET", "/api/imports"),
+  blocklist: () => call<{ items: Blocked[] }>("GET", "/api/blocklist"),
+  unblock: (id: string) => call<{ ok: boolean }>("DELETE", `/api/blocklist/${encodeURIComponent(id)}`),
+  takeoverPlan: () => call<TakeoverPlan>("GET", "/api/takeover"),
+  startTakeover: () => call<TakeoverPlan>("POST", "/api/takeover", {}),
   saveSettings: (s: Settings) => call<{ settings: Settings; locked: Record<string, boolean> }>("PUT", "/api/settings", s),
 };
 

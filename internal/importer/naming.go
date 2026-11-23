@@ -12,6 +12,7 @@ package importer
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -104,4 +105,33 @@ func SubtitleName(videoBase string, s SubtitleInfo, ext string) string {
 		parts = append(parts, "sdh")
 	}
 	return strings.Join(parts, ".") + strings.ToLower(ext)
+}
+
+// SeasonDir is the folder of a season in a show folder: the existing one
+// whatever its spelling ("Season 1", "Season 01", "Specials"), or
+// SeasonFolder.
+func SeasonDir(show string, season int) string {
+	ents, _ := os.ReadDir(show)
+	for _, e := range ents {
+		if n, ok := SeasonNumber(e.Name()); ok && e.IsDir() && n == season {
+			return filepath.Join(show, e.Name())
+		}
+	}
+	return filepath.Join(show, SeasonFolder(season))
+}
+
+// SeasonNumber reads a season folder name: "Season 1", "Season 01",
+// "S01", "Specials".
+func SeasonNumber(name string) (int, bool) {
+	l := strings.ToLower(strings.TrimSpace(name))
+	if l == "specials" {
+		return 0, true
+	}
+	for _, p := range []string{"season ", "season", "s"} {
+		if rest, ok := strings.CutPrefix(l, p); ok && rest != "" {
+			n, err := strconv.Atoi(rest)
+			return n, err == nil && n >= 0
+		}
+	}
+	return 0, false
 }

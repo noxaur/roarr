@@ -144,7 +144,8 @@ func pruneEmpty(dir, root string) {
 	}
 }
 
-// TitleFolder is the library folder of a title: root/Title (Year).
+// TitleFolder is the library folder of a title: root/Title (Year), or
+// root/Folder for a folder roarr took over.
 func (im *Importer) TitleFolder(t Title) string {
 	root := im.cfg.TVRoot
 	if t.Kind == "movie" {
@@ -152,6 +153,9 @@ func (im *Importer) TitleFolder(t Title) string {
 	}
 	if root == "" {
 		return ""
+	}
+	if t.Folder != "" {
+		return filepath.Join(root, t.Folder)
 	}
 	return filepath.Join(root, TitleWithYear(t.Title, t.Year))
 }

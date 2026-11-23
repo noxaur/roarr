@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/noxaur/roarr/internal/release"
 )
@@ -61,7 +60,7 @@ func (im *Importer) OnDisk(t Title) []LibraryFile {
 	}
 	ents, _ := os.ReadDir(dir)
 	for _, e := range ents {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), "Season ") {
+		if _, ok := SeasonNumber(e.Name()); !e.IsDir() || !ok {
 			continue
 		}
 		for _, p := range videosIn(filepath.Join(dir, e.Name())) {

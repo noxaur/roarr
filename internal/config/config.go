@@ -107,12 +107,21 @@ type Import struct {
 	SavePath string `json:"savePath,omitempty"`
 	// MissingSearchHours is how often roarr searches for monitored episodes
 	// and movies that aired but are not on disk (native library only).
-	// 0 turns the search off.
-	MissingSearchHours int `json:"missingSearchHours,omitempty"`
+	// 0 turns the search off; the default is 24. New episodes are searched
+	// on their own schedule as they air (see app.Native.airLoop).
+	MissingSearchHours int `json:"missingSearchHours"`
+	// Standalone means roarr runs the library on its own: in native mode,
+	// Sonarr and Radarr are not used at all, even when configured or
+	// known to Prowlarr. Taking over their library sets it.
+	Standalone bool `json:"standalone,omitempty"`
 }
 
 // Native reports whether roarr imports by itself.
 func (i Import) Native() bool { return i.Mode == "native" }
+
+// OwnsLibrary reports whether roarr runs the library without Sonarr and
+// Radarr.
+func (i Import) OwnsLibrary() bool { return i.Native() && i.Standalone }
 
 // Settings is the full configuration.
 type Settings struct {
@@ -164,6 +173,7 @@ func Defaults() Settings {
 			CacheMinutes:   20,
 		},
 		Transcode: Transcode{Concurrency: 1, Nice: 10, Preset: 8, MinSavings: 15},
+		Import:    Import{MissingSearchHours: 24},
 	}
 }
 
@@ -218,6 +228,7 @@ var envSpec = []struct {
 	{"QBIT_CATEGORY", func(s *Settings, v string) { s.Import.Category = v }},
 	{"QBIT_SAVE_PATH", func(s *Settings, v string) { s.Import.SavePath = v }},
 	{"MISSING_SEARCH_HOURS", func(s *Settings, v string) { s.Import.MissingSearchHours = atoiNonNeg(v, 0) }},
+	{"IMPORT_STANDALONE", func(s *Settings, v string) { s.Import.Standalone = truthy(v) }},
 }
 
 func truthy(v string) bool {

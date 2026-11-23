@@ -80,7 +80,7 @@ func (im *Importer) Destination(t Title, p Placement) (string, error) {
 		if im.cfg.MovieRoot == "" {
 			return "", errors.New("no movie library folder configured (MOVIES_ROOT)")
 		}
-		return MoviePath(im.cfg.MovieRoot, t.Title, t.Year) + ext, nil
+		return filepath.Join(im.TitleFolder(t), TitleWithYear(t.Title, t.Year)) + ext, nil
 	}
 	if im.cfg.TVRoot == "" {
 		return "", errors.New("no TV library folder configured (TV_ROOT)")
@@ -88,7 +88,8 @@ func (im *Importer) Destination(t Title, p Placement) (string, error) {
 	if len(p.Episodes) == 0 {
 		return "", errors.New("the file is not mapped to an episode")
 	}
-	return EpisodePath(im.cfg.TVRoot, t.Title, t.Year, p.Season, p.Episodes) + ext, nil
+	base := CleanName(t.Title) + " - " + EpisodeToken(p.Season, p.Episodes)
+	return filepath.Join(SeasonDir(im.TitleFolder(t), p.Season), base) + ext, nil
 }
 
 // QualityRank orders releases by resolution, then source, then
@@ -126,8 +127,7 @@ func (im *Importer) Existing(t Title, season int, episodes []int) []string {
 		for _, f := range im.store.Files(key) {
 			add(f.Path)
 		}
-		if im.cfg.MovieRoot != "" {
-			dir := filepath.Dir(MoviePath(im.cfg.MovieRoot, t.Title, t.Year))
+		if dir := im.TitleFolder(t); dir != "" {
 			for _, p := range videosIn(dir) {
 				if Classify(filepath.Base(p)) == ClassVideo {
 					add(p)
@@ -141,8 +141,8 @@ func (im *Importer) Existing(t Title, season int, episodes []int) []string {
 			add(f.Path)
 		}
 	}
-	if im.cfg.TVRoot != "" {
-		dir := filepath.Dir(EpisodePath(im.cfg.TVRoot, t.Title, t.Year, season, []int{1}))
+	if show := im.TitleFolder(t); show != "" {
+		dir := SeasonDir(show, season)
 		want := map[int]bool{}
 		for _, e := range episodes {
 			want[e] = true

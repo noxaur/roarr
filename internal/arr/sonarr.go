@@ -281,6 +281,7 @@ type MediaFile struct {
 	Path         string `json:"path"`
 	Size         int64  `json:"size"`
 	ReleaseGroup string `json:"releaseGroup"`
+	SceneName    string `json:"sceneName"` // the release the file came from, when known
 	DateAdded    string `json:"dateAdded"`
 	Quality      struct {
 		Quality struct {

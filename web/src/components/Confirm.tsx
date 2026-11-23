@@ -10,6 +10,13 @@ export interface ConfirmOption {
   checked?: boolean;
 }
 
+/** For the delete dialogs of titles that roarr keeps itself. */
+export const TORRENT_OPTION: ConfirmOption = {
+  id: "torrent",
+  label: "Remove the torrent too",
+  hint: "Also removes the torrent from qBittorrent, unless other library files came from it.",
+};
+
 export interface ConfirmRequest {
   title: string;
   body?: ReactNode;

@@ -81,14 +81,23 @@ func (s *Store) saveLocked() error {
 	return os.Rename(tmp, s.path)
 }
 
+// Today is the local date, the form of Title.Added and Episode.AirDate.
+func Today() string { return time.Now().Format(time.DateOnly) }
+
 // PutTitle remembers (or refreshes) a tracked title. The management
 // fields (Added, monitoring) of a title already stored stay; an empty
-// Poster or MetaAt keeps the stored one.
+// Poster, MetaAt or Folder keeps the stored one.
 func (s *Store) PutTitle(t Title) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if old, ok := s.d.Titles[t.Key()]; ok {
 		t.Added, t.Unmonitored, t.Monitor, t.Ignore = old.Added, old.Unmonitored, old.Monitor, old.Ignore
+		if t.Folder == "" {
+			t.Folder = old.Folder
+		}
+		if t.UpgradeAt == "" {
+			t.UpgradeAt = old.UpgradeAt
+		}
 		if t.Poster == "" {
 			t.Poster = old.Poster
 		}
@@ -97,7 +106,7 @@ func (s *Store) PutTitle(t Title) error {
 		}
 	}
 	if t.Added == "" {
-		t.Added = time.Now().UTC().Format(time.DateOnly)
+		t.Added = Today() // local, like the air dates it is compared with
 	}
 	s.d.Titles[t.Key()] = t
 	return s.saveLocked()
@@ -202,11 +211,13 @@ func (s *Store) HasEpisode(titleKey string, season, episode int) bool {
 }
 
 // Put records an imported file.
-func (s *Store) Put(r FileRecord) error {
+func (s *Store) Put(rs ...FileRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cp := r
-	s.d.Files[r.Path] = &cp
+	for _, r := range rs {
+		cp := r
+		s.d.Files[r.Path] = &cp
+	}
 	return s.saveLocked()
 }
 

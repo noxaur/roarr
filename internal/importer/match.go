@@ -41,6 +41,13 @@ type Title struct {
 	Ignore  []int `json:"ignore,omitempty"`
 	// MetaAt is when the episode list was last loaded.
 	MetaAt string `json:"metaAt,omitempty"`
+	// Folder is the title's folder under the library root when it is not
+	// "Title (Year)": a folder taken over from Sonarr/Radarr or found on
+	// disk keeps its name, so nothing moves under Jellyfin.
+	Folder string `json:"folder,omitempty"`
+	// UpgradeAt is when roarr last searched for better copies of files
+	// below the quality cutoff (RFC3339).
+	UpgradeAt string `json:"upgradeAt,omitempty"`
 }
 
 // Episode is one episode in a title's episode list.

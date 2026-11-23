@@ -43,7 +43,9 @@ func (a *App) nativeShow(ctx context.Context, g GrabRequest) (*nativeTarget, err
 	c := a.C()
 	var d *SeriesDetail
 	var err error
-	if g.SeriesID > 0 && c.Sonarr != nil {
+	if g.SeriesID > 0 && (c.Sonarr != nil || a.nativeLib("tv")) {
+		// A show in a library: no TMDB round trip, so a grab works while
+		// Seerr is down.
 		d, err = a.Series(ctx, g.SeriesID, false)
 	} else {
 		d, err = a.SeriesByTvdb(ctx, g.TvdbID, g.TmdbID)
@@ -167,7 +169,7 @@ func (a *App) nativeMovie(ctx context.Context, g GrabRequest) (*nativeTarget, er
 	c := a.C()
 	var d *MovieDetail
 	var err error
-	if g.MovieID > 0 && c.Radarr != nil {
+	if g.MovieID > 0 && (c.Radarr != nil || a.nativeLib("movie")) {
 		d, err = a.Movie(ctx, g.MovieID)
 	} else {
 		d, err = a.MovieByTmdb(ctx, g.TmdbID)

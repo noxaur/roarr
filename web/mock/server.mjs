@@ -127,7 +127,7 @@ const settings = {
     behaviour: { watchFirst: true, prefetch: true, indexerTimeout: 30, cacheMinutes: 20, seerrAutoFetch: false },
     transcode: { enabled: true, concurrency: 1, nice: 10, crf: 0, preset: 8, filmGrain: 0, minSavings: 15, pathMap: "/tv=/media/tv,/movies=/media/movies", schedule: [{ days: [1, 2, 3, 4, 5], from: "22:00", to: "07:00" }, { days: [6, 0], from: "00:00", to: "24:00" }] },
     verify: { autoRegrab: false, pathMap: "/downloads=/data/downloads" },
-    import: { mode: "arr", transfer: "hardlink", category: "roarr", missingSearchHours: 12 },
+    import: { mode: "arr", transfer: "hardlink", category: "roarr", missingSearchHours: 24 },
   },
   locked: { PROWLARR_URL: true, PROWLARR_API_KEY: true, TRANSCODE_NICE: true },
 };
@@ -235,7 +235,48 @@ function importsStatus() {
       { hash: "aa03", release: "Perfect.Days.2023.1080p.BluRay.x264-GROUP", kind: "movie", titleKey: "movie:tmdb:976893", titleName: "Perfect Days", created: ago(400), state: "failed", message: "no file matches the movie: 3 samples skipped", progress: 1, size: 8e9, files: [] },
     ],
     files: [{ titleKey: "tv:tvdb:70004", path: "/media/tv/Pluribus/Season 01/Pluribus - S01E04.mkv", size: 1.2e9, importedAt: ago(190) }],
+    takeover: { ...takeover },
+    blocklist,
+    standalone: !!im.standalone,
+    missingSearchHours: im.missingSearchHours ?? 24,
   };
+}
+
+// Who keeps each kind: roarr in native mode when it runs standalone or has no URL for that app.
+function keepers() {
+  const c = settings.settings;
+  const native = c.import.mode === "native";
+  return { tv: native && (c.import.standalone || !c.sonarr.url) ? "roarr" : "sonarr", movie: native && (c.import.standalone || !c.radarr.url) ? "roarr" : "radarr" };
+}
+
+const blocklist = [
+  { id: "b1", release: "Perfect.Days.2023.1080p.BluRay.x264-GROUP", hash: "aa03", indexer: "AlphaRatio", kind: "movie", titleKey: "movie:tmdb:976893", title: "Perfect Days", reason: "no file matches the movie: 3 samples skipped", at: ago(400) },
+  { id: "b2", release: "Slow.Horses.S04.1080p.ATVP.WEB-DL.DDP5.1.H.264-NTb", hash: "5104e504", indexer: "TorrentLeech", kind: "tv", titleKey: "tv:tvdb:70005", title: "Slow Horses", reason: "removed and blocklisted from Activity", at: ago(60 * 30) },
+];
+
+const takeover = { running: false, shows: 0, movies: 0, files: 0 };
+function takeoverPlan() {
+  const standalone = !!settings.settings.import.standalone;
+  return {
+    standalone,
+    ...(standalone ? {} : { sonarr: { titles: 3, roots: [{ path: "/tv", local: "/media/tv", ok: true }] }, radarr: { titles: 4, roots: [{ path: "/movies", local: "/media/movies", ok: true }] } }),
+    checks: [
+      { id: "qbit", ok: true, need: true, label: "qBittorrent is reachable" },
+      { id: "roots", ok: true, need: true, label: "roarr can write to both library folders" },
+      { id: "seerr", ok: false, need: false, label: "Seerr is not connected", hint: "Requests will not be fetched until Seerr is set up." },
+    ],
+    ready: !standalone && !takeover.running,
+    state: { ...takeover },
+  };
+}
+function startTakeover() {
+  const steps = [["Reading Sonarr", 3, 0, 0], ["Reading Radarr", 3, 4, 0], ["Importing files", 3, 4, 27]];
+  Object.assign(takeover, { running: true, started: ago(0), finished: undefined, error: undefined, skipped: undefined, step: steps[0][0], shows: 0, movies: 0, files: 0 });
+  steps.forEach(([step, shows, movies, files], i) => setTimeout(() => Object.assign(takeover, { step, shows, movies, files }), 1000 * (i + 1)));
+  setTimeout(() => {
+    Object.assign(takeover, { running: false, finished: ago(0), step: "Done", skipped: ["Unknown Show (no TVDB id)"] });
+    Object.assign(settings.settings.import, { mode: "native", standalone: true });
+  }, 4000);
 }
 
 const readBody = (req) =>
@@ -469,9 +510,24 @@ function handle(req, res) {
     return json(res, transcodeStatus());
   }
   if (route === "GET /api/imports") return json(res, importsStatus());
-  if (route === "GET /api/status") return json(res, { version: "mock", services: { prowlarr: { configured: true, ok: true, version: "2.0", ms: 12 }, sonarr: { configured: true, ok: true, version: "4.0", ms: 20 }, radarr: { configured: true, ok: true, version: "6.0", ms: 18 }, seerr: { configured: false, ok: false }, jellyfin: { configured: false, ok: false }, qbittorrent: { configured: true, ok: false, error: "connection refused" } } });
+  if (route === "GET /api/blocklist") return json(res, { items: blocklist });
+  if ((m = route.match(/^DELETE \/api\/blocklist\/([^/]+)$/))) {
+    const i = blocklist.findIndex((b) => b.id === decodeURIComponent(m[1]));
+    if (i < 0) return json(res, { error: "not blocklisted" }, 404);
+    blocklist.splice(i, 1);
+    return json(res, { ok: true });
+  }
+  if (route === "GET /api/takeover") return json(res, takeoverPlan());
+  if (route === "POST /api/takeover") {
+    const plan = takeoverPlan();
+    if (!plan.ready) return json(res, { error: plan.standalone ? "roarr already runs the library" : "a takeover is already running", plan }, 409);
+    startTakeover();
+    return json(res, takeoverPlan(), 202);
+  }
+  if (route === "GET /api/status") return json(res, { version: "mock", importMode: settings.settings.import.mode, standalone: !!settings.settings.import.standalone, library: keepers(), seerrAutoFetch: settings.settings.behaviour.seerrAutoFetch || !!settings.settings.import.standalone, services: { prowlarr: { configured: true, ok: true, version: "2.0", ms: 12 }, sonarr: { configured: true, ok: true, version: "4.0", ms: 20 }, radarr: { configured: true, ok: true, version: "6.0", ms: 18 }, seerr: { configured: false, ok: false }, jellyfin: { configured: false, ok: false }, qbittorrent: { configured: true, ok: false, error: "connection refused" } } });
   if (route === "GET /api/requests") return json(res, { items: [], configured: false });
   if (/^POST \/api\/requests\/\d+\/(approve|decline)$/.test(route)) return json(res, { error: "seerr is not configured" }, 424);
+  if ((m = route.match(/^GET \/api\/profiles\/(tv|movie)$/)) && keepers()[m[1]] === "roarr") return json(res, { error: "roarr has no quality profiles" }, 424);
   if (/^GET \/api\/profiles\/(tv|movie)$/.test(route)) return json(res, { profiles: [{ id: 1, name: "HD-1080p" }, { id: 2, name: "Ultra-HD" }] });
   if (route === "GET /api/discover") return json(res, { results: [{ kind: "movie", title: "Dune", year: 2021, tmdbId: 438631, inLibrary: false }, { kind: "tv", title: "Severance", year: 2022, tmdbId: 95396, tvdbId: 70001, inLibrary: true, libraryId: 1 }, { kind: "tv", title: "Andor", year: 2022, tmdbId: 83867, tvdbId: 393189, inLibrary: false }] });
 

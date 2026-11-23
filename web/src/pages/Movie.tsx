@@ -5,7 +5,7 @@ import { autoGet, run } from "@/lib/actions";
 import { bytes } from "@/lib/format";
 import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
 import { useRouter } from "@/lib/router";
-import { useStore } from "@/lib/store";
+import { useKeeper, useStore } from "@/lib/store";
 import { peek } from "@/lib/cache";
 import { keys, loadMovie, loadMovieByTmdb } from "@/lib/prefetch";
 import { baseName, jobTag, useConverting } from "@/lib/transcode";
@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Dot, Notice, SectionHead, Spec, State } from "@/components/kit";
-import { useConfirm } from "@/components/Confirm";
+import { TORRENT_OPTION, useConfirm } from "@/components/Confirm";
 import { FileFacts, ManageMenu } from "@/components/Manage";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
 import { VerdictActions, VerdictChecks } from "@/components/Verdict";
@@ -121,6 +121,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
   );
 
   const confirm = useConfirm();
+  const { app, roarr } = useKeeper("movie");
   const changed = () => {
     reload();
     reloadLibrary();
@@ -130,14 +131,17 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
   const deleteFile = async () => {
     const a = await confirm({
       title: `Delete ${d.title} from disk?`,
-      body: <p>Frees {bytes(fileSize)}. Radarr uses its recycle bin when one is set up; otherwise the file is gone.</p>,
-      options: [{ id: "unmonitor", label: "Stop monitoring", hint: "so Radarr does not download it again", checked: true }],
+      body: <p>Frees {bytes(fileSize)}. {roarr ? "Deleted files are gone; there is no recycle bin." : `${app} uses its recycle bin when one is set up; otherwise the file is gone.`}</p>,
+      options: [
+        { id: "unmonitor", label: "Stop monitoring", hint: `so ${app} does not download it again`, checked: true },
+        ...(roarr ? [TORRENT_OPTION] : []),
+      ],
       confirm: "Delete file",
       danger: true,
     });
     if (!a) return;
     const ok = await run(`Deleting ${d.title}…`, async () => {
-      const res = await api.deleteMovieFile(d.id);
+      const res = await api.deleteMovieFile(d.id, a.checked.torrent);
       if (a.checked.unmonitor) await api.patchTitle("movie", d.id, { monitored: false });
       return res;
     });
@@ -249,7 +253,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
                   {!d.monitored && <State tone="none">Not monitored</State>}
                 </>
               ) : (
-                <State tone="none">Not in Radarr</State>
+                <State tone="none">Not in {app}</State>
               )
             }
             actions={

@@ -88,6 +88,7 @@ func (s *Server) Handler() http.Handler {
 	guarded("GET /api/settings", s.getSettings)
 	guarded("PUT /api/settings", s.putSettings)
 	s.verifyRoutes(guarded)
+	s.nativeRoutes(guarded)
 
 	mux.Handle("/", s.static())
 	return s.middleware(mux)
@@ -239,7 +240,7 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 	if !fresh && time.Since(s.statusAt) < 15*time.Second && s.status != nil {
 		st := s.status
 		s.statusMu.Unlock()
-		writeJSON(w, 200, map[string]any{"services": st, "version": Version, "importMode": s.app.Settings.Get().Import.Mode})
+		writeJSON(w, 200, s.statusBody(st))
 		return
 	}
 	s.statusMu.Unlock()
@@ -293,7 +294,16 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 	s.statusMu.Lock()
 	s.status, s.statusAt = out, time.Now()
 	s.statusMu.Unlock()
-	writeJSON(w, 200, map[string]any{"services": out, "version": Version, "importMode": s.app.Settings.Get().Import.Mode})
+	writeJSON(w, 200, s.statusBody(out))
+}
+
+// statusBody is the /api/status answer. library says who keeps each kind
+// of title ("roarr", "sonarr", "radarr"), so the UI names the right app.
+func (s *Server) statusBody(services map[string]serviceStatus) map[string]any {
+	st := s.app.Settings.Get().Import
+	return map[string]any{"services": services, "version": Version, "importMode": st.Mode, "standalone": st.OwnsLibrary(),
+		"library":        map[string]string{"tv": s.app.LibraryApp("tv"), "movie": s.app.LibraryApp("movie")},
+		"seerrAutoFetch": s.app.SeerrAutoFetch()}
 }
 
 func baseOf(ok bool, f func() string) string {
@@ -666,7 +676,8 @@ func (s *Server) imports(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"mode": st.Mode, "tvRoot": st.TVRoot, "movieRoot": st.MovieRoot, "transfer": st.Transfer,
 		"pathMap": st.PathMap, "category": st.Category, "jobs": jobs, "files": files,
-		"titles": s.app.Native.Store().Titles(),
+		"titles": s.app.Native.Store().Titles(), "standalone": st.OwnsLibrary(), "missingSearchHours": st.MissingSearchHours,
+		"takeover": s.app.TakeoverState(), "blocklist": s.app.Blocklist().List(),
 	})
 }
 
