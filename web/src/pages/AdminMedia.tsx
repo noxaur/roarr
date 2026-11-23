@@ -219,7 +219,7 @@ function TakeoverResult({ t }: { t: TakeoverState }) {
       {skipped.length > 0 && (
         <details className="group mt-2">
           <summary className="meta flex cursor-pointer list-none items-center gap-1">
-            <ChevronRight className="size-3 transition-transform group-open:rotate-90" /> {skipped.length} skipped
+            <ChevronRight className="size-3 transition-transform group-open:rotate-90" /> {skipped.length} to look at
           </summary>
           <ul className="mt-2 space-y-1 font-mono text-[12px] text-muted-foreground">
             {skipped.map((x) => (

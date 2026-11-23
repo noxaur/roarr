@@ -826,3 +826,25 @@ func TestImportKeepsBothFilesOfOneDownloadThatShareAnEpisode(t *testing.T) {
 		}
 	}
 }
+
+// A file Sonarr placed holds the episodes its record lists, whatever its
+// name says: an upgrade of one of them must not delete the other.
+func TestImportKeepsARecordedMultiEpisodeFileWithAPlainName(t *testing.T) {
+	im, dir, _ := newImporter(t)
+	ti := showTitle(8)
+	old := filepath.Join(dir, "tv", "The Show (2020)", "Season 01", "Pilot.mkv")
+	write(t, old, "double")
+	if err := im.Store().Put(FileRecord{TitleKey: ti.Key(), Season: 1, Episodes: []int{1, 2}, Path: old, Rank: QualityRank("x.720p.HDTV")}); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "dl", "The.Show.S01E01.1080p.WEB-DL.mkv")
+	write(t, src, "new")
+	pl := Placement{Video: SourceFile{Rel: filepath.Base(src), Path: src}, Season: 1, Episodes: []int{1}}
+	res, err := im.Import(context.Background(), Request{Title: ti, Placement: pl, Release: "The.Show.S01E01.1080p.WEB-DL", Replace: true})
+	if err != nil || !res.Skipped || !strings.Contains(res.Reason, "S01E02") {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Fatal("the only copy of S01E02 was deleted")
+	}
+}

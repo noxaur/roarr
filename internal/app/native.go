@@ -381,7 +381,8 @@ func (n *Native) tick(ctx context.Context) {
 	var active []*NativeJob
 	for _, j := range n.jobs {
 		if j.final() {
-			if time.Since(j.Created) > 7*24*time.Hour {
+			unresolved := j.Bad && j.Replacement == "" // its torrent is still there
+			if time.Since(j.Created) > 7*24*time.Hour && !unresolved {
 				delete(n.jobs, j.Hash)
 			}
 			continue

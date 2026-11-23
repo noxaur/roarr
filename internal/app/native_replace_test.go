@@ -362,3 +362,22 @@ func TestRemoveTitleRemovesForgottenTorrents(t *testing.T) {
 		t.Fatal("the finished torrent still seeds")
 	}
 }
+
+// A failed release whose replacement never ran is kept past the week that
+// ends other jobs, so a restart still replaces it.
+func TestUnresolvedFailedJobOutlivesTheWeek(t *testing.T) {
+	a, _, _ := nativeLibraryApp(t) // no replaceLoop: the job stays queued
+	n := a.Native
+	n.Track(NativeJob{Hash: deadHash, Kind: "tv", TitleKey: "tv:tmdb:5"})
+	n.set(n.jobs[deadHash], func() {
+		j := n.jobs[deadHash]
+		j.State, j.Bad, j.Created = "failed", true, time.Now().AddDate(0, 0, -8)
+	})
+	n.tick(context.Background())
+	n.mu.Lock()
+	_, kept := n.jobs[deadHash]
+	n.mu.Unlock()
+	if !kept {
+		t.Fatal("pruned before it was replaced")
+	}
+}

@@ -280,7 +280,7 @@ func (a *App) SeriesByTvdb(ctx context.Context, tvdbID, tmdbID int) (*SeriesDeta
 		if tv == nil {
 			return nil, fmt.Errorf("sonarr %w (or Seerr, for TMDB metadata)", ErrNotConfigured)
 		}
-		d := a.seriesFromSeerr(tv, tvdbID)
+		d := a.seriesFromSeerr(ctx, tv, tvdbID)
 		a.detailMu.Lock()
 		a.details[key] = cachedDetail{at: time.Now(), series: d}
 		a.detailMu.Unlock()

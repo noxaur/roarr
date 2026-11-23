@@ -36,7 +36,8 @@ type TakeoverState struct {
 	Shows    int       `json:"shows"`
 	Movies   int       `json:"movies"`
 	Files    int       `json:"files"`
-	// Skipped lists titles that were not taken over, with the reason.
+	// Skipped lists titles that were not taken over, or were taken over with
+	// a gap, with the reason.
 	Skipped []string `json:"skipped,omitempty"`
 	Error   string   `json:"error,omitempty"`
 }
@@ -157,8 +158,9 @@ func (a *App) TakeoverPlan(ctx context.Context) TakeoverPlan {
 		add("hardlink", err == nil, false, "Downloads can be hardlinked into the library", "Imports copy instead, which takes time and space: "+fmt.Sprint(err)+". Put downloads and the library on one filesystem and one Docker mount.")
 	}
 	add("jellyfin", c.Jellyfin != nil && s.Jellyfin.APIKey != "", false, "Jellyfin is connected", "Without Jellyfin, new files show up at its next library scan.")
-	if a.Settings.Locked()["IMPORT_MODE"] && !s.Import.Native() {
-		add("mode", false, true, "Import mode can be changed", "IMPORT_MODE=arr is set in the environment; remove it or set it to native.")
+	locked := a.Settings.Locked()
+	if locked["IMPORT_MODE"] && !s.Import.Native() || locked["IMPORT_STANDALONE"] && !s.Import.Standalone {
+		add("mode", false, true, "roarr can switch to running the library", "IMPORT_MODE=arr or IMPORT_STANDALONE=false is set in the environment; remove it.")
 	}
 	p.Ready = true
 	for _, ck := range p.Checks {
@@ -184,11 +186,11 @@ func allOK(ds []TakeoverDir) bool {
 }
 
 func rootsView(ctx context.Context, c *arr.Client, local string, maps []importer.PathMap) []TakeoverDir {
+	out := []TakeoverDir{} // never null: the UI lists them
 	roots, err := c.RootFolders(ctx)
 	if err != nil {
-		return nil
+		return out
 	}
-	out := []TakeoverDir{}
 	for _, r := range roots {
 		p, ok := mapArrPath(r.Path, []string{r.Path}, local, maps)
 		out = append(out, TakeoverDir{Path: r.Path, Local: p, OK: ok && local != ""})
@@ -369,10 +371,14 @@ func (a *App) runTakeover(ctx context.Context) error {
 	}
 	n.setTakeover(func(st *TakeoverState) { st.Step = "Looking for folders on disk" })
 	a.takeOverFolders(ctx, skip)
-	if _, err := a.Settings.Update(func(cs *config.Settings) {
+	st, err := a.Settings.Update(func(cs *config.Settings) {
 		cs.Import.Mode, cs.Import.Standalone = "native", true
-	}); err != nil {
+	})
+	if err != nil {
 		return err
+	}
+	if !st.Import.OwnsLibrary() {
+		return errors.New("the library is copied, but the environment (IMPORT_MODE or IMPORT_STANDALONE) keeps Sonarr and Radarr in charge")
 	}
 	n.forgetShows()
 	return nil
@@ -393,6 +399,11 @@ func (a *App) takeOverSonarr(ctx context.Context, son *arr.Sonarr, root string, 
 			return ctx.Err()
 		}
 		n.setTakeover(func(st *TakeoverState) { st.Step = fmt.Sprintf("Sonarr: %s (%d of %d)", sr.Title, i+1, len(series)) })
+		if sr.TmdbID == 0 { // Sonarr v3 has no TMDB ids, and roarr reloads episode lists from TMDB
+			if sr.TmdbID = a.tmdbForTvdb(ctx, sr.Title, sr.TvdbID); sr.TmdbID == 0 {
+				skip(sr.Title, errors.New("taken over, but TMDB does not know its TVDB id, so roarr will not learn of new episodes"))
+			}
+		}
 		files, err := a.takeOverShow(ctx, son, sr, roots, root, maps)
 		if err != nil {
 			skip(sr.Title, err)
@@ -530,6 +541,30 @@ func rootPaths(ctx context.Context, c *arr.Client, titles int) ([]string, error)
 		out = append(out, r.Path)
 	}
 	return out, nil
+}
+
+// tmdbForTvdb finds the TMDB id of a show by its TVDB id: a Seerr search
+// for its name, checked against each hit's TVDB id. 0 when none matches.
+func (a *App) tmdbForTvdb(ctx context.Context, name string, tvdbID int) int {
+	sc := a.C().Seerr
+	if sc == nil || tvdbID == 0 {
+		return 0
+	}
+	res, err := sc.Search(ctx, name)
+	if err != nil {
+		return 0
+	}
+	checked := 0
+	for _, r := range res {
+		if r.MediaType != "tv" || checked == 5 { // the show is among the first hits for its own name
+			continue
+		}
+		checked++
+		if tv, err := sc.TV(ctx, r.ID); err == nil && tv.ExternalIDs.TvdbID == tvdbID {
+			return tv.ID
+		}
+	}
+	return 0
 }
 
 // arrFile is where roarr sees a Sonarr/Radarr file: in the title folder

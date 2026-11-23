@@ -197,7 +197,7 @@ func (a *App) nativeMovie(ctx context.Context, g GrabRequest) (*nativeTarget, er
 // seriesFromSeerr builds a show page from TMDB when Sonarr is not
 // configured (native mode). Episode ids are synthetic, as for any show
 // that is not in Sonarr; episodes roarr imported count as on disk.
-func (a *App) seriesFromSeerr(tv *seerr.TV, tvdbID int) *SeriesDetail {
+func (a *App) seriesFromSeerr(ctx context.Context, tv *seerr.TV, tvdbID int) *SeriesDetail {
 	it := LibraryItem{Key: fmt.Sprintf("tvdb:%d", tvdbID), Kind: "tv", Title: tv.Name, Year: tv.Year(), Poster: seerr.Poster(tv.PosterPath, "w342"),
 		Status: tv.Status, TvdbID: tvdbID, TmdbID: tv.ID, ImdbID: tv.ExternalIDs.ImdbID, Anime: tv.IsAnime()}
 	if tv.OriginalName != "" && tv.OriginalName != tv.Name {
@@ -207,14 +207,36 @@ func (a *App) seriesFromSeerr(tv *seerr.TV, tvdbID int) *SeriesDetail {
 	for _, g := range tv.Genres {
 		d.Genres = append(d.Genres, g.Name)
 	}
-	// TMDB counts announced episodes too; only those up to the last one
-	// that aired count as aired, so nothing grabs a fake of a future one.
+	// TMDB counts announced episodes too, and nothing may grab a fake of
+	// one that has not aired. Seasons before the latest one that premiered
+	// have aired; that season's episodes go by their own air dates.
+	current := 0
+	for _, sn := range tv.Seasons {
+		if sn.SeasonNumber > current && aired(sn.AirDate) {
+			current = sn.SeasonNumber
+		}
+	}
+	airDates := map[int]string{}
+	if c := a.C().Seerr; c != nil && current > 0 {
+		if eps, err := c.Season(ctx, tv.ID, current); err == nil {
+			for _, e := range eps {
+				airDates[e.EpisodeNumber] = e.AirDate
+			}
+		}
+	}
 	last := tv.LastEpisodeToAir
 	hasAired := func(season, ep int, premiere string) bool {
-		if last == nil || last.SeasonNumber == 0 || season == 0 {
-			return aired(premiere) // no cursor, or the newest aired episode is a special
+		switch {
+		case season == 0 || season > current:
+			return aired(premiere)
+		case season < current:
+			return true
+		case len(airDates) > 0:
+			return aired(airDates[ep])
+		case last != nil && last.SeasonNumber == current:
+			return ep <= last.EpisodeNumber
 		}
-		return season < last.SeasonNumber || season == last.SeasonNumber && ep <= last.EpisodeNumber
+		return false // unknown: wait for the next look rather than grab a fake
 	}
 	for _, sn := range tv.Seasons {
 		sd := SeasonDetail{Number: sn.SeasonNumber, Episodes: []EpisodeDetail{}}

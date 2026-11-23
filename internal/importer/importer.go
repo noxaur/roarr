@@ -213,7 +213,7 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 			continue
 		}
 		if t.Kind == "tv" {
-			if extra := extraEpisodes(old, p.Season, p.Episodes); extra != "" {
+			if extra := im.extraEpisodes(old, p.Season, p.Episodes); extra != "" {
 				keeps = fmt.Sprintf("%s also holds %s; not replacing it", filepath.Base(old), extra)
 				continue
 			}
@@ -426,9 +426,14 @@ func (im *Importer) rankOf(p string) int {
 }
 
 // extraEpisodes names episodes an existing file holds beyond the new
-// placement ("S01E03"), or "" when it holds nothing more.
-func extraEpisodes(old string, season int, eps []int) string {
+// placement ("S01E03"), or "" when it holds nothing more. A recorded file
+// holds the episodes its record lists: a file taken over from Sonarr can
+// hold two episodes under a name that says one, or none.
+func (im *Importer) extraEpisodes(old string, season int, eps []int) string {
 	i := release.Parse(filepath.Base(old))
+	if r, ok := im.store.Record(old); ok && len(r.Episodes) > 0 {
+		i.Seasons, i.Episodes = []int{r.Season}, r.Episodes
+	}
 	if len(i.Seasons) == 0 || len(i.Episodes) <= 1 {
 		return ""
 	}

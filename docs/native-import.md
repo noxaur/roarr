@@ -313,7 +313,10 @@ The pass:
    monitoring: the series flag, and each episode in `Monitor` or `Ignore`.
    Each episode file gets a record, so roarr can upgrade and delete it.
    Its rank comes from the release it was grabbed as (`sceneName`), or from
-   Sonarr's quality name.
+   Sonarr's quality name, and the record's episodes (not the file name) say
+   what a replacement would take away. A show without a TMDB id (Sonarr v3)
+   gets one through a Seerr search checked against its TVDB id; one that
+   has none is listed, because roarr cannot learn of its new episodes.
 2. Every Radarr movie becomes a title the same way.
 3. Title folders in `TV_ROOT` and `MOVIES_ROOT` that no title owns are
    identified through Seerr: by a `[tmdbid-N]` tag in the name, or by a

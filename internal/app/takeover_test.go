@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noxaur/roarr/internal/arr"
 	"github.com/noxaur/roarr/internal/config"
@@ -172,7 +173,7 @@ func TestSeerrShowPageMarksOnlyAiredEpisodes(t *testing.T) {
 	var tv seerr.TV
 	_ = json.Unmarshal([]byte(`{"id":5,"name":"Show","seasons":[{"seasonNumber":1,"episodeCount":3,"airDate":"2020-01-01"},{"seasonNumber":2,"episodeCount":8,"airDate":"2026-01-01"}],
 		"lastEpisodeToAir":{"seasonNumber":2,"episodeNumber":3}}`), &tv)
-	d := a.seriesFromSeerr(&tv, 0)
+	d := a.seriesFromSeerr(context.Background(), &tv, 0)
 	aired := 0
 	for _, s := range d.Seasons {
 		for _, e := range s.Episodes {
@@ -186,7 +187,75 @@ func TestSeerrShowPageMarksOnlyAiredEpisodes(t *testing.T) {
 	}
 	// The newest aired episode is a special: the season premieres decide.
 	_ = json.Unmarshal([]byte(`{"lastEpisodeToAir":{"seasonNumber":0,"episodeNumber":2}}`), &tv)
-	if d := a.seriesFromSeerr(&tv, 0); !d.Seasons[0].Episodes[0].Aired {
+	if d := a.seriesFromSeerr(context.Background(), &tv, 0); !d.Seasons[0].Episodes[0].Aired {
 		t.Fatal("a special as the newest episode hides every aired episode")
+	}
+}
+
+// Review round 3 fixes.
+
+func TestTakeoverFindsTMDBForTVDBOnlyShows(t *testing.T) {
+	a, _, _ := nativeLibraryApp(t)
+	srv := fakeArr(t, map[string]string{
+		"/api/v1/search": `{"results":[{"id":1,"mediaType":"tv","name":"Show"},{"id":2,"mediaType":"tv","name":"Show"}]}`,
+		"/api/v1/tv/1":   `{"id":1,"externalIds":{"tvdbId":99}}`,
+		"/api/v1/tv/2":   `{"id":2,"externalIds":{"tvdbId":11}}`,
+	})
+	a.clients.Seerr = seerr.New(srv, "k")
+	if got := a.tmdbForTvdb(context.Background(), "Show", 11); got != 2 {
+		t.Fatalf("tmdb %d, want 2", got)
+	}
+	if got := a.tmdbForTvdb(context.Background(), "Show", 12); got != 0 {
+		t.Fatalf("matched a show with another TVDB id: %d", got)
+	}
+}
+
+func TestTakeoverRefusesWhenTheEnvironmentKeepsSonarr(t *testing.T) {
+	t.Setenv("IMPORT_STANDALONE", "false")
+	a, _, dir := nativeLibraryApp(t)
+	store, err := config.Open(filepath.Join(dir, "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Settings = store
+	if err := a.runTakeover(context.Background()); err == nil || !strings.Contains(err.Error(), "environment") {
+		t.Fatalf("reported success although roarr does not run the library: %v", err)
+	}
+	p := a.TakeoverPlan(context.Background())
+	for _, ck := range p.Checks {
+		if ck.ID == "mode" && !ck.OK && ck.Need {
+			return
+		}
+	}
+	t.Fatalf("no failing check for the locked setting: %+v", p.Checks)
+}
+
+func TestTakeoverRootsAreNeverNull(t *testing.T) {
+	son := fakeArr(t, map[string]string{})
+	b, _ := json.Marshal(rootsView(context.Background(), arr.NewSonarr(son, "k").Client, "/tv", nil))
+	if string(b) != "[]" {
+		t.Fatalf("roots %s", b)
+	}
+}
+
+func TestSeerrShowPageUsesAirDatesOfTheAiringSeason(t *testing.T) {
+	a, _, _ := nativeLibraryApp(t)
+	future := time.Now().AddDate(0, 0, 7).Format(time.DateOnly)
+	srv := fakeArr(t, map[string]string{
+		"/api/v1/tv/5/season/2": `{"episodes":[{"episodeNumber":1,"airDate":"2020-01-01"},{"episodeNumber":2,"airDate":"` + future + `"}]}`,
+	})
+	a.clients.Seerr = seerr.New(srv, "k")
+	var tv seerr.TV
+	_ = json.Unmarshal([]byte(`{"id":5,"seasons":[{"seasonNumber":1,"episodeCount":2,"airDate":"2019-01-01"},{"seasonNumber":2,"episodeCount":2,"airDate":"2020-01-01"}],
+		"lastEpisodeToAir":{"seasonNumber":0,"episodeNumber":4}}`), &tv)
+	d := a.seriesFromSeerr(context.Background(), &tv, 0)
+	got := map[int]bool{}
+	for _, s := range d.Seasons {
+		for _, e := range s.Episodes {
+			got[e.Season*10+e.Number] = e.Aired
+		}
+	}
+	if !got[11] || !got[12] || !got[21] || got[22] {
+		t.Fatalf("aired %v", got)
 	}
 }
