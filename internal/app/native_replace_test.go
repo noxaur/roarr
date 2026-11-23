@@ -336,6 +336,15 @@ func TestReplaceWaitsForARunningSearch(t *testing.T) {
 	if _, ok := n.blocklist.Match(j.Release, ""); ok {
 		t.Fatal("blocklisted before it could be replaced")
 	}
+	// Once the search is done, a later tick replaces it.
+	n.releaseSearch(show.Key())
+	n.tick(context.Background())
+	for i := 0; i < 200 && fq.has(deadHash); i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if fq.has(deadHash) {
+		t.Fatal("a job that already failed was never offered again")
+	}
 }
 
 // Removing a title with its torrents also removes torrents of jobs that

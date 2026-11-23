@@ -394,7 +394,11 @@ func (n *Native) tick(ctx context.Context) {
 		if n.step(ctx, c, j) {
 			changed = true
 		}
-		n.mu.Lock()
+	}
+	// Every failed release not replaced yet is offered again, also one
+	// that failed before a restart or whose replacement waited for a search.
+	n.mu.Lock()
+	for _, j := range n.jobs {
 		if j.State == "failed" && j.Bad && j.Replacement == "" && !n.replacing[j.Hash] {
 			select {
 			case n.bad <- j.Hash:
@@ -402,8 +406,8 @@ func (n *Native) tick(ctx context.Context) {
 			default: // the queue is full: the next tick offers it again
 			}
 		}
-		n.mu.Unlock()
 	}
+	n.mu.Unlock()
 	if changed {
 		n.save()
 	}

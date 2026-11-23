@@ -184,4 +184,9 @@ func TestSeerrShowPageMarksOnlyAiredEpisodes(t *testing.T) {
 	if aired != 6 {
 		t.Fatalf("%d episodes count as aired, want 6", aired)
 	}
+	// The newest aired episode is a special: the season premieres decide.
+	_ = json.Unmarshal([]byte(`{"lastEpisodeToAir":{"seasonNumber":0,"episodeNumber":2}}`), &tv)
+	if d := a.seriesFromSeerr(&tv, 0); !d.Seasons[0].Episodes[0].Aired {
+		t.Fatal("a special as the newest episode hides every aired episode")
+	}
 }

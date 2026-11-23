@@ -211,8 +211,8 @@ func (a *App) seriesFromSeerr(tv *seerr.TV, tvdbID int) *SeriesDetail {
 	// that aired count as aired, so nothing grabs a fake of a future one.
 	last := tv.LastEpisodeToAir
 	hasAired := func(season, ep int, premiere string) bool {
-		if last == nil || season == 0 {
-			return aired(premiere)
+		if last == nil || last.SeasonNumber == 0 || season == 0 {
+			return aired(premiere) // no cursor, or the newest aired episode is a special
 		}
 		return season < last.SeasonNumber || season == last.SeasonNumber && ep <= last.EpisodeNumber
 	}
