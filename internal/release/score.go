@@ -38,6 +38,16 @@ type Prefs struct {
 	BlockedTerms    []string `json:"blockedTerms"`
 }
 
+// AtCutoff reports whether quality i is what roarr upgrades to: at least
+// the first preferred resolution, from a WEB-DL or better source. An
+// unknown quality (Resolution 0) is below it.
+func (p Prefs) AtCutoff(i Info) bool {
+	if len(p.Resolutions) == 0 || i.Resolution == 0 {
+		return false
+	}
+	return i.Resolution >= p.Resolutions[0] && SourceRank(i.Source) >= SourceRank(SourceWEBDL)
+}
+
 // DefaultPrefs returns sensible defaults.
 func DefaultPrefs() Prefs {
 	return Prefs{

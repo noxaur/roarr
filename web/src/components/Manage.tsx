@@ -4,7 +4,7 @@ import { api, type FileInfo, type Kind } from "@/lib/api";
 import { errText, run } from "@/lib/actions";
 import { bytes } from "@/lib/format";
 import { useRouter } from "@/lib/router";
-import { useStore } from "@/lib/store";
+import { useKeeper, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +21,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useConfirm } from "./Confirm";
+import { TORRENT_OPTION, useConfirm } from "./Confirm";
 
 /** A labelled list of a file's properties, for a title's "on disk" card. */
 export function FileFacts({ file }: { file: FileInfo }) {
@@ -81,15 +81,15 @@ export function ManageMenu({
   const [open, setOpen] = useState(false);
   const [profiles, setProfiles] = useState<{ id: number; name: string }[] | null>(null);
   const [profilesError, setProfilesError] = useState<string | null>(null);
-  const app = kind === "tv" ? "Sonarr" : "Radarr";
+  const { app, roarr } = useKeeper(kind);
 
   useEffect(() => {
-    if (open && !profiles)
+    if (open && !profiles && !roarr)
       api
         .profiles(kind)
         .then((r) => setProfiles(r.profiles))
         .catch((e) => setProfilesError(errText(e)));
-  }, [open, profiles, kind]);
+  }, [open, profiles, kind, roarr]);
 
   const patch = async (p: { monitored?: boolean; qualityProfileId?: number }, msg: string) => {
     if (await run("Saving…", () => api.patchTitle(kind, id, p), msg)) onChanged();
@@ -99,14 +99,14 @@ export function ManageMenu({
     const a = await confirm({
       title: `Remove ${title}?`,
       body: <p>{app} forgets about it. Getting something later adds it back.</p>,
-      options: [{ id: "files", label: "Delete the files from disk too", hint: path }],
+      options: [{ id: "files", label: "Delete the files from disk too", hint: path }, ...(roarr ? [TORRENT_OPTION] : [])],
       confirm: `Remove from ${app}`,
       danger: true,
     });
     if (!a) return;
     const ok = await run(
       `Removing ${title}…`,
-      () => api.removeTitle(kind, id, a.checked.files),
+      () => api.removeTitle(kind, id, a.checked.files, a.checked.files && a.checked.torrent),
       a.checked.files ? `${title} and its files are gone` : `${title} removed from ${app}`,
     );
     if (ok) {
@@ -126,33 +126,35 @@ export function ManageMenu({
         <DropdownMenuCheckboxItem checked={monitored} onCheckedChange={(v) => patch({ monitored: v }, v ? "Monitored" : "Not monitored")}>
           Monitored
         </DropdownMenuCheckboxItem>
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Gauge /> Quality profile
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
-            {profiles === null ? (
-              profilesError ? (
-                <DropdownMenuLabel role="alert" className="max-w-64 font-normal text-bad">
-                  {profilesError}
-                </DropdownMenuLabel>
+        {!roarr && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Gauge /> Quality profile
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
+              {profiles === null ? (
+                profilesError ? (
+                  <DropdownMenuLabel role="alert" className="max-w-64 font-normal text-bad">
+                    {profilesError}
+                  </DropdownMenuLabel>
+                ) : (
+                  <DropdownMenuLabel className="font-normal text-muted-foreground">Loading…</DropdownMenuLabel>
+                )
               ) : (
-                <DropdownMenuLabel className="font-normal text-muted-foreground">Loading…</DropdownMenuLabel>
-              )
-            ) : (
-              <DropdownMenuRadioGroup
-                value={String(profileId ?? "")}
-                onValueChange={(v) => patch({ qualityProfileId: +v }, `Quality profile: ${profiles.find((p) => p.id === +v)?.name}`)}
-              >
-                {profiles.map((p) => (
-                  <DropdownMenuRadioItem key={p.id} value={String(p.id)}>
-                    {p.name}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            )}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
+                <DropdownMenuRadioGroup
+                  value={String(profileId ?? "")}
+                  onValueChange={(v) => patch({ qualityProfileId: +v }, `Quality profile: ${profiles.find((p) => p.id === +v)?.name}`)}
+                >
+                  {profiles.map((p) => (
+                    <DropdownMenuRadioItem key={p.id} value={String(p.id)}>
+                      {p.name}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              )}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => run("Asking for a rescan…", () => api.titleCommand(kind, id, "refresh")).then((ok) => ok && setTimeout(onChanged, 2500))}>
           <FolderSync /> Rescan disk

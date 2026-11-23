@@ -19,6 +19,19 @@ import (
 // import gets.
 var ErrRetryLater = errors.New("not ready to import yet")
 
+// ErrBadRelease, wrapped by a before-import hook (see BadRelease), fails
+// the whole download at once: the release itself is no good (a fake), so
+// roarr blocklists it and grabs another instead of retrying the file.
+var ErrBadRelease = errors.New("bad release")
+
+// BadRelease returns an error with msg as its text that wraps ErrBadRelease.
+func BadRelease(msg string) error { return badRelease(msg) }
+
+type badRelease string
+
+func (e badRelease) Error() string        { return string(e) }
+func (e badRelease) Is(target error) bool { return target == ErrBadRelease }
+
 // Candidate is a file about to be imported.
 type Candidate struct {
 	Title    Title  `json:"title"`

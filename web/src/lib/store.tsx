@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { ApiError, api, type ActivityItem, type LibraryItem, type VerifyRecord } from "./api";
+import { ApiError, api, type ActivityItem, type AppStatus, type Kind, type LibraryItem, type VerifyRecord } from "./api";
+import { ARR_KEEPERS, appName } from "./keeper";
 import { needsYou } from "./activity";
 import { isBlocking, orphans } from "./verify";
 
@@ -28,6 +29,9 @@ interface Store {
   /** Pending Seerr requests; null when Seerr is not set up. */
   pendingRequests: number | null;
   reloadRequests: () => void;
+  /** Who keeps the library, and the settings that follow from it; null until the first answer. */
+  appStatus: AppStatus | null;
+  reloadStatus: () => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -79,6 +83,7 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
   const [activityErrors, setActivityErrors] = useState<Record<string, string>>({});
   const [verify, setVerify] = useState<VerifyRecord[]>([]);
   const [pendingRequests, setPending] = useState<number | null>(null);
+  const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
   const etag = useRef<string | null>(snapshot?.etag ?? null);
 
   const reloadLibrary = useCallback(async (hard = false) => {
@@ -136,8 +141,16 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
       .catch(() => setPending(null));
   }, []);
 
+  const reloadStatus = useCallback(() => {
+    api
+      .status()
+      .then(setAppStatus)
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     reloadLibrary();
+    reloadStatus();
     reloadActivity();
     reloadVerify();
     reloadRequests();
@@ -148,18 +161,20 @@ export function StoreProvider({ children, user }: { children: ReactNode; user?: 
       reloadVerify();
     }, 5_000);
     const c = setInterval(() => {
-      if (!document.hidden) reloadRequests();
+      if (document.hidden) return;
+      reloadRequests();
+      reloadStatus();
     }, 60_000);
     return () => {
       clearInterval(a);
       clearInterval(b);
       clearInterval(c);
     };
-  }, [reloadLibrary, reloadActivity, reloadVerify, reloadRequests]);
+  }, [reloadLibrary, reloadActivity, reloadVerify, reloadRequests, reloadStatus]);
 
   const errors = libraryFailure ? { ...libraryErrors, library: libraryFailure } : libraryErrors;
   return (
-    <Ctx.Provider value={{ user, library, libraryErrors: errors, libraryLoaded, reloadLibrary, patchLibrary, activity, activityErrors, reloadActivity, verify, reloadVerify, pendingRequests, reloadRequests }}>
+    <Ctx.Provider value={{ user, library, libraryErrors: errors, libraryLoaded, reloadLibrary, patchLibrary, activity, activityErrors, reloadActivity, verify, reloadVerify, pendingRequests, reloadRequests, appStatus, reloadStatus }}>
       {children}
     </Ctx.Provider>
   );
@@ -169,6 +184,12 @@ export function useStore(): Store {
   const s = useContext(Ctx);
   if (!s) throw new Error("useStore outside provider");
   return s;
+}
+
+/** The app that keeps titles of this kind ("Sonarr", "Radarr" or "roarr"), and whether that is roarr. */
+export function useKeeper(kind: Kind): { app: string; roarr: boolean } {
+  const keepers = useStore().appStatus?.library ?? ARR_KEEPERS;
+  return { app: appName(keepers, kind), roarr: keepers[kind] === "roarr" };
 }
 
 /** How many things wait on a person: stuck downloads and failed checks. */

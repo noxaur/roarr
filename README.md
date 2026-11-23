@@ -69,14 +69,15 @@ environment variable is locked there.
 | `TRUSTED_PROXIES` | — | Reverse proxies (IPs or CIDRs, comma separated) whose `X-Forwarded-For` roarr believes when it throttles failed sign-ins. Without it, every client behind the proxy shares one limit. |
 | `WATCH_FIRST` | `true` | Download packs in episode order and import as each finishes. |
 | `PREFETCH` | `true` | Start searching a show as soon as its page opens. |
-| `SEERR_AUTO_FETCH` | `false` | Grab newly approved Seerr requests automatically. Turn on Seerr's "prevent search" for its Sonarr/Radarr servers so they don't search too. |
-| `IMPORT_MODE` | `arr` | `arr`: Sonarr/Radarr download and import. `native`: roarr sends torrents to qBittorrent and imports them itself. See [Native import](#native-import-experimental). |
+| `SEERR_AUTO_FETCH` | `false` | Grab newly approved Seerr requests automatically. Turn on Seerr's "prevent search" for its Sonarr/Radarr servers so they don't search too. Always on when roarr runs the library. |
+| `IMPORT_MODE` | `arr` | `arr`: Sonarr/Radarr download and import. `native`: roarr sends torrents to qBittorrent and imports them itself. See [Native import](#native-import). |
 | `TV_ROOT`, `MOVIES_ROOT` | — | Native mode: library folders, as roarr sees them. |
 | `IMPORT_TRANSFER` | `hardlink` | Native mode: `hardlink` (copies when a link is impossible), `copy` or `move`. |
 | `QBIT_PATH_MAP` | — | Native mode: `qbit-path=roarr-path` pairs, comma separated, when the containers mount downloads at different paths. |
 | `QBIT_CATEGORY` | `roarr` | Native mode: qBittorrent category for roarr's torrents. |
 | `QBIT_SAVE_PATH` | qBittorrent default | Native mode: save path for roarr's torrents. |
-| `MISSING_SEARCH_HOURS` | `0` (off) | Native mode without Sonarr/Radarr: every N hours, search for monitored episodes and movies that aired but are not on disk, and get the best releases. |
+| `MISSING_SEARCH_HOURS` | `24` | Native library: every N hours, search for monitored episodes and movies that aired but are not on disk, and get the best releases. `0` turns it off. New episodes are searched as they air either way. |
+| `IMPORT_STANDALONE` | `false` | Native mode: roarr runs the library and does not use Sonarr or Radarr, even when they are configured. **Take over** under Admin → Import sets it. |
 | `INDEXER_TIMEOUT` | `30` | Seconds before giving up on a slow indexer. |
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |
 | `PORT` | `3847` | |
@@ -230,7 +231,7 @@ verdicts; `POST /api/verify/{hash}/regrab` deletes the download and anything
 it imported and grabs the next best. Needs ffmpeg in the container and the
 download folder mounted.
 
-## Native import (experimental)
+## Native import
 
 By default Sonarr and Radarr download and import everything roarr grabs.
 With `IMPORT_MODE=native` roarr does it itself:
@@ -287,13 +288,36 @@ one parent folder that holds both downloads and library (for example
 Without Sonarr and Radarr, roarr also keeps the library itself. The
 library list, the show and movie pages, **Delete** (episode, season, movie
 or the whole title) and **Search** use `/config/library.json`. A delete
-removes only files that roarr imported, and only inside `TV_ROOT` and
-`MOVIES_ROOT`. `MISSING_SEARCH_HOURS` turns on a periodic search for
-monitored episodes that are missing. Releases packed in ZIP archives are
-unpacked before the import. RAR and 7-Zip archives are not.
+removes only files that roarr knows, and only inside `TV_ROOT` and
+`MOVIES_ROOT`. On its own, roarr also:
 
-Native mode does not do everything yet. See
-[docs/native-import.md](docs/native-import.md) for what it does not cover.
+- grabs new episodes of monitored shows after they air, and searches for
+  everything monitored that is missing once a day (`MISSING_SEARCH_HOURS`);
+- upgrades files below your first preferred resolution or from a source
+  weaker than WEB-DL, once a week per title;
+- replaces a download that is dead, stalls for an hour, fails verification
+  or holds nothing usable: it blocklists the release, removes the torrent
+  and grabs the next best one;
+- grabs Seerr requests once they are approved.
+
+Releases packed in ZIP archives are unpacked before the import. RAR and
+7-Zip archives are not.
+
+### Leaving Sonarr and Radarr
+
+**Admin → Import → Take over** moves an existing library to roarr in one
+pass. Each series and movie in Sonarr and Radarr, with its monitoring and
+files, goes into `/config/library.json`. So do title folders on disk that
+neither knows, which roarr identifies through Seerr. Nothing on disk moves:
+folders keep their names, and new episodes go into the season folders that
+are there. roarr then switches to native mode and stops using Sonarr and
+Radarr, so you can turn them off. Before it starts, the page checks what
+roarr needs: qBittorrent, Seerr, library folders that roarr can write and
+that hold Sonarr's and Radarr's root folders, and a download folder that
+roarr can see.
+
+See [docs/native-import.md](docs/native-import.md) for how it works and
+what it does not cover.
 
 ## Why it is fast (measured)
 

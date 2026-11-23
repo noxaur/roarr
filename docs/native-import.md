@@ -48,7 +48,11 @@ The code is in two places:
 roarr removes characters that are not permitted in names (`<>:"/\|?*`).
 It changes `Title: Sub` to `Title - Sub`. The first import of a title
 sets the folder name and year. roarr keeps that name, also when the
-metadata changes later.
+metadata changes later. A folder taken over from Sonarr or Radarr, or
+found on disk, keeps its own name (`Title.Folder`), and a new episode
+goes into the season folder that is already there (`Season 1`,
+`Specials`). Renaming them was rejected: Jellyfin would see every file as
+new, and the files Sonarr and Radarr placed are still seeding.
 
 ## Metadata
 
@@ -78,7 +82,7 @@ kind stays in Sonarr or Radarr. Arr mode does not change.
 | Library list | Every title that roarr tracks: titles you got, with their files. |
 | On disk | Videos that roarr imported, and other videos in the title folder (`Season NN/` for shows). |
 | Downloading | Episodes of roarr jobs that are not finished. |
-| Metadata | TMDB through Seerr. The episode list loads again after 6 hours, or on **Refresh**. If Seerr is not available, roarr uses the stored list. |
+| Metadata | TMDB through Seerr. The episode lists of monitored shows load again every 6 hours, and on **Refresh**. If Seerr is not available, roarr uses the stored list, and grabs for tracked titles still work. |
 
 ### Monitoring
 
@@ -135,13 +139,67 @@ again.
   those episodes.
 - **Periodic:** `MISSING_SEARCH_HOURS=N` (settings: `import.missingSearchHours`)
   searches all monitored titles every N hours. The first pass starts 10
-  minutes after roarr starts. `0` (the default) turns it off.
+  minutes after roarr starts. The default is 24; `0` turns it off.
+- **New episodes:** a monitored episode that aired and is missing is
+  searched from its air date on: every hour for the first two days, every
+  4 hours until day 6, every 12 hours until day 14. Then the periodic
+  search covers it. Air dates are days and releases come hours after the
+  broadcast, so a fixed delay after the air time is not possible. roarr has
+  no RSS sync: Prowlarr searches one title at a time, which is cheap enough
+  for the few shows that air in a week. The schedule is kept in memory;
+  after a restart each recent episode is searched once more, which costs
+  less than a stored schedule per episode.
+- **Upgrades:** the periodic pass also searches a title whose monitored
+  files are below the quality cutoff, at most once a week per title
+  (`Title.UpgradeAt`). The cutoff is the first preferred resolution (or
+  higher) from a WEB-DL or better source (`release.Prefs.AtCutoff`). Only
+  releases at the cutoff are taken, so a file is replaced once, by what you
+  asked for, and not step by step through every slightly better release.
+  Files of unknown quality (renamed, no release recorded) are left alone.
+  Sonarr's quality profiles were not copied: the release preferences
+  already say what you want, and a second set of rules would disagree with
+  them.
 
 A search uses the same planner as **Get**: Prowlarr, the release scores,
 the pack/episode plan. It grabs the best plan. It runs in the background,
 one title at a time, with a 5-second pause between titles. One title has at
 most one search at a time. Grabs show in the activity feed. The result is
 in the log.
+
+## Failed downloads and the blocklist
+
+When a download fails because of the release, roarr replaces it: the
+release goes on the blocklist (`/config/blocklist.json`), the torrent and
+its data leave qBittorrent, and the planner picks again for the episodes
+(or the movie) that are still missing. The new download shows in the
+activity feed; the replaced one leaves it. When nothing else is found, the
+failed row stays with the reason.
+
+| Failure | When |
+|---|---|
+| Dead | No peer sends the metadata for 30 minutes, or the torrent never shows in qBittorrent for 10 minutes. |
+| Stalled | qBittorrent reports `stalledDL` and no data arrived for 1 hour. |
+| Fake | Verification fails (see [Hook points](#hook-points)). The download stops at once; the rest of a pack is not downloaded. |
+| Nothing usable | Nothing in the torrent or its archives matches the title. |
+
+Failures that are not the release's fault (the file cannot be placed, the
+torrent was removed by hand) fail the row without a replacement. Timeouts
+count from the time roarr runs at the earliest, so a download does not
+fail for time roarr was stopped.
+
+- The blocklist matches a search result by info-hash or by its normalized
+  name, so the same release from another indexer, or re-hashed by a
+  private tracker, is rejected too. Blocklisted results show as rejected
+  with the reason. Entries do not expire; remove them under Admin → Import
+  (`DELETE /api/blocklist/{id}`).
+- It is separate from `verify.json`: verify records are per download and
+  are pruned after 30 days, and most failures have no verdict.
+- **Remove and blocklist** in the activity feed adds an entry too.
+  **Re-grab** on a verdict deletes the files the download placed, then
+  replaces it the same way.
+- Replacements run one at a time on their own loop, so a burst of dead
+  torrents does not start a burst of searches. A goroutine per failure was
+  rejected for that reason.
 
 ## Archives
 
@@ -231,6 +289,70 @@ only if that video is still the one from the same release. If another
 release replaced the video in the meantime, roarr discards the subtitle. If a
 subtitle transfer fails, roarr tries again for about one minute.
 
+## Taking over from Sonarr and Radarr
+
+`POST /api/takeover` (Admin → Import → **Take over**) moves a library to
+roarr in one background pass, and `GET /api/takeover` shows what it would
+move, what roarr still needs, and the progress. It refuses to start while
+a needed check fails:
+
+| Check | Needed |
+|---|---|
+| qBittorrent is connected | yes |
+| Seerr is connected (metadata once Sonarr and Radarr are gone) | yes |
+| The TV and movie folders are writable | when Sonarr has shows / Radarr has movies |
+| Every Sonarr and Radarr root folder is inside `TV_ROOT` / `MOVIES_ROOT` as roarr sees it | the same |
+| roarr sees qBittorrent's download folder (`QBIT_PATH_MAP`) | yes |
+| A download can be hardlinked into the library | no: imports copy instead |
+| Jellyfin is connected | no |
+
+The pass:
+
+1. Every Sonarr series becomes a title with its ids, name, folder,
+   alternate titles, episode list (TVDB numbering, from Sonarr) and
+   monitoring: the series flag, and each episode in `Monitor` or `Ignore`.
+   Each episode file gets a record, so roarr can upgrade and delete it.
+   Its rank comes from the release it was grabbed as (`sceneName`), or from
+   Sonarr's quality name, and the record's episodes (not the file name) say
+   what a replacement would take away. A show without a TMDB id (Sonarr v3)
+   gets one through a Seerr search checked against its TVDB id; one that
+   has none is listed, because roarr cannot learn of its new episodes.
+2. Every Radarr movie becomes a title the same way.
+3. Title folders in `TV_ROOT` and `MOVIES_ROOT` that no title owns are
+   identified through Seerr: by a `[tmdbid-N]` tag in the name, or by a
+   search whose result has the same name and year. A folder without a year
+   needs a name only one TMDB title has. Their videos get
+   records. Shows found this way monitor only episodes that air from now
+   on, so the takeover does not download a backlog nobody asked for.
+4. roarr sets `IMPORT_MODE=native` and `import.standalone`.
+
+Paths: Sonarr and Radarr name paths as their containers see them. roarr
+tries the path as it is, then the AV1 and verify path maps (`*arr path =
+roarr path`), then the path relative to the *arr root folder under
+`TV_ROOT` / `MOVIES_ROOT`. When Sonarr or Radarr cannot list its root
+folders, the takeover stops and roarr keeps using them. A title whose folder roarr cannot see is
+skipped with the reason, and so is a folder Seerr cannot identify. A title
+roarr already tracks keeps its monitoring, and files roarr placed keep
+their records, so running it again changes nothing.
+
+`standalone` makes roarr drop its Sonarr and Radarr clients in native
+mode, and stop finding them through Prowlarr. Every code path that asks
+"is Sonarr there?" then uses the native library, without a branch of its
+own. Clearing `SONARR_URL` instead was rejected: Prowlarr's app links would
+bring Sonarr back. The takeover still reads the configured or discovered
+Sonarr and Radarr, so it can run again. Switching the import mode back to
+`arr` uses Sonarr and Radarr again; `library.json` stays.
+
+## Seerr requests
+
+When roarr runs the library, Seerr has no Sonarr or Radarr to send a
+request to, so roarr grabs approved requests itself (`SEERR_AUTO_FETCH` is
+on, whatever the setting). Seerr marks a request available when its
+Jellyfin scan finds the title, and roarr asks Jellyfin to refresh after
+each import. Setting the status through Seerr's media API was rejected: it
+is per title, not per season, so a show with one requested season would
+show as complete.
+
 ## Path mapping and hardlinks
 
 qBittorrent reports paths from its own container. `QBIT_PATH_MAP`
@@ -263,9 +385,10 @@ polling Sonarr and Radarr, which see nothing of a native import.
 - **Verification, before the import.** The first file of a download that
   reaches the importer is verified, and its verdict counts for the whole
   download, as in arr mode. A `fail` keeps every file of the download out
-  of the library. The file fails like any other import that cannot be
-  done: after about one minute of tries, with the verdict as its message
-  in the activity feed. `warn` and `skip` do not hold a file back, and
+  of the library, stops the download, and replaces it with another release
+  (see [Failed downloads](#failed-downloads-and-the-blocklist)), whatever
+  `VERIFY_AUTO_REGRAB` says: the fake never reached the library, so there
+  is nothing a person must look at first. `warn` and `skip` do not hold a file back, and
   nothing is checked when verification is off. A dismissed verdict lets a
   later import of the download through.
   - Arr mode cannot hold a file back, because Sonarr and Radarr import it
@@ -285,7 +408,9 @@ polling Sonarr and Radarr, which see nothing of a native import.
 Rules for a hook:
 
 - Before-import hooks run in sequence. The first error stops the import.
-  An error that wraps `importer.ErrRetryLater` keeps the file pending.
+  An error that wraps `importer.ErrRetryLater` keeps the file pending. One
+  that wraps `importer.ErrBadRelease` (`importer.BadRelease`) fails the
+  whole download, which is then replaced.
 - After-import hooks run on the import loop, before the Jellyfin refresh,
   and must return quickly. A hook that moves or renames the file must
   update the store (`Store().Put/Forget`).
@@ -298,8 +423,10 @@ Rules for a hook:
 | `POST /api/grab` | The same request. In native mode the result has `"via": "roarr"`. |
 | `GET /api/activity` | Adds rows with `"source": "roarr"` and `id` `roarr:<hash>`. TV rows have a `watch` object for each episode, in the same format as watch-first jobs. |
 | `DELETE /api/activity/roarr:<hash>` | Removes the torrent and its data from qBittorrent and forgets the job. Library files stay, because they are hardlinks or copies. |
-| `GET /api/imports` | New. Shows the native settings, all jobs with the placement and errors of each file, the tracked titles and the imported files. `?title=tv:tmdb:1399` shows the files of one title. |
-| `GET /api/status` | Adds `importMode`. |
+| `GET /api/imports` | New. Shows the native settings, all jobs with the placement and errors of each file, the tracked titles, the imported files, the blocklist and the takeover progress. `?title=tv:tmdb:1399` shows the files of one title. |
+| `GET /api/status` | Adds `importMode`, `standalone`, `seerrAutoFetch` and `library` (`{"tv":"roarr"\|"sonarr","movie":"roarr"\|"radarr"}`: who keeps each kind). |
+| `GET /api/blocklist`, `DELETE /api/blocklist/{id}` | New. The blocklist. |
+| `GET /api/takeover`, `POST /api/takeover` | New. See [Taking over](#taking-over-from-sonarr-and-radarr). |
 | `GET /api/tv/tvdb/{tvdb}?tmdb=`, `GET /api/movie/tmdb/{tmdb}` | When Sonarr/Radarr are not configured, these use TMDB through Seerr. Before, they returned an error. |
 | `PUT /api/settings` | When the request has no `import` object, the stored import settings stay. |
 | `GET /api/library`, `GET /api/tv/{id}`, `GET /api/movie/{id}` | Without Sonarr/Radarr: titles from `library.json` (see [Native library](#native-library-no-sonarrradarr)). An unknown id gives 404. |
@@ -313,20 +440,14 @@ Native mode does not do these things yet:
 - **Quality profiles.** The native library has no quality profiles.
   Release choice uses the release preferences in Settings. A profile change
   gives an error.
-- **Mixed setups.** In native mode with Sonarr (or Radarr) configured, that
-  kind of title stays in Sonarr (or Radarr). Titles that roarr imported but
-  that Sonarr/Radarr do not know are not in the library list.
-- **UI text.** The UI still names Sonarr/Radarr in some menus and dialogs
-  (for example, "Remove from Sonarr", "recycle bin"). In the native
-  library these actions go to roarr. The UI has no `removeTorrent` option
-  yet; use the API.
+- **Mixed setups.** In native mode with Sonarr (or Radarr) configured and
+  no takeover, that kind of title stays in Sonarr (or Radarr). Titles that
+  roarr imported but that Sonarr/Radarr do not know are not in the library
+  list.
 - **Usenet.** Native mode handles torrents only. Use `arr` mode for usenet.
-- **Seerr requests.** **Approve** still makes Seerr send the request to
-  its Sonarr/Radarr. `SEERR_AUTO_FETCH` grabs through roarr (native),
-  but Seerr does not see the result as available until Jellyfin has it.
-- **Monitoring.** The missing search is periodic or manual. roarr has no
-  RSS sync, no calendar and no upgrade search (cutoff). When a grabbed
-  release fails, the next pass can grab the same release again.
+- **Seerr requests** that were approved more than 7 days ago are not
+  fetched. The missing search still gets their monitored episodes.
+- **Monitoring.** roarr has no RSS sync and no calendar.
 - **Seeding.** roarr does not remove torrents after seeding. Set ratio
   and time limits in qBittorrent. With `IMPORT_TRANSFER=move`, the torrent
   cannot seed the files that roarr moved.
@@ -335,13 +456,15 @@ Native mode does not do these things yet:
 - **Multi-part movies** (`CD1`/`CD2`): roarr imports only the largest
   part.
 - **Numbering differences.** TMDB episode order can be different from
-  scene/TVDB numbering. This applies to some anime and to shows with
-  changed season splits. With TMDB-only metadata, such files can go to the
-  wrong episode. Configure Sonarr for those shows, or check
-  `GET /api/imports`.
-- **Re-grab after a failed verification.** Re-grab removes the download
-  through Sonarr/Radarr, so it does not work for a native download. Remove
-  the download in the activity feed and get another release.
+  scene/TVDB numbering (some anime, changed season splits). A refresh
+  keeps the stored numbers when TMDB lacks an episode that has a file, and
+  then adds only episodes that air after the last stored one, numbered as
+  TMDB numbers them. A show first grabbed with TMDB-only metadata has no
+  TVDB numbers to keep, so its files can still go to the wrong episode;
+  check `GET /api/imports`.
+- **Several root folders.** A takeover keeps only titles inside `TV_ROOT`
+  and `MOVIES_ROOT`. Titles in other Sonarr or Radarr root folders are
+  skipped.
 - **Quality comparison** uses only the release name (resolution, source,
   proper/repack). It does not read the media (codec, bitrate, audio) and
   does not use custom formats.

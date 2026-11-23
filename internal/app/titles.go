@@ -250,6 +250,9 @@ func (a *App) SeriesByTvdb(ctx context.Context, tvdbID, tmdbID int) (*SeriesDeta
 	if it, ok := a.Library.FindTmdbShow(tmdbID); ok && tmdbID != 0 {
 		return a.Series(ctx, it.ID, false)
 	}
+	if id := a.nativeTitleID("tv", tvdbID, tmdbID); id != 0 {
+		return a.Series(ctx, id, false) // tracked, but not in the library list yet
+	}
 	key := fmt.Sprintf("tvdb:%d:%d", tvdbID, tmdbID)
 	a.detailMu.Lock()
 	if d, ok := a.details[key]; ok && d.series != nil && time.Since(d.at) < 10*time.Minute {
@@ -277,7 +280,7 @@ func (a *App) SeriesByTvdb(ctx context.Context, tvdbID, tmdbID int) (*SeriesDeta
 		if tv == nil {
 			return nil, fmt.Errorf("sonarr %w (or Seerr, for TMDB metadata)", ErrNotConfigured)
 		}
-		d := a.seriesFromSeerr(tv, tvdbID)
+		d := a.seriesFromSeerr(ctx, tv, tvdbID)
 		a.detailMu.Lock()
 		a.details[key] = cachedDetail{at: time.Now(), series: d}
 		a.detailMu.Unlock()
@@ -403,6 +406,9 @@ func movieDetail(m arr.Movie, inLib bool) *MovieDetail {
 func (a *App) MovieByTmdb(ctx context.Context, tmdbID int) (*MovieDetail, error) {
 	if it, ok := a.Library.FindTmdbMovie(tmdbID); ok {
 		return a.Movie(ctx, it.ID)
+	}
+	if id := a.nativeTitleID("movie", 0, tmdbID); id != 0 {
+		return a.Movie(ctx, id) // tracked, but not in the library list yet
 	}
 	c := a.C()
 	if c.Radarr == nil {

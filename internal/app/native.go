@@ -46,29 +46,45 @@ type Native struct {
 
 	searchMu  sync.Mutex
 	searching map[string]bool // title keys with a missing search running
+
+	blocklist *Blocklist
+	bad       chan string     // failed jobs for replaceLoop
+	replacing map[string]bool // hashes queued or being replaced (under mu)
+	takeover  TakeoverState   // under mu
+
+	// started is when this process began. Timeouts count from it at the
+	// earliest, so a job does not fail for time roarr was not running.
+	started time.Time
 }
 
 // NativeJob is one torrent roarr downloads and imports itself.
 type NativeJob struct {
-	Hash        string       `json:"hash"`
-	Release     string       `json:"release"`
-	Kind        string       `json:"kind"` // tv | movie
-	TitleKey    string       `json:"titleKey"`
-	TitleName   string       `json:"titleName"`
-	Href        string       `json:"href,omitempty"`
-	Poster      string       `json:"poster,omitempty"`
-	ArrID       int          `json:"arrId,omitempty"`
-	Wanted      [][2]int     `json:"wanted,omitempty"`
-	Watch       bool         `json:"watch,omitempty"`
-	AddedPaused bool         `json:"addedPaused,omitempty"`
-	Resumed     bool         `json:"resumed,omitempty"`
-	Planned     bool         `json:"planned,omitempty"`
-	Seen        bool         `json:"seen,omitempty"` // qBittorrent has listed it
-	Created     time.Time    `json:"created"`
-	CompletedAt time.Time    `json:"completedAt,omitempty"`
-	FirstReady  time.Time    `json:"firstReady,omitempty"`
-	State       string       `json:"state"` // waiting | downloading | importing | done | failed
-	Message     string       `json:"message,omitempty"`
+	Hash        string    `json:"hash"`
+	Release     string    `json:"release"`
+	Kind        string    `json:"kind"` // tv | movie
+	TitleKey    string    `json:"titleKey"`
+	TitleName   string    `json:"titleName"`
+	Href        string    `json:"href,omitempty"`
+	Poster      string    `json:"poster,omitempty"`
+	ArrID       int       `json:"arrId,omitempty"`
+	Wanted      [][2]int  `json:"wanted,omitempty"`
+	Watch       bool      `json:"watch,omitempty"`
+	AddedPaused bool      `json:"addedPaused,omitempty"`
+	Resumed     bool      `json:"resumed,omitempty"`
+	Planned     bool      `json:"planned,omitempty"`
+	Seen        bool      `json:"seen,omitempty"` // qBittorrent has listed it
+	Created     time.Time `json:"created"`
+	CompletedAt time.Time `json:"completedAt,omitempty"`
+	FirstReady  time.Time `json:"firstReady,omitempty"`
+	State       string    `json:"state"` // waiting | downloading | importing | done | failed | replaced
+	Message     string    `json:"message,omitempty"`
+	Indexer     string    `json:"indexer,omitempty"`
+	// Bad marks a failure that is the release's fault (dead, fake, nothing
+	// usable in it): roarr blocklists it and grabs another. A replaced job
+	// has State "replaced" and Replacement says what came instead.
+	Bad         bool         `json:"bad,omitempty"`
+	Replacement string       `json:"replacement,omitempty"`
+	ProgressAt  time.Time    `json:"progressAt,omitempty"` // when data last arrived
 	QState      string       `json:"qbitState,omitempty"`
 	Progress    float64      `json:"progress"`
 	Speed       int64        `json:"speed"`
@@ -131,7 +147,8 @@ func (f NativeFile) waitingForSubs() bool {
 
 func newNative(a *App, dir string) *Native {
 	n := &Native{app: a, path: filepath.Join(dir, "native.json"), jobs: map[string]*NativeJob{}, kick: make(chan struct{}, 1),
-		refreshAt: map[string]time.Time{}, refreshPending: map[string]bool{}, searching: map[string]bool{}}
+		refreshAt: map[string]time.Time{}, refreshPending: map[string]bool{}, searching: map[string]bool{},
+		blocklist: openBlocklist(dir), bad: make(chan string, 64), replacing: map[string]bool{}, started: time.Now()}
 	st, err := importer.OpenStore(filepath.Join(dir, "library.json"))
 	if err != nil {
 		// Never overwrite a file we could not read: run from memory.
@@ -262,7 +279,7 @@ func (n *Native) grab(ctx context.Context, g GrabRequest) (GrabResult, error) {
 		return GrabResult{}, errors.New("qBittorrent took the release but roarr could not learn its info-hash, so it cannot import it")
 	}
 	n.Track(NativeJob{Hash: hash, Release: g.Release.Title, Kind: tg.Title.Kind, TitleKey: tg.Title.Key(), TitleName: tg.Title.Title,
-		Href: tg.Href, Poster: tg.Poster, ArrID: tg.ArrID, Wanted: tg.Wanted, Watch: watch, AddedPaused: watch})
+		Href: tg.Href, Poster: tg.Poster, ArrID: tg.ArrID, Wanted: tg.Wanted, Watch: watch, AddedPaused: watch, Indexer: g.Release.Indexer})
 	n.forgetShows()
 	res := GrabResult{OK: true, Via: "roarr", Hash: hash, WatchFirst: watch, Message: "Sent to qBittorrent; roarr imports it into the library when it finishes."}
 	libID := tg.ArrID
@@ -363,8 +380,9 @@ func (n *Native) tick(ctx context.Context) {
 	n.mu.Lock()
 	var active []*NativeJob
 	for _, j := range n.jobs {
-		if j.State == "done" || j.State == "failed" {
-			if time.Since(j.Created) > 7*24*time.Hour {
+		if j.final() {
+			unresolved := j.Bad && j.Replacement == "" // its torrent is still there
+			if time.Since(j.Created) > 7*24*time.Hour && !unresolved {
 				delete(n.jobs, j.Hash)
 			}
 			continue
@@ -378,9 +396,26 @@ func (n *Native) tick(ctx context.Context) {
 			changed = true
 		}
 	}
+	// Every failed release not replaced yet is offered again, also one
+	// that failed before a restart or whose replacement waited for a search.
+	n.mu.Lock()
+	for _, j := range n.jobs {
+		if j.State == "failed" && j.Bad && j.Replacement == "" && !n.replacing[j.Hash] {
+			select {
+			case n.bad <- j.Hash:
+				n.replacing[j.Hash] = true
+			default: // the queue is full: the next tick offers it again
+			}
+		}
+	}
+	n.mu.Unlock()
 	if changed {
 		n.save()
 	}
+}
+
+func (j *NativeJob) final() bool {
+	return j.State == "done" || j.State == "failed" || j.State == "replaced"
 }
 
 // step advances one job; it returns true when persisted state changed.
@@ -396,11 +431,19 @@ func (n *Native) step(ctx context.Context, c *Clients, j *NativeJob) bool {
 		if j.Seen {
 			return n.fail(j, "the torrent was removed from qBittorrent before everything was imported")
 		}
-		return n.failAfter(j, 10*time.Minute, "the torrent never appeared in qBittorrent")
+		return n.failAfter(j, 10*time.Minute, "the torrent never appeared in qBittorrent", true)
 	}
 	t := ts[0]
 	files, err := c.QBit.Files(qctx, j.Hash)
-	n.set(j, func() { j.Seen, j.QState, j.Progress, j.Speed, j.Size = true, t.State, t.Progress, t.DLSpeed, t.Size })
+	n.set(j, func() {
+		if t.Progress > j.Progress || j.ProgressAt.IsZero() {
+			j.ProgressAt = time.Now()
+		}
+		j.Seen, j.QState, j.Progress, j.Speed, j.Size = true, t.State, t.Progress, t.DLSpeed, t.Size
+	})
+	if t.Progress < 1 && strings.HasPrefix(t.State, "stalledDL") && n.since(j.ProgressAt) > stallAfter {
+		return n.failRelease(j, fmt.Sprintf("no data arrived for %s: nobody seeds this release", stallAfter))
+	}
 	if err != nil || len(files) == 0 {
 		// A magnet has no file list until peers send the metadata, and a
 		// stopped torrent never asks for it.
@@ -408,7 +451,7 @@ func (n *Native) step(ctx context.Context, c *Clients, j *NativeJob) bool {
 			_ = c.QBit.Start(qctx, j.Hash)
 		}
 		n.set(j, func() { j.Message = "waiting for torrent metadata from peers" })
-		return n.failAfter(j, 30*time.Minute, "no peer ever sent the torrent's metadata")
+		return n.failAfter(j, 30*time.Minute, "no peer ever sent the torrent's metadata", true)
 	}
 	if !j.Planned {
 		n.plan(qctx, c, j, files)
@@ -454,7 +497,7 @@ func (n *Native) step(ctx context.Context, c *Clients, j *NativeJob) bool {
 		}
 	}
 	switch {
-	case !j.Planned || j.State == "failed":
+	case !j.Planned || j.final():
 	case len(j.Archives) > 0 && !j.Unpacked:
 		j.State = "downloading"
 	case pending == 0 && failed > 0:
@@ -490,12 +533,34 @@ func (n *Native) fail(j *NativeJob, msg string) bool {
 	return true
 }
 
-func (n *Native) failAfter(j *NativeJob, d time.Duration, msg string) bool {
-	if time.Since(j.Created) < d {
+// failRelease fails a job because of the release itself; tick then
+// blocklists it and grabs another (replace).
+func (n *Native) failRelease(j *NativeJob, msg string) bool {
+	n.set(j, func() { j.State, j.Message, j.Bad = "failed", msg, true })
+	return true
+}
+
+func (n *Native) failAfter(j *NativeJob, d time.Duration, msg string, bad bool) bool {
+	if n.since(j.Created) < d {
 		return false
+	}
+	if bad {
+		return n.failRelease(j, msg)
 	}
 	return n.fail(j, msg)
 }
+
+// since is the time since t, but at most the time this process has run.
+func (n *Native) since(t time.Time) time.Duration {
+	if t.Before(n.started) {
+		t = n.started
+	}
+	return time.Since(t)
+}
+
+// stallAfter is how long a started torrent may receive nothing before
+// roarr gives up on the release.
+var stallAfter = time.Hour
 
 // plan maps the torrent's files to placements, decides what to skip and
 // sets file priorities accordingly. A release that holds no video but ZIP
@@ -566,7 +631,7 @@ func (n *Native) plan(ctx context.Context, c *Clients, j *NativeJob, files []qbi
 		j.Archives, j.Watch = archives, false
 		j.Message = "the release is packed in ZIP archives; roarr unpacks them when the download is complete"
 	case len(nf) == 0:
-		j.State, j.Message = "failed", "nothing in this download matches "+title.Title
+		j.State, j.Message, j.Bad = "failed", "nothing in this download matches "+title.Title, true
 		for _, f := range files {
 			if importer.IsUnsupportedArchive(f.Name) {
 				j.Message += " (roarr cannot unpack RAR or 7-Zip archives)"
@@ -644,7 +709,7 @@ func (n *Native) unpack(j *NativeJob, t qbit.Torrent) bool {
 		names, err := importer.Unzip(p, dir, importer.UnpackLimit(st.Size()))
 		if err != nil {
 			n.set(j, func() { j.UnpackDirs = dirs })
-			return n.fail(j, "could not unpack "+path.Base(rel)+": "+err.Error())
+			return n.failRelease(j, "could not unpack "+path.Base(rel)+": "+err.Error())
 		}
 		base := path.Join(path.Dir(rel), importer.UnpackDir(j.Hash))
 		for _, name := range names {
@@ -668,7 +733,7 @@ func (n *Native) unpack(j *NativeJob, t qbit.Torrent) bool {
 		j.Files = []NativeFile{}
 	}
 	if len(nf) == 0 {
-		j.State, j.Message = "failed", "nothing in the archives matches "+title.Title
+		j.State, j.Message, j.Bad = "failed", "nothing in the archives matches "+title.Title, true
 	}
 	return true
 }
@@ -832,8 +897,11 @@ func (n *Native) importReady(ctx context.Context, j *NativeJob, t qbit.Torrent, 
 	changed := 0
 	for _, i := range ready {
 		n.mu.Lock()
-		f := j.Files[i]
+		f, failed := j.Files[i], j.State == "failed"
 		n.mu.Unlock()
+		if failed {
+			break
+		}
 		p := f.Placement
 		p.Video.Path = n.resolve(t, p.Video.Rel)
 		p.Subtitles = finishedSubs(f)
@@ -844,6 +912,11 @@ func (n *Native) importReady(ctx context.Context, j *NativeJob, t qbit.Torrent, 
 		switch {
 		case errors.Is(err, importer.ErrRetryLater):
 			ff.Note = err.Error()
+		case errors.Is(err, importer.ErrBadRelease):
+			// The whole download is no good: stop it now rather than
+			// download the rest of a fake pack.
+			ff.Error = err.Error()
+			j.State, j.Message, j.Bad = "failed", err.Error(), true
 		case err != nil:
 			// The file may not be visible yet (qBittorrent still moving it
 			// out of its incomplete folder): retry for about a minute.
@@ -989,7 +1062,7 @@ func (n *Native) refreshTitle(t importer.Title, arrID int, full bool) {
 func (n *Native) activity() []ActivityItem {
 	var out []ActivityItem
 	for _, j := range n.Jobs() {
-		if j.State == "done" {
+		if j.State == "done" || j.State == "replaced" {
 			continue
 		}
 		it := ActivityItem{ID: "roarr:" + j.Hash, Source: "roarr", Kind: j.Kind, Title: j.TitleName, Release: j.Release, Poster: j.Poster, Href: j.Href,
@@ -997,6 +1070,12 @@ func (n *Native) activity() []ActivityItem {
 		it.SizeLeft = int64(float64(j.Size) * (1 - j.Progress))
 		if j.Message != "" {
 			it.Messages = append(it.Messages, j.Message)
+		}
+		switch {
+		case j.Replacement != "":
+			it.Messages = append(it.Messages, j.Replacement)
+		case j.Bad:
+			it.Messages = append(it.Messages, "Blocklisting it and looking for another release…")
 		}
 		for _, f := range j.Files {
 			if f.Error != "" {

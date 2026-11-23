@@ -72,6 +72,8 @@ func New(ctx context.Context, store *config.Store, dataDir string) *App {
 	go a.Verify.loop(ctx)
 	go a.Native.loop(ctx)
 	go a.Native.missingLoop(ctx)
+	go a.Native.airLoop(ctx)
+	go a.Native.replaceLoop(ctx)
 	go a.sweepLoop(ctx)
 	go a.seerrLoop(ctx)
 	return a
@@ -89,10 +91,10 @@ func (a *App) importHooks() {
 
 func (a *App) rebuild(s config.Settings) {
 	c := &Clients{}
-	if s.Sonarr.URL != "" {
+	if s.Sonarr.URL != "" && !s.Import.OwnsLibrary() {
 		c.Sonarr = arr.NewSonarr(s.Sonarr.URL, s.Sonarr.APIKey)
 	}
-	if s.Radarr.URL != "" {
+	if s.Radarr.URL != "" && !s.Import.OwnsLibrary() {
 		c.Radarr = arr.NewRadarr(s.Radarr.URL, s.Radarr.APIKey)
 	}
 	if s.Prowlarr.URL != "" {
@@ -170,7 +172,7 @@ func discoverOnce(orig *Clients, s config.Settings) (*Clients, bool) {
 	cp := *orig
 	c := &cp
 	changed, retry := false, false
-	if c.Prowlarr != nil && (c.Sonarr == nil || c.Radarr == nil) {
+	if c.Prowlarr != nil && (c.Sonarr == nil || c.Radarr == nil) && !s.Import.OwnsLibrary() {
 		apps, err := c.Prowlarr.Applications(ctx)
 		if err != nil {
 			retry = true

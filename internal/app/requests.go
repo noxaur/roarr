@@ -133,8 +133,16 @@ func (a *App) RequestAction(ctx context.Context, id int, action string) error {
 	return fmt.Errorf("unknown action %q", action)
 }
 
+// SeerrAutoFetch reports whether roarr grabs approved Seerr requests: when
+// SEERR_AUTO_FETCH is on, and always when roarr runs the library, because
+// Seerr then has no Sonarr or Radarr to send them to.
+func (a *App) SeerrAutoFetch() bool {
+	s := a.Settings.Get()
+	return s.Behaviour.SeerrAutoFetch || s.Import.OwnsLibrary()
+}
+
 // seerrLoop grabs newly approved Seerr requests with roarr's fast search
-// when SEERR_AUTO_FETCH is on.
+// (see SeerrAutoFetch).
 func (a *App) seerrLoop(ctx context.Context) {
 	path := filepath.Join(a.DataDir, "seerr-handled.json")
 	handled := map[int]time.Time{}
@@ -149,7 +157,7 @@ func (a *App) seerrLoop(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		if !a.Settings.Get().Behaviour.SeerrAutoFetch {
+		if !a.SeerrAutoFetch() {
 			continue
 		}
 		c := a.C()
@@ -177,6 +185,12 @@ func (a *App) seerrPass(ctx context.Context, s *seerr.Client, handled map[int]ti
 		return false
 	}
 	changed := false
+	for id, at := range handled {
+		if time.Since(at) > 30*24*time.Hour { // far older than any request a pass looks at
+			delete(handled, id)
+			changed = true
+		}
+	}
 	for _, r := range reqs {
 		if _, done := handled[r.ID]; done || r.Media.Status >= 4 || time.Since(r.CreatedAt) > 7*24*time.Hour {
 			continue

@@ -9,7 +9,7 @@ import { bytes, epCode, pad, pct } from "@/lib/format";
 import { useGrabber, useLivePlan, type GrabOpts } from "@/lib/releases";
 import { useRouter } from "@/lib/router";
 import { usePointerSelect } from "@/lib/select";
-import { useStore } from "@/lib/store";
+import { useKeeper, useStore } from "@/lib/store";
 import { baseName, jobTag, useConverting } from "@/lib/transcode";
 import { forEpisode, isBlocking, isFlagged } from "@/lib/verify";
 import { useSearch } from "@/lib/useSearch";
@@ -19,7 +19,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuLabel, Con
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Bar, Notice, SameWidth, Spec, State } from "@/components/kit";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useConfirm } from "@/components/Confirm";
+import { TORRENT_OPTION, useConfirm } from "@/components/Confirm";
 import { ManageMenu, MonitorToggle, RowMenu, SelectionBar } from "@/components/Manage";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
 import { VerdictBadge, useVerdictActions } from "@/components/Verdict";
@@ -73,6 +73,7 @@ function epState(e: EpisodeDetail): "have" | "live" | "miss" | "unaired" {
 
 function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void; prefs: { prefetch: boolean; watchFirst: boolean } }) {
   const { reloadActivity, reloadLibrary, verify, activity } = useStore();
+  const { app, roarr } = useKeeper("tv");
   const { navigate, search: params } = useRouter();
   const seasons = useMemo(() => d.seasons.filter((s) => s.episodes.length > 0 || d.synthetic), [d]);
   const allEps = useMemo(() => seasons.flatMap((s) => s.episodes), [seasons]);
@@ -345,14 +346,17 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     if (!eps.length) return;
     const a = await confirm({
       title: `Delete ${describe(eps)} from disk?`,
-      body: <p>Frees {bytes(sizeOf(eps))}. Sonarr uses its recycle bin when one is set up; otherwise the files are gone.</p>,
-      options: [{ id: "unmonitor", label: "Stop monitoring", hint: "so Sonarr does not download them again", checked: true }],
+      body: <p>Frees {bytes(sizeOf(eps))}. {roarr ? "Deleted files are gone; there is no recycle bin." : `${app} uses its recycle bin when one is set up; otherwise the files are gone.`}</p>,
+      options: [
+        { id: "unmonitor", label: "Stop monitoring", hint: `so ${app} does not download them again`, checked: true },
+        ...(roarr ? [TORRENT_OPTION] : []),
+      ],
       confirm: eps.length === 1 ? "Delete file" : `Delete ${eps.length} files`,
       danger: true,
     });
     if (!a) return;
     const ok = await run(`Deleting ${describe(eps)}…`, async () => {
-      const res = await api.episodes(d.id, "delete", eps.map((e) => e.id));
+      const res = await api.episodes(d.id, "delete", eps.map((e) => e.id), a.checked.torrent);
       if (a.checked.unmonitor) await api.episodes(d.id, "unmonitor", eps.map((e) => e.id));
       return res;
     });
@@ -444,8 +448,8 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
           </>
         )}
         {lib && (
-          <C.Item onSelect={() => episodesDo("search", [e.id], "Asking Sonarr…")}>
-            <Radar /> Sonarr search
+          <C.Item onSelect={() => episodesDo("search", [e.id], `Asking ${app}…`)}>
+            <Radar /> {app} search
           </C.Item>
         )}
         <C.Sep />
@@ -573,7 +577,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
             title={d.title}
             year={d.year}
             meta={[years, d.anime && "anime", d.runtime && `${d.runtime} min`, lib && d.sizeOnDisk ? bytes(d.sizeOnDisk) : null]}
-            state={!d.inLibrary ? <State tone="none">Not in Sonarr</State> : !d.monitored ? <State tone="none">Not monitored</State> : undefined}
+            state={!d.inLibrary ? <State tone="none">Not in {app}</State> : !d.monitored ? <State tone="none">Not monitored</State> : undefined}
             actions={
               lib && (
                 <ManageMenu kind="tv" id={d.id} title={d.title} monitored={d.monitored} profileId={d.qualityProfileId} path={d.path} onChanged={changed}>
@@ -655,8 +659,8 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
                           <DropdownMenuItem disabled={haveS === 0} onSelect={() => replace(aired.map((e) => e.id))}>
                             <RefreshCw /> Replace the season
                           </DropdownMenuItem>
-                          <DropdownMenuItem disabled={seasonMissing.length === 0} onSelect={() => episodesDo("search", seasonMissing, "Asking Sonarr…")}>
-                            <Radar /> Sonarr search
+                          <DropdownMenuItem disabled={seasonMissing.length === 0} onSelect={() => episodesDo("search", seasonMissing, `Asking ${app}…`)}>
+                            <Radar /> {app} search
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem variant="destructive" disabled={haveS === 0} onSelect={() => deleteFiles(s.episodes.map((e) => e.id))}>

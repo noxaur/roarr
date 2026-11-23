@@ -25,14 +25,15 @@ function href(r: RequestItem) {
 }
 
 export function RequestsPage() {
-  const { reloadRequests, reloadActivity, reloadLibrary } = useStore();
+  const { reloadRequests, reloadActivity, reloadLibrary, appStatus } = useStore();
   const [filter, setFilter] = useState<Filter>("pending");
   const [items, setItems] = useState<RequestItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [configured, setConfigured] = useState(true);
   const [busy, setBusy] = useState<Record<number, string>>({});
   // When Seerr auto-fetch is on, approving already triggers a grab.
-  const [autoFetch, setAutoFetch] = useState(false);
+  const [rawAutoFetch, setAutoFetch] = useState(false);
+  const autoFetch = appStatus?.seerrAutoFetch ?? rawAutoFetch;
 
   const load = () =>
     api

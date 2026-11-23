@@ -406,3 +406,39 @@ func TestSearchMissing(t *testing.T) {
 	_, _ = n.Store().UpdateTitle(show.Key(), func(x *importer.Title) { x.Unmonitored = true })
 	n.searchAllMissing(ctx)
 }
+
+func TestRefreshKeepsNumberingOfFilesTMDBDoesNotList(t *testing.T) {
+	a, _, _ := nativeLibraryApp(t)
+	n := a.Native
+	// TVDB: one season of 4. TMDB: two seasons of 2, plus a new episode.
+	show := importer.Title{Kind: "tv", Title: "Split", TmdbID: 9, Episodes: []importer.Episode{
+		{Season: 1, Number: 1, AirDate: "2020-01-01"}, {Season: 1, Number: 2, AirDate: "2020-01-08"},
+		{Season: 1, Number: 3, AirDate: "2020-01-15"}, {Season: 1, Number: 4, AirDate: "2020-01-22"}}}
+	_ = n.Store().PutTitle(show)
+	_ = n.Store().Put(importer.FileRecord{TitleKey: show.Key(), Season: 1, Episodes: []int{3}, Path: "/tv/Split/Season 01/Split - S01E03.mkv"})
+	tmdb := []importer.Episode{{Season: 1, Number: 1, AirDate: "2020-01-01"}, {Season: 1, Number: 2, AirDate: "2020-01-08"},
+		{Season: 2, Number: 1, AirDate: "2020-01-15"}, {Season: 2, Number: 2, AirDate: "2020-01-22"}, {Season: 2, Number: 3, AirDate: "2021-01-01"}}
+	got := n.keepNumbering(show, tmdb)
+	if len(got) != 5 || got[2] != show.Episodes[2] || got[4] != tmdb[4] {
+		t.Fatalf("numbering not kept: %+v", got)
+	}
+	// When every file is still listed, the new list is taken as it is.
+	_ = n.Store().Forget("/tv/Split/Season 01/Split - S01E03.mkv")
+	if got := n.keepNumbering(show, tmdb); len(got) != len(tmdb) || got[2] != tmdb[2] {
+		t.Fatalf("fresh list not taken: %+v", got)
+	}
+}
+
+func TestKeepNumberingIgnoresSpecialsDatedAhead(t *testing.T) {
+	a, _, _ := nativeLibraryApp(t)
+	n := a.Native
+	show := importer.Title{Kind: "tv", Title: "Spec", TmdbID: 8, Episodes: []importer.Episode{
+		{Season: 1, Number: 1, AirDate: "2020-01-01"}, {Season: 0, Number: 1, AirDate: "2099-12-25"}}}
+	_ = n.Store().PutTitle(show)
+	_ = n.Store().Put(importer.FileRecord{TitleKey: show.Key(), Season: 1, Episodes: []int{1}, Path: "/tv/Spec/a.mkv"})
+	tmdb := []importer.Episode{{Season: 1, Number: 2, AirDate: "2020-01-01"}, {Season: 2, Number: 1, AirDate: "2021-06-01"}}
+	got := n.keepNumbering(show, tmdb)
+	if len(got) != 3 || got[2].Season != 2 {
+		t.Fatalf("a special dated ahead hid a new episode: %+v", got)
+	}
+}

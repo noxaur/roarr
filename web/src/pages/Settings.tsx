@@ -23,7 +23,7 @@ const SERVICES: { key: ServiceKey; name: string; env: string; hint: string; user
   { key: "radarr", name: "Radarr", env: "RADARR", hint: "movies, found via Prowlarr if empty" },
   { key: "seerr", name: "Seerr", env: "SEERR", hint: "optional, TMDB search and requests" },
   { key: "jellyfin", name: "Jellyfin", env: "JELLYFIN", hint: "optional, sign-in and library refresh" },
-  { key: "qbittorrent", name: "qBittorrent", env: "QBIT", hint: "optional, watch-first packs and download anyway", user: true },
+  { key: "qbittorrent", name: "qBittorrent", env: "QBIT", hint: "optional, watch-first packs, download anyway and roarr imports", user: true },
 ];
 const RES_ORDER = [2160, 1080, 720, 576, 480];
 const resName = (r: number) => (r === 2160 ? "4K" : `${r}p`);
@@ -48,6 +48,7 @@ export function SettingsPage() {
   const edited = useRef(false);
   const [status, setStatus] = useState<Record<string, ServiceStatus>>({});
   const [version, setVersion] = useState("");
+  const [standalone, setStandalone] = useState(false);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [tab, setTab] = useState(() => location.hash.slice(1) || "picking");
@@ -59,6 +60,7 @@ export function SettingsPage() {
       .then((r) => {
         setStatus(r.services);
         setVersion(r.version);
+        setStandalone(r.standalone);
       })
       .catch(() => {})
       .finally(() => setChecking(false));
@@ -82,6 +84,16 @@ export function SettingsPage() {
     f(next);
     edited.current = true;
     setS(next);
+  };
+  // A takeover changes the import settings on the server; bring them in without losing other edits.
+  const reloadImport = async () => {
+    const r = await api.settings();
+    put("settings", r);
+    setLocked(r.locked);
+    const sync = (x: Settings | null) => x && { ...x, import: { ...x.import, mode: r.settings.import.mode, standalone: r.settings.import.standalone } };
+    setSaved(sync);
+    setS(sync);
+    loadStatus(true);
   };
   const save = async () => {
     setSaving(true);
@@ -208,8 +220,8 @@ export function SettingsPage() {
               Prefetch
             </Toggle>
           </Field>
-          <Field label="Seerr requests" hint="Fetch approved requests automatically. Turn on Seerr's prevent-search for its Sonarr/Radarr servers to avoid double grabs.">
-            <Toggle checked={b.seerrAutoFetch} disabled={locked.SEERR_AUTO_FETCH} onChange={(v) => update((x) => (x.behaviour.seerrAutoFetch = v))}>
+          <Field label="Seerr requests" hint={standalone ? "Always on: roarr runs the library, so Seerr has no Sonarr or Radarr to send requests to." : "Fetch approved requests automatically. Turn on Seerr's prevent-search for its Sonarr/Radarr servers to avoid double grabs."}>
+            <Toggle checked={b.seerrAutoFetch || standalone} disabled={locked.SEERR_AUTO_FETCH || standalone} onChange={(v) => update((x) => (x.behaviour.seerrAutoFetch = v))}>
               Get approved requests
             </Toggle>
           </Field>
@@ -222,7 +234,7 @@ export function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="import" className="space-y-1">
-          <ImportTab s={s} locked={locked} update={update} />
+          <ImportTab s={s} locked={locked} update={update} onTakeover={reloadImport} />
         </TabsContent>
 
         <TabsContent value="checks" className="space-y-1">

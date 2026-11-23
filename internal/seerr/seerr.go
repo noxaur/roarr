@@ -129,6 +129,12 @@ type TV struct {
 	Keywords []struct {
 		Name string `json:"name"`
 	} `json:"keywords"`
+	// LastEpisodeToAir is the newest episode that aired; nil before the
+	// first one.
+	LastEpisodeToAir *struct {
+		SeasonNumber  int `json:"seasonNumber"`
+		EpisodeNumber int `json:"episodeNumber"`
+	} `json:"lastEpisodeToAir"`
 	MediaInfo *MediaInfo `json:"mediaInfo"`
 }
 

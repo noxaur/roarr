@@ -335,6 +335,14 @@ func (c *Client) AddTorrent(ctx context.Context, a Add) error {
 	return nil
 }
 
+// DefaultSavePath is where qBittorrent saves torrents added without a
+// save path.
+func (c *Client) DefaultSavePath(ctx context.Context) (string, error) {
+	var out string
+	err := c.do(ctx, http.MethodGet, "/api/v2/app/defaultSavePath", nil, nil, "", &out)
+	return strings.TrimSpace(out), err
+}
+
 // Start resumes torrents (qBittorrent 5 renamed resume -> start).
 func (c *Client) Start(ctx context.Context, hash string) error {
 	err := c.do(ctx, http.MethodPost, "/api/v2/torrents/start", url.Values{"hashes": {strings.ToLower(hash)}}, nil, "", nil)

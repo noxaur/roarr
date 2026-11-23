@@ -8,6 +8,7 @@ import { bytes, fold } from "@/lib/format";
 import { libraryHref } from "@/lib/rank";
 import { Link, useRouter } from "@/lib/router";
 import { usePointerSelect } from "@/lib/select";
+import { ARR_KEEPERS, appNames } from "@/lib/keeper";
 import { keyIsBusy, useShell } from "@/lib/shell";
 import { isActive, useStore } from "@/lib/store";
 import { done } from "@/lib/undo";
@@ -31,7 +32,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useConfirm } from "@/components/Confirm";
+import { TORRENT_OPTION, useConfirm } from "@/components/Confirm";
 import { Bar, CellStrip, Dot, Empty, Kbd, Notice, SameWidth, libraryCells, type Tone } from "@/components/kit";
 import { SelectionBar } from "@/components/Manage";
 import { PosterImg } from "@/components/Poster";
@@ -58,7 +59,6 @@ const SORTS: [Sort, string][] = [
 const MIN: Record<Size, number> = { s: 124, m: 164, l: 224 };
 
 const missingOf = (it: LibraryItem) => Math.max(0, it.total - it.have);
-const appOf = (it: LibraryItem) => (it.kind === "tv" ? "Sonarr" : "Radarr");
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /** A setting remembered in this browser. */
@@ -105,7 +105,9 @@ function usePinned(): [Set<string>, (next: Set<string>) => void] {
 }
 
 export function Home({ kind }: { kind?: Kind }) {
-  const { library, libraryLoaded, libraryErrors, activity, reloadLibrary, patchLibrary, reloadActivity } = useStore();
+  const { library, libraryLoaded, libraryErrors, activity, reloadLibrary, patchLibrary, reloadActivity, appStatus } = useStore();
+  const keepers = appStatus?.library ?? ARR_KEEPERS;
+  const appsOf = (xs: LibraryItem[]) => appNames(keepers, xs.map((i) => i.kind));
   const { navigate, search } = useRouter();
   const { openSearch, toggleDownloads, openShortcuts } = useShell();
   const confirm = useConfirm();
@@ -248,7 +250,7 @@ export function Home({ kind }: { kind?: Kind }) {
   const command = (xs: LibraryItem[], name: "search" | "refresh") => {
     if (!xs.length) return;
     run(
-      name === "search" ? `Asking ${xs.length === 1 ? appOf(xs[0]) : "Sonarr and Radarr"} to search…` : "Asking for a rescan…",
+      name === "search" ? `Asking ${appsOf(xs)} to search…` : "Asking for a rescan…",
       () => Promise.all(xs.map((it) => api.titleCommand(it.kind, it.id, name))),
       name === "search" ? `Search started for ${xs.length === 1 ? xs[0].title : plural(xs.length, "title")}` : "Rescan started",
     ).then((ok) => ok && name === "refresh" && setTimeout(() => reloadLibrary(true), 2500));
@@ -259,15 +261,15 @@ export function Home({ kind }: { kind?: Kind }) {
     const one = xs.length === 1 ? xs[0] : null;
     const a = await confirm({
       title: one ? `Remove ${one.title}?` : `Remove ${plural(xs.length, "title")}?`,
-      body: <p>{one ? appOf(one) : "Sonarr and Radarr"} forget about {one ? "it" : "them"}. Getting something later adds {one ? "it" : "them"} back.</p>,
-      options: [{ id: "files", label: "Delete the files from disk too" }],
-      confirm: one ? `Remove from ${appOf(one)}` : `Remove ${xs.length}`,
+      body: <p>{appsOf(xs)} forget{appsOf(xs).includes(" and ") ? "" : "s"} about {one ? "it" : "them"}. Getting something later adds {one ? "it" : "them"} back.</p>,
+      options: [{ id: "files", label: "Delete the files from disk too" }, ...(xs.some((i) => keepers[i.kind] === "roarr") ? [TORRENT_OPTION] : [])],
+      confirm: one ? `Remove from ${appsOf(xs)}` : `Remove ${xs.length}`,
       danger: true,
     });
     if (!a) return;
     const ok = await run(
       `Removing ${one ? one.title : plural(xs.length, "title")}…`,
-      () => Promise.all(xs.map((it) => api.removeTitle(it.kind, it.id, a.checked.files))),
+      () => Promise.all(xs.map((it) => api.removeTitle(it.kind, it.id, a.checked.files, a.checked.files && a.checked.torrent))),
       a.checked.files ? "Removed, files deleted" : "Removed from the library",
     );
     if (ok) {
@@ -440,7 +442,7 @@ export function Home({ kind }: { kind?: Kind }) {
         </ContextMenuItem>
       )}
       <ContextMenuItem onSelect={() => command(menuTargets, "search")}>
-        <Radar /> {menuOne ? appOf(menuOne) : "Sonarr/Radarr"} search
+        <Radar /> {appsOf(menuTargets)} search
       </ContextMenuItem>
       <ContextMenuItem onSelect={() => command(menuTargets, "refresh")}>
         <FolderSync /> Rescan disk
@@ -462,7 +464,7 @@ export function Home({ kind }: { kind?: Kind }) {
       )}
       <ContextMenuSeparator />
       <ContextMenuItem variant="destructive" onSelect={() => remove(menuTargets)}>
-        <Trash2 /> {menuOne ? `Remove from ${appOf(menuOne)}` : `Remove ${menuTargets.length}`} <ContextMenuShortcut>⌫</ContextMenuShortcut>
+        <Trash2 /> {menuOne ? `Remove from ${appsOf(menuTargets)}` : `Remove ${menuTargets.length}`} <ContextMenuShortcut>⌫</ContextMenuShortcut>
       </ContextMenuItem>
     </>
   );
@@ -473,7 +475,7 @@ export function Home({ kind }: { kind?: Kind }) {
       <ContextMenuItem onSelect={openSearch}>
         <Search /> Find a title <ContextMenuShortcut>⌘K</ContextMenuShortcut>
       </ContextMenuItem>
-      <ContextMenuItem onSelect={() => run("Refreshing from Sonarr & Radarr…", () => reloadLibrary(true), "Library is up to date")}>
+      <ContextMenuItem onSelect={() => run(`Refreshing from ${appNames(keepers)}…`, () => reloadLibrary(true), "Library is up to date")}>
         <FolderSync /> Refresh library
       </ContextMenuItem>
       <ContextMenuSeparator />
@@ -653,7 +655,7 @@ export function Home({ kind }: { kind?: Kind }) {
                   "The library could not be loaded."
                 ) : library.length === 0 ? (
                   <>
-                    Nothing in Sonarr or Radarr yet. <Kbd>⌘K</Kbd> finds a title.
+                    Nothing in {appNames(keepers).replace(" and ", " or ")} yet. <Kbd>⌘K</Kbd> finds a title.
                   </>
                 ) : (
                   <>

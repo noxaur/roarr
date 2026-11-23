@@ -327,6 +327,9 @@ func (a *App) RemoveActivity(ctx context.Context, id string, blocklist bool) err
 			a.Watch.Remove(it.DownloadID)
 		}
 		if it.Source == "roarr" {
+			if blocklist {
+				a.Native.blocklist.Add(Blocked{Release: it.Release, Hash: it.DownloadID, Kind: it.Kind, Title: it.Title, Reason: "removed from the downloads by a person"})
+			}
 			a.Native.Remove(it.DownloadID)
 		}
 		return nil

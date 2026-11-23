@@ -1,13 +1,16 @@
-import { useEffect, useState } from "react";
-import { Pause, Play, Plus, X } from "lucide-react";
-import { api, type ImportsStatus, type NativeJob, type ScheduleWindow, type Settings, type TranscodeJob, type TranscodeStatus, type VerifyList } from "@/lib/api";
-import { bytes, pad, pct } from "@/lib/format";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronRight, Pause, Play, Plus, X } from "lucide-react";
+import { api, type Blocked, type ImportsStatus, type NativeJob, type ScheduleWindow, type Settings, type TakeoverPlan, type TakeoverState, type TranscodeJob, type TranscodeStatus, type VerifyList } from "@/lib/api";
+import { run } from "@/lib/actions";
+import { ago, bytes, pad, pct } from "@/lib/format";
 import { badPathPairs, setVerifyMode, verifyMode, type VerifyMode } from "@/lib/settings";
 import { baseName, holdText, isPending, newWindow, savedShare, WEEK } from "@/lib/transcode";
 import { outcome } from "@/lib/verify";
+import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { Field, LockedInput, Num, Segmented, Toggle } from "@/components/AdminFields";
 import { Bar, Dot, Figure, Notice, SameWidth, SectionHead, State, type Tone } from "@/components/kit";
+import { useConfirm } from "@/components/Confirm";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -58,10 +61,10 @@ const TRANSFERS = [
   ["move", "Move"],
 ] as const;
 
-export function ImportTab({ s, locked, update }: Edit) {
+export function ImportTab({ s, locked, update, onTakeover }: Edit & { onTakeover: () => void }) {
   const im = s.import ?? {};
   const native = im.mode === "native";
-  const [st] = usePoll(api.imports, 4000);
+  const [st, setSt] = usePoll(api.imports, 4000);
   const set = (f: (i: NonNullable<Settings["import"]>) => void) =>
     update((x) => {
       x.import ??= {};
@@ -94,13 +97,169 @@ export function ImportTab({ s, locked, update }: Edit) {
               <LockedInput label="Save to" mono locked={locked.QBIT_SAVE_PATH} value={im.savePath ?? ""} placeholder="client default" onChange={(v) => set((i) => (i.savePath = v))} />
             </div>
           </Field>
-          <Field label="Missing search" hint="How often roarr searches for monitored episodes and movies that are not on disk, and gets the best releases. Only for titles roarr tracks without Sonarr or Radarr. 0 turns it off.">
+          <Field label="Missing search" hint="How often roarr searches for monitored episodes and movies that are not on disk, and gets the best releases. Only for titles roarr keeps itself. New episodes are searched as they air either way. 0 turns the periodic search off.">
             <Num label="Missing search" min={0} unit="hours" value={im.missingSearchHours ?? 0} disabled={locked.MISSING_SEARCH_HOURS} onChange={(v) => set((i) => (i.missingSearchHours = v))} />
           </Field>
         </>
       )}
+      {st && <Takeover st={st} onDone={onTakeover} refresh={() => api.imports().then(setSt)} />}
       {st && st.mode === "native" && <ImportJobs st={st} />}
+      {st && (st.mode === "native" || (st.blocklist ?? []).length > 0) && <Blocklist items={st.blocklist ?? []} onRemoved={(id) => setSt({ ...st, blocklist: st.blocklist.filter((b) => b.id !== id) })} />}
     </>
+  );
+}
+
+// ---- Takeover ------------------------------------------------------------------
+
+const checkTone = (c: { ok: boolean; need: boolean }): Tone => (c.ok ? "have" : c.need ? "bad" : "miss");
+const nTitles = (n: number, w: string) => `${n.toLocaleString("en")} ${w}${n === 1 ? "" : "s"}`;
+
+function Takeover({ st, onDone, refresh }: { st: ImportsStatus; onDone: () => void; refresh: () => Promise<unknown> }) {
+  const confirm = useConfirm();
+  const { reloadLibrary, reloadStatus } = useStore();
+  const [plan, setPlan] = useState<TakeoverPlan | null>(null);
+  const t: TakeoverState = st.takeover;
+  const standalone = st.standalone;
+  const running = !!t?.running;
+  const finished = !!t?.finished && !running;
+
+  const loadPlan = useCallback(() => api.takeoverPlan().then(setPlan).catch(() => {}), []);
+  // Loaded when the tab opens and after a run: the server probes Sonarr, Radarr and qBittorrent for it.
+  useEffect(() => {
+    if (!standalone) loadPlan();
+  }, [standalone, running, loadPlan]);
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running) {
+      onDone();
+      reloadStatus();
+      reloadLibrary(true);
+    }
+    wasRunning.current = running;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
+
+  if (standalone && !running && !finished)
+    return <p className="meta mt-8 border-t py-4">roarr runs the library. Sonarr and Radarr are not used.</p>;
+  if (!standalone && !plan?.sonarr && !plan?.radarr && !running && !finished) return null;
+
+  const moving = [plan?.sonarr && `${nTitles(plan.sonarr.titles, "show")} from Sonarr`, plan?.radarr && `${nTitles(plan.radarr.titles, "movie")} from Radarr`].filter(Boolean).join(", ");
+
+  const start = async () => {
+    const a = await confirm({
+      title: "Take over from Sonarr and Radarr?",
+      body: (
+        <>
+          <p>roarr copies every series and movie, with its monitoring and files, into its own library. Nothing on disk moves.</p>
+          <p>Then roarr switches to its own imports and stops using Sonarr and Radarr. You can turn them off afterwards.</p>
+        </>
+      ),
+      confirm: "Take over",
+    });
+    if (!a) return;
+    if (await run("Starting the takeover…", () => api.startTakeover().then(setPlan))) refresh();
+  };
+
+  return (
+    <section className="mt-8">
+      <SectionHead title="Take over from Sonarr and Radarr" className="mb-2">
+        {running && <span className="font-mono text-[12px] text-live">running</span>}
+      </SectionHead>
+      {!standalone && plan && !running && (
+        <>
+          <p className="meta mb-3">{moving ? `Moves ${moving} into roarr.` : "Nothing to move."}</p>
+          {([["Sonarr", plan.sonarr], ["Radarr", plan.radarr]] as const).map(([name, src]) =>
+            src ? (
+              <div key={name} className="border-t py-3">
+                {src.error && <p className="mb-1 text-[12px] text-bad">{name}: {src.error}</p>}
+                {src.roots.map((r) => (
+                  <div key={r.path} className="grid grid-cols-[10px_minmax(0,1fr)] items-center gap-x-3 font-mono text-[12px]">
+                    <Dot tone={r.ok ? "have" : "bad"} />
+                    <span className="truncate" title={r.local ? `${r.path} is ${r.local} in roarr` : `${r.path} is not visible to roarr`}>
+                      <span className="text-muted-foreground">{name}</span> {r.path} <span className="text-muted-foreground">{r.local ? `→ ${r.local}` : "→ not found in roarr"}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null,
+          )}
+          {plan.checks.map((c) => (
+            <div key={c.id} className="grid grid-cols-[10px_minmax(0,1fr)] items-start gap-x-3 border-t py-3">
+              <Dot tone={checkTone(c)} className="mt-1.5" />
+              <div className="min-w-0">
+                <div className="text-[14px]">{c.label}</div>
+                {!c.ok && c.hint && <div className={cn("mt-1 text-[12px]", c.need ? "text-bad" : "text-miss")}>{c.hint}</div>}
+              </div>
+            </div>
+          ))}
+          <div className="border-t pt-4">
+            <Button disabled={!plan.ready} onClick={start}>
+              Take over
+            </Button>
+          </div>
+        </>
+      )}
+      {running && (
+        <p className="border-t py-3 font-mono text-[12px] text-muted-foreground tabular">
+          {t.step || "Starting"}: {nTitles(t.shows, "show")}, {nTitles(t.movies, "movie")}, {nTitles(t.files, "file")}
+        </p>
+      )}
+      {finished && <TakeoverResult t={t} />}
+    </section>
+  );
+}
+
+function TakeoverResult({ t }: { t: TakeoverState }) {
+  const skipped = t.skipped ?? [];
+  return (
+    <div className="border-t py-3">
+      <p className={cn("text-[14px]", t.error && "text-bad")}>
+        {t.error ? `Stopped: ${t.error}` : `Done ${ago(t.finished!)}: ${nTitles(t.shows, "show")}, ${nTitles(t.movies, "movie")} and ${nTitles(t.files, "file")} moved into roarr.`}
+      </p>
+      {skipped.length > 0 && (
+        <details className="group mt-2">
+          <summary className="meta flex cursor-pointer list-none items-center gap-1">
+            <ChevronRight className="size-3 transition-transform group-open:rotate-90" /> {skipped.length} to look at
+          </summary>
+          <ul className="mt-2 space-y-1 font-mono text-[12px] text-muted-foreground">
+            {skipped.map((x) => (
+              <li key={x} className="truncate" title={x}>
+                {x}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// ---- Blocklist -----------------------------------------------------------------
+
+function Blocklist({ items, onRemoved }: { items: Blocked[]; onRemoved: (id: string) => void }) {
+  return (
+    <section className="mt-8">
+      <SectionHead title="Blocklist" className="mb-2">
+        <span className="font-mono text-[12px] text-muted-foreground tabular">{items.length}</span>
+      </SectionHead>
+      {items.length === 0 && <p className="meta border-t py-4">Nothing blocked. Failed downloads and releases removed with “blocklist” show up here.</p>}
+      {items.map((b) => (
+        <div key={b.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 border-t py-3">
+          <div className="min-w-0">
+            {b.title && <div className="truncate text-[14px]">{b.title}</div>}
+            <div className="truncate font-mono text-[11px] text-muted-foreground" title={b.release}>
+              {b.release}
+            </div>
+            <div className="mt-1 text-[12px] text-foreground/80">
+              {b.reason} <span className="text-muted-foreground">· {ago(b.at)}</span>
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => run("Unblocking…", () => api.unblock(b.id), "Unblocked").then((ok) => ok && onRemoved(b.id))}>
+            Unblock
+          </Button>
+        </div>
+      ))}
+    </section>
   );
 }
 

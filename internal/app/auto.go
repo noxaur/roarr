@@ -22,6 +22,27 @@ type AutoRequest struct {
 	EpisodeIDs []int  `json:"episodeIds"` // empty = every missing aired episode
 	Seasons    []int  `json:"seasons"`    // alternative to EpisodeIDs
 	MovieTmdb  []int  `json:"movies"`     // one or more movies (collections)
+	// Upgrade grabs only releases at the quality cutoff (Prefs.AtCutoff):
+	// the episodes or movie have a file, and anything less is no upgrade.
+	Upgrade bool `json:"upgrade,omitempty"`
+}
+
+// cutoff marks releases below the quality cutoff rejected for an upgrade
+// search; other searches take them as they are.
+func (a *App) cutoff(r AutoRequest, rels []Release) []Release {
+	if !r.Upgrade {
+		return rels
+	}
+	p := a.Settings.Get().Prefs
+	out := make([]Release, len(rels))
+	for i, rel := range rels {
+		if !p.AtCutoff(rel.Info) {
+			rel.Rejected = true
+			rel.Reasons = append(rel.Reasons, "not an upgrade to the quality cutoff")
+		}
+		out[i] = rel
+	}
+	return out
 }
 
 // AutoResult reports the plan and what was grabbed.
@@ -89,12 +110,12 @@ func (a *App) Auto(ctx context.Context, r AutoRequest) (AutoResult, error) {
 	}
 	sc := scopeFor(d, wanted)
 	sess, waited, err := a.searchUntilStable(ctx, Target{Kind: "tv", Series: d}, sc, func(rels []Release) any {
-		return release.PlanEpisodes(wanted, options(rels))
+		return release.PlanEpisodes(wanted, options(a.cutoff(r, rels)))
 	})
 	if err != nil {
 		return AutoResult{}, err
 	}
-	rels := sess.All()
+	rels := a.cutoff(r, sess.All())
 	byKey := map[string]Release{}
 	for _, rel := range rels {
 		byKey[rel.Key] = rel
@@ -157,7 +178,7 @@ func (a *App) autoMovies(ctx context.Context, r AutoRequest, start time.Time) (A
 		if m.queueErr != nil {
 			return AutoResult{}, fmt.Errorf("%w: %w", errQueueUnknown, m.queueErr)
 		}
-		if !m.HasFile && !m.Queued {
+		if (!m.HasFile || r.Upgrade) && !m.Queued {
 			movies = append(movies, m)
 		}
 	}
@@ -165,12 +186,12 @@ func (a *App) autoMovies(ctx context.Context, r AutoRequest, start time.Time) (A
 		return AutoResult{Message: "Nothing is missing."}, nil
 	}
 	sess, waited, err := a.searchUntilStable(ctx, Target{Kind: "movie", Movies: movies}, Scope{}, func(rels []Release) any {
-		return pickMovies(len(movies), rels)
+		return pickMovies(len(movies), a.cutoff(r, rels))
 	})
 	if err != nil {
 		return AutoResult{}, err
 	}
-	rels := sess.All()
+	rels := a.cutoff(r, sess.All())
 	best := pickMovies(len(movies), rels).best
 	byKey := map[string]Release{}
 	for _, rel := range rels {
