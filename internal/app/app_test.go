@@ -57,6 +57,25 @@ func TestAnnotateCoverageAndWrongShow(t *testing.T) {
 	}
 }
 
+// Prowlarr fills magnetUrl with its own http proxy link for some indexers
+// (Anime Tosho). Sonarr refuses a pushed magnetUrl that is not a magnet, so
+// only real magnets stay magnets.
+func TestAnnotateKeepsOnlyRealMagnets(t *testing.T) {
+	an := newAnnotator(Target{Kind: "tv", Series: testShow()}, release.DefaultPrefs())
+	proxy := "http://prowlarr:9696/20/download?apikey=k&link=x"
+	magnet := "magnet:?xt=urn:btih:a11a9843ea05296de1978e9804f07c9e4e648c97"
+	for name, tc := range map[string]struct{ dl, magnet, wantDL, wantMagnet string }{
+		"proxy link only":     {magnet: proxy, wantDL: proxy},
+		"proxy beside a link": {dl: "http://dl", magnet: proxy, wantDL: "http://dl"},
+		"real magnet":         {dl: "http://dl", magnet: magnet, wantDL: "http://dl", wantMagnet: magnet},
+	} {
+		got := an.annotate(arr.SearchResult{Title: "The.Expanse.S02E01.1080p.WEB.h264-X", DownloadURL: tc.dl, MagnetURL: tc.magnet}, nil)
+		if got.DownloadURL != tc.wantDL || got.MagnetURL != tc.wantMagnet {
+			t.Errorf("%s: downloadUrl=%q magnetUrl=%q, want %q %q", name, got.DownloadURL, got.MagnetURL, tc.wantDL, tc.wantMagnet)
+		}
+	}
+}
+
 func TestReleaseKeyMergesCrossPosts(t *testing.T) {
 	a := Release{Title: "Show.S01E01.1080p.WEB.H264-GRP", Size: 1_500_000_000, InfoHash: "aa"}
 	b := Release{Title: "Show S01E01 1080p WEB H264-GRP", Size: 1_500_000_100, InfoHash: "bb"}

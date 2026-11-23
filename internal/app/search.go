@@ -182,6 +182,15 @@ func (an *annotator) annotate(r arr.SearchResult, movie *MovieDetail) Release {
 		PublishDate: r.PublishDate, Protocol: r.Protocol, GUID: r.GUID, DownloadURL: r.DownloadURL, MagnetURL: r.MagnetURL,
 		InfoURL: r.InfoURL, InfoHash: strings.ToLower(r.InfoHash),
 	}
+	// Prowlarr fills magnetUrl with its own http proxy link for some
+	// indexers. Sonarr and Radarr reject a pushed magnetUrl that is not a
+	// magnet, so only a real one stays a magnet.
+	if !strings.HasPrefix(rel.MagnetURL, "magnet:") {
+		if rel.DownloadURL == "" {
+			rel.DownloadURL = rel.MagnetURL
+		}
+		rel.MagnetURL = ""
+	}
 	if r.Seeders != nil {
 		rel.Seeders = *r.Seeders
 	}

@@ -535,15 +535,10 @@ type CachedRelease struct {
 }
 
 // InteractiveSearch runs the *arr's own indexer search (GET /release) with
-// q, e.g. episodeId, seriesId+seasonNumber or movieId. It is as slow as the
-// slowest indexer, so it gets its own long timeout.
+// q, e.g. episodeId, seriesId+seasonNumber or movieId.
 func (c *Client) InteractiveSearch(ctx context.Context, q url.Values) ([]CachedRelease, error) {
-	slow := *c.Client
-	hc := *c.HTTP
-	hc.Timeout = 3 * time.Minute
-	slow.HTTP = &hc
 	var out []CachedRelease
-	err := slow.Do(ctx, http.MethodGet, c.prefix+"/release", q, nil, &out)
+	err := c.Get(ctx, c.prefix+"/release", q, &out)
 	return out, err
 }
 
