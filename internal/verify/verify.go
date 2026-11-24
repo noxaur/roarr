@@ -23,7 +23,10 @@ type Target struct {
 	RuntimeMin int      // expected minutes per episode (tv) or for the movie; 0 = unknown
 	Languages  []string // audio languages the user understands; empty = any
 	Subtitles  []string // subtitle languages the user needs; empty = none
-	Files      []File
+	// Sidecars, when not nil, are the video's subtitle files as a caller
+	// already matched them, in place of FindSidecars.
+	Sidecars []Sidecar
+	Files    []File
 }
 
 // Verifier runs the checks.
@@ -87,6 +90,14 @@ func (v *Verifier) Verify(ctx context.Context, t Target) (vd Verdict) {
 		vd.finish()
 		return vd
 	}
+	if f, err := os.Open(primary.Path); err != nil {
+		// Unreadable is not broken: a failure here would throw a good file away.
+		vd.add(Check{Name: "streams", Level: Skip, Reason: "roarr cannot read " + primary.Path + ": " + firstLine(err.Error())})
+		vd.finish()
+		return vd
+	} else {
+		f.Close()
+	}
 	if v.Tools.FFprobe == "" {
 		vd.add(Check{Name: "streams", Level: Skip, Reason: "ffprobe is not installed"})
 		vd.finish()
@@ -142,6 +153,9 @@ func (v *Verifier) Verify(ctx context.Context, t Target) (vd Verdict) {
 		v.countSubs(ctx, primary.Path, p, langs, dur)
 	}
 	sc := FindSidecars(t.Files, primary, len(videos))
+	if t.Sidecars != nil {
+		sc = Sidecars{Matched: t.Sidecars}
+	}
 	for _, f := range sc.Matched {
 		desc := "und"
 		if f.Lang != "" {

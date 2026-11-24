@@ -114,27 +114,36 @@ func (a *App) SetLanguages(kind string, id int, which string, langs []string) er
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	key := languageKey(kind, id)
-	pick := t.m[key]
+	next := make(map[string]titlePick, len(t.m)+1)
+	for k, v := range t.m {
+		next[k] = v
+	}
+	pick := next[key]
 	if which == "audio" {
 		pick.Audio = clean
 	} else {
 		pick.Subtitles = clean
 	}
 	if pick.Audio == nil && pick.Subtitles == nil {
-		delete(t.m, key)
+		delete(next, key)
 	} else {
-		t.m[key] = pick
+		next[key] = pick
 	}
-	if t.path == "" {
-		return nil
+	// The pick takes effect only once it is saved, so an error leaves the
+	// rules as they were.
+	if t.path != "" {
+		b, err := json.MarshalIndent(next, "", " ")
+		if err != nil {
+			return err
+		}
+		tmp := t.path + ".tmp"
+		if err := os.WriteFile(tmp, b, 0o600); err != nil {
+			return err
+		}
+		if err := os.Rename(tmp, t.path); err != nil {
+			return err
+		}
 	}
-	b, err := json.MarshalIndent(t.m, "", " ")
-	if err != nil {
-		return err
-	}
-	tmp := t.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, t.path)
+	t.m = next
+	return nil
 }

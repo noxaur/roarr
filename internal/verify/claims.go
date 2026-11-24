@@ -385,15 +385,16 @@ func CheckSubtitleLanguage(p *Probe, sc Sidecars, hardsubbed bool, want []string
 	var full []subSource
 	for _, s := range srcs {
 		switch {
+		case s.forced || s.empty:
 		case s.lang == "":
 			unsure = true
-		case ok[s.lang] && !s.forced && !s.empty:
+		case ok[s.lang]:
 			msg := LangName(s.lang) + " subtitles"
 			if s.sidecar != "" {
 				msg += " (sidecar " + s.sidecar + ")"
 			}
 			return Check{Name: "sublanguage", Level: Pass, Reason: msg}, true
-		case !s.forced && !s.empty:
+		default:
 			full = append(full, s)
 		}
 	}

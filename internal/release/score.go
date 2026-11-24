@@ -34,13 +34,14 @@ type Prefs struct {
 	// none of them.
 	Languages []string `json:"languages"`
 	// SubtitleLanguages are the subtitle languages the user needs; empty
-	// needs none. Releases tagged with only other subtitle languages are
-	// rejected, and verification fails a file whose subtitles are all in
-	// other languages, or that has none.
+	// needs none. Search rejects releases tagged with only other subtitle
+	// languages (app's annotator, with verify's parser), and verification
+	// fails a file whose subtitles are all in other languages, or that has
+	// none.
 	SubtitleLanguages []string `json:"subtitleLanguages"`
-	// Language is the single language of settings saved before Languages.
-	// The settings store moves it into Languages.
-	Language string `json:"language,omitempty"`
+	// Language is the single language of settings saved before Languages;
+	// "" allowed any. The settings store moves it into Languages.
+	Language *string `json:"language,omitempty"`
 	// PreferDualAudio boosts dual-audio/MULTi releases (anime viewers).
 	PreferDualAudio bool `json:"preferDualAudio"`
 	// PreferredGroups get a bonus; BlockedTerms reject on substring match.
@@ -175,9 +176,6 @@ func Score(c Candidate, p Prefs, runtimeMin float64) Verdict {
 	// Language: reject foreign-only releases.
 	if len(p.Languages) > 0 && len(i.Languages) > 0 && !i.Multi && !i.DualAudio && !containsAny(i.Languages, p.Languages) {
 		reject(strings.Join(i.Languages, "/") + " audio")
-	}
-	if len(p.SubtitleLanguages) > 0 && len(i.Subtitles) > 0 && !contains(i.Subtitles, "Multi") && !containsAny(i.Subtitles, p.SubtitleLanguages) {
-		reject(strings.Join(i.Subtitles, "/") + " subtitles")
 	}
 	if p.PreferDualAudio && (i.DualAudio || i.Multi) {
 		add(15, "dual audio")

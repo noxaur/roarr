@@ -93,8 +93,16 @@ func TestLegacyLanguage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := s.Get().Prefs; !reflect.DeepEqual(p.Languages, []string{"German"}) || p.Language != "" {
-		t.Fatalf("languages = %q, language = %q", p.Languages, p.Language)
+	if p := s.Get().Prefs; !reflect.DeepEqual(p.Languages, []string{"German"}) || p.Language != nil {
+		t.Fatalf("languages = %q, language = %v", p.Languages, p.Language)
+	}
+	// An empty legacy language allowed any.
+	dir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"prefs":{"language":""}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ = Open(dir); s == nil || s.Get().Prefs.Languages == nil || len(s.Get().Prefs.Languages) != 0 {
+		t.Fatalf("empty legacy language: %+v", s.Get().Prefs.Languages)
 	}
 	s, _ = Open(t.TempDir())
 	if p := s.Get().Prefs; !reflect.DeepEqual(p.Languages, []string{"English"}) {

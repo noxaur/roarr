@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"reflect"
 	"testing"
 
@@ -48,6 +49,11 @@ func TestTitleLanguages(t *testing.T) {
 	if !newAnnotator(Target{Kind: "tv", Series: d}, store.Get().Prefs, a.Languages).annotate(vostfr, nil).Rejected {
 		t.Fatal("French-subtitled release allowed with English subtitles picked")
 	}
+	// The verifier's parser sees English in SUBENGLISH, so search keeps it.
+	both := arr.SearchResult{Title: "The.Expanse.S02E01.1080p.WEB.x264.FRENCHSUBS.SUBENGLISH-GRP", Size: 2e9, Seeders: &seeders}
+	if rel := newAnnotator(Target{Kind: "tv", Series: d}, store.Get().Prefs, a.Languages).annotate(both, nil); rel.Rejected {
+		t.Fatalf("release with English subtitles rejected: %v", rel.Reasons)
+	}
 	if err := a.SetLanguages("tv", d.TvdbID, "subtitles", []string{}); err != nil {
 		t.Fatal(err)
 	}
@@ -61,5 +67,17 @@ func TestTitleLanguages(t *testing.T) {
 	}
 	if l := a.Languages("tv", d.TvdbID); l.CustomAudio || !l.CustomSubtitles {
 		t.Fatalf("audio reset: %+v", l)
+	}
+
+	// A pick that cannot be saved does not take effect.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o700)
+	if err := a.SetLanguages("tv", d.TvdbID, "audio", []string{"German"}); err == nil {
+		t.Fatal("save into a read-only folder succeeded")
+	}
+	if l := a.Languages("tv", d.TvdbID); l.CustomAudio {
+		t.Fatalf("failed save changed the rules: %+v", l)
 	}
 }

@@ -316,7 +316,7 @@ func (v *Verification) tick(ctx context.Context) {
 		if !ready {
 			continue
 		}
-		vd := v.run(ctx, r.Hash, files, true)
+		vd := v.run(ctx, r.Hash, files, nil, true)
 		if vd != nil && vd.Level == verify.Skip && !final {
 			// The finished first episode may still sit in qBittorrent's
 			// incomplete folder; look again once the torrent is done.
@@ -352,6 +352,13 @@ func (v *Verification) learn(source string, q []arr.QueueRecord) {
 			v.recs[hash] = r
 		}
 		r.seen = now
+		// Records from before the ids were kept get them now.
+		if it.Series != nil && r.TvdbID == 0 {
+			r.TvdbID = it.Series.TvdbID
+		}
+		if it.Movie != nil && r.TmdbID == 0 {
+			r.TmdbID = it.Movie.TmdbID
+		}
 		ep := it.EpisodeID
 		if ep == 0 && it.Episode != nil {
 			ep = it.Episode.ID
@@ -436,7 +443,9 @@ func (v *Verification) torrentFiles(ctx context.Context, c *Clients, t qbit.Torr
 }
 
 // run verifies one download and acts on the verdict.
-func (v *Verification) run(ctx context.Context, hash string, files []verify.File, auto bool) *verify.Verdict {
+// sidecars, when not nil, are the subtitle files already matched to the
+// video (native imports).
+func (v *Verification) run(ctx context.Context, hash string, files []verify.File, sidecars []verify.Sidecar, auto bool) *verify.Verdict {
 	select {
 	case v.sem <- struct{}{}:
 	case <-ctx.Done():
@@ -451,7 +460,7 @@ func (v *Verification) run(ctx context.Context, hash string, files []verify.File
 	v.update(hash, func(rec *VerifyRecord) { rec.State = "checking" })
 	vf := &verify.Verifier{Tools: v.tools, Run: v.runner}
 	langs := v.languages(r)
-	vd := vf.Verify(ctx, verify.Target{Release: r.Release, Kind: r.Kind, RuntimeMin: v.runtime(ctx, r), Languages: langs.AudioLanguages, Subtitles: langs.SubtitleLanguages, Files: files})
+	vd := vf.Verify(ctx, verify.Target{Release: r.Release, Kind: r.Kind, RuntimeMin: v.runtime(ctx, r), Languages: langs.AudioLanguages, Subtitles: langs.SubtitleLanguages, Sidecars: sidecars, Files: files})
 	if ctx.Err() != nil {
 		v.update(hash, func(rec *VerifyRecord) { rec.State = "pending" })
 		return nil
@@ -502,7 +511,11 @@ func (v *Verification) beforeImport(ctx context.Context, c importer.Candidate) e
 			size = st.Size()
 		}
 		vctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
-		vd := v.run(vctx, hash, []verify.File{{Name: filepath.Base(c.Source), Path: c.Source, Size: size}}, false)
+		sidecars := []verify.Sidecar{}
+		for _, s := range c.Subtitles {
+			sidecars = append(sidecars, verify.Sidecar{Name: s.File.Rel, Lang: verify.NormLang(s.Info.Lang), Forced: s.Info.Forced, Size: s.File.Size})
+		}
+		vd := v.run(vctx, hash, []verify.File{{Name: filepath.Base(c.Source), Path: c.Source, Size: size}}, sidecars, false)
 		cancel()
 		if vd == nil {
 			return fmt.Errorf("verification was interrupted: %w", importer.ErrRetryLater)
@@ -577,7 +590,7 @@ func (v *Verification) Recheck(ctx context.Context, hash string) (VerifyRecord, 
 	if files == nil {
 		return VerifyRecord{}, errors.New("the download's files are gone")
 	}
-	if v.run(ctx, hash, files, false) == nil {
+	if v.run(ctx, hash, files, nil, false) == nil {
 		return VerifyRecord{}, ctx.Err()
 	}
 	return v.mustRecord(hash), nil

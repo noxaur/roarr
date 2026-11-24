@@ -43,6 +43,8 @@ type Candidate struct {
 	Hash     string `json:"hash,omitempty"`
 	// Replacing lists library files that will be removed for this one.
 	Replacing []string `json:"replacing,omitempty"`
+	// Subtitles are the download's subtitle files for this video.
+	Subtitles []SubtitleRef `json:"subtitles,omitempty"`
 }
 
 // Event describes a finished import.

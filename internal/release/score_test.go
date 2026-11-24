@@ -41,19 +41,3 @@ func TestScoreLanguages(t *testing.T) {
 		t.Error("no languages should allow any")
 	}
 }
-
-func TestScoreSubtitleLanguages(t *testing.T) {
-	vostfr := Candidate{Title: "Show.S01E01.VOSTFR.1080p.WEB.x264-GRP", Size: 2e9, Seeders: 10, Info: Parse("Show.S01E01.VOSTFR.1080p.WEB.x264-GRP")}
-	plain := Candidate{Title: "Show.S01E01.1080p.WEB.x264-GRP", Size: 2e9, Seeders: 10, Info: Parse("Show.S01E01.1080p.WEB.x264-GRP")}
-	p := DefaultPrefs()
-	if Score(vostfr, p, 45).Rejected {
-		t.Fatalf("no subtitle languages picked should allow any: %v", Score(vostfr, p, 45).Reasons)
-	}
-	p.SubtitleLanguages = []string{"English"}
-	if !Score(vostfr, p, 45).Rejected {
-		t.Error("French-subtitled release allowed with English subtitles picked")
-	}
-	if Score(plain, p, 45).Rejected {
-		t.Error("a name that says nothing about subtitles was rejected")
-	}
-}

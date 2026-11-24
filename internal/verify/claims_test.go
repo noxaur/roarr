@@ -286,3 +286,13 @@ func TestCheckSubtitleLanguage(t *testing.T) {
 		t.Errorf("reason = %q", got.Reason)
 	}
 }
+
+func TestCheckSubtitleLanguageIgnoresUntaggedForced(t *testing.T) {
+	p := &Probe{Streams: []Stream{
+		{Index: 0, CodecType: "subtitle", Tags: map[string]string{"language": "fre"}},
+		{Index: 1, CodecType: "subtitle", Disposition: map[string]int{"forced": 1}},
+	}}
+	if got, ran := CheckSubtitleLanguage(p, Sidecars{}, false, []string{"English"}); !ran || got.Level != Fail {
+		t.Fatalf("got %+v (ran %v), want a failure", got, ran)
+	}
+}

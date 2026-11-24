@@ -331,8 +331,12 @@ func (s *Store) recompute() {
 	if cur.Import.Category == "" {
 		cur.Import.Category = "roarr"
 	}
-	if cur.Prefs.Language != "" {
-		cur.Prefs.Languages, cur.Prefs.Language = []string{cur.Prefs.Language}, ""
+	if l := cur.Prefs.Language; l != nil {
+		cur.Prefs.Languages = []string{}
+		if *l != "" {
+			cur.Prefs.Languages = []string{*l}
+		}
+		cur.Prefs.Language = nil
 	}
 	if len(cur.Prefs.Resolutions) == 0 {
 		cur.Prefs.Resolutions = release.DefaultPrefs().Resolutions

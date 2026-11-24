@@ -12,6 +12,7 @@ import (
 	"github.com/noxaur/roarr/internal/arr"
 	"github.com/noxaur/roarr/internal/release"
 	"github.com/noxaur/roarr/internal/search"
+	"github.com/noxaur/roarr/internal/verify"
 )
 
 // Release is a search result annotated with everything the UI and the
@@ -230,6 +231,7 @@ func (an *annotator) annotate(r arr.SearchResult, movie *MovieDetail) Release {
 		}
 		v := release.Score(cand, p, rt)
 		rel.Score, rel.Rejected, rel.Reasons, rel.Notes = v.Score, v.Rejected, v.Reasons, v.Notes
+		rejectSubtitles(&rel, p.SubtitleLanguages)
 		if !rel.Match {
 			rel.Rejected = true
 			rel.Reasons = append(rel.Reasons, "different title")
@@ -248,6 +250,7 @@ func (an *annotator) annotate(r arr.SearchResult, movie *MovieDetail) Release {
 	}
 	v := release.Score(cand, an.prefs, an.runtime*eps)
 	rel.Score, rel.Rejected, rel.Reasons, rel.Notes = v.Score, v.Rejected, v.Reasons, v.Notes
+	rejectSubtitles(&rel, an.prefs.SubtitleLanguages)
 	switch {
 	case !rel.Match:
 		rel.Rejected = true
@@ -257,6 +260,30 @@ func (an *annotator) annotate(r arr.SearchResult, movie *MovieDetail) Release {
 		rel.Reasons = append(rel.Reasons, "episodes not recognised")
 	}
 	return rel
+}
+
+// rejectSubtitles rejects a release whose name tags subtitles, none of them
+// in a needed language. It reads the name with the verifier's parser, so a
+// release is never skipped for subtitles the verifier would accept.
+func rejectSubtitles(rel *Release, need []string) {
+	if len(need) == 0 {
+		return
+	}
+	cl := verify.ParseClaims(rel.Title)
+	if len(cl.Subs) == 0 || cl.MultiSubs {
+		return
+	}
+	for _, l := range need {
+		if containsStr(cl.Subs, verify.NormLang(l)) {
+			return
+		}
+	}
+	names := make([]string, len(cl.Subs))
+	for i, l := range cl.Subs {
+		names[i] = verify.LangName(l)
+	}
+	rel.Rejected = true
+	rel.Reasons = append(rel.Reasons, strings.Join(names, "/")+" subtitles")
 }
 
 func absInt(n int) int {
