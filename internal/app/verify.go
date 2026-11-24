@@ -459,7 +459,7 @@ func (v *Verification) run(ctx context.Context, hash string, files []verify.File
 	}
 	v.update(hash, func(rec *VerifyRecord) { rec.State = "checking" })
 	vf := &verify.Verifier{Tools: v.tools, Run: v.runner}
-	langs := v.languages(r)
+	langs := v.languages(ctx, r)
 	vd := vf.Verify(ctx, verify.Target{Release: r.Release, Kind: r.Kind, RuntimeMin: v.runtime(ctx, r), Languages: langs.AudioLanguages, Subtitles: langs.SubtitleLanguages, Sidecars: sidecars, Files: files})
 	if ctx.Err() != nil {
 		v.update(hash, func(rec *VerifyRecord) { rec.State = "pending" })
@@ -527,13 +527,26 @@ func (v *Verification) beforeImport(ctx context.Context, c importer.Candidate) e
 	return nil
 }
 
-// languages are the languages the download must have.
-func (v *Verification) languages(r VerifyRecord) Languages {
-	id := r.TmdbID
-	if r.Kind == "tv" {
-		id = r.TvdbID
+// languages are the languages the download must have. A record saved
+// before the ids were kept asks the *arr for its id.
+func (v *Verification) languages(ctx context.Context, r VerifyRecord) Languages {
+	c := v.app.C()
+	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	switch {
+	case r.Kind == "tv" && r.TvdbID == 0 && r.SeriesID != 0 && c.Sonarr != nil:
+		if s, err := c.Sonarr.Series(rctx, r.SeriesID); err == nil {
+			r.TvdbID = s.TvdbID
+		}
+	case r.Kind == "movie" && r.TmdbID == 0 && r.MovieID != 0 && c.Radarr != nil:
+		if m, err := c.Radarr.Movie(rctx, r.MovieID); err == nil {
+			r.TmdbID = m.TmdbID
+		}
 	}
-	return v.app.Languages(r.Kind, id)
+	if r.Kind == "tv" {
+		return v.app.Languages("tv", r.TvdbID)
+	}
+	return v.app.Languages("movie", r.TmdbID)
 }
 
 // runtime is the expected minutes per episode or for the movie.

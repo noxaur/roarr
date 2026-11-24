@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"os"
 	"reflect"
 	"testing"
@@ -79,5 +80,21 @@ func TestTitleLanguages(t *testing.T) {
 	}
 	if l := a.Languages("tv", d.TvdbID); l.CustomAudio {
 		t.Fatalf("failed save changed the rules: %+v", l)
+	}
+}
+
+// A Sonarr record saved before the TVDB id was kept still gets the show's
+// own languages: the id is asked of Sonarr.
+func TestVerifyLanguagesOfOldRecord(t *testing.T) {
+	son := fakeArr(t, map[string]string{"/api/v3/series/3": `{"id":3,"title":"Show","tvdbId":11}`})
+	a := testApp(t, &Clients{Sonarr: arr.NewSonarr(son, "k")})
+	a.langs = openTitleLanguages(t.TempDir())
+	if err := a.SetLanguages("tv", 11, "audio", []string{"Japanese"}); err != nil {
+		t.Fatal(err)
+	}
+	v := &Verification{app: a}
+	l := v.languages(context.Background(), VerifyRecord{Kind: "tv", SeriesID: 3})
+	if !reflect.DeepEqual(l.AudioLanguages, []string{"Japanese"}) {
+		t.Fatalf("languages = %+v, want the show's Japanese", l)
 	}
 }

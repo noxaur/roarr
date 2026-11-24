@@ -29,7 +29,8 @@ var (
 	// ESub, SUBITA, NLSubs.
 	subPrefix = regexp.MustCompile(`(?i)^subs?([a-z]{2,10})$`)
 	subSuffix = regexp.MustCompile(`(?i)^([a-z]{1,10})subs?$`)
-	// "VOSTFR", "VOST" = original audio with French subtitles.
+	// "VOSTFR", "VOST" = original audio with French subtitles; "VOSTA"
+	// with English ones.
 	vost = regexp.MustCompile(`(?i)^vost(fr)?$`)
 )
 
@@ -85,7 +86,10 @@ func ParseClaims(title string) Claims {
 		case vost.MatchString(t):
 			addSub("fra")
 			continue
-		case frenchAudio[t]:
+		case t == "vosta":
+			addSub("eng")
+			continue
+		case frenchAudio[t] && !(t == "french" && isSub(i+1)): // "FRENCH SUBS" names subtitles
 			addAudio("fra")
 			if t == "vf2" {
 				c.Multi = true
@@ -381,11 +385,11 @@ func CheckSubtitleLanguage(p *Probe, sc Sidecars, hardsubbed bool, want []string
 	for _, f := range sc.Matched {
 		srcs = append(srcs, subSource{lang: f.Lang, forced: f.Forced, empty: f.Size == 0, sidecar: path.Base(f.Name)})
 	}
-	unsure := sc.Other > 0 || hardsubbed && len(srcs) == 0
+	unsure := sc.Other > 0
 	var full []subSource
 	for _, s := range srcs {
 		switch {
-		case s.forced || s.empty:
+		case s.forced || s.empty || orphanIdx(s.sidecar, sc):
 		case s.lang == "":
 			unsure = true
 		case ok[s.lang]:
@@ -398,7 +402,7 @@ func CheckSubtitleLanguage(p *Probe, sc Sidecars, hardsubbed bool, want []string
 			full = append(full, s)
 		}
 	}
-	if unsure {
+	if unsure || hardsubbed && len(full) == 0 {
 		return Check{}, false
 	}
 	wanted := strings.Join(names, " or ")
@@ -412,6 +416,21 @@ func CheckSubtitleLanguage(p *Probe, sc Sidecars, hardsubbed bool, want []string
 		c.Reason = "no subtitles, " + wanted + " needed"
 	}
 	return c, true
+}
+
+// orphanIdx reports a VobSub index without its .sub, which holds the
+// subtitles themselves.
+func orphanIdx(name string, sc Sidecars) bool {
+	if !strings.EqualFold(path.Ext(name), ".idx") {
+		return false
+	}
+	sub := strings.TrimSuffix(name, path.Ext(name)) + ".sub"
+	for _, f := range sc.Matched {
+		if strings.EqualFold(path.Base(f.Name), sub) && f.Size > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // subSource is one subtitle track, embedded or a sidecar file.
