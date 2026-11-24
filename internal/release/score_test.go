@@ -22,3 +22,22 @@ func TestScoreCodecAndSizePrefs(t *testing.T) {
 		t.Fatalf("x264-first prefs should prefer H.264: av1=%v h264=%v", a, b)
 	}
 }
+
+func TestScoreLanguages(t *testing.T) {
+	cand := func(title string) Candidate {
+		return Candidate{Title: title, Size: 2e9, Seeders: 10, Protocol: "torrent", Info: Parse(title)}
+	}
+	french := cand("Show.S01E01.FRENCH.1080p.WEB.x264-GRP")
+	p := DefaultPrefs()
+	if !Score(french, p, 45).Rejected {
+		t.Error("French-only release allowed for English")
+	}
+	p.Languages = []string{"English", "French"}
+	if Score(french, p, 45).Rejected {
+		t.Errorf("French-only release rejected with French allowed: %v", Score(french, p, 45).Reasons)
+	}
+	p.Languages = nil
+	if Score(french, p, 45).Rejected {
+		t.Error("no languages should allow any")
+	}
+}

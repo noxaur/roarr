@@ -23,6 +23,7 @@ import (
 	"github.com/noxaur/roarr/internal/importer"
 	"github.com/noxaur/roarr/internal/jellyfin"
 	"github.com/noxaur/roarr/internal/release"
+	"github.com/noxaur/roarr/internal/verify"
 )
 
 // Version is set at build time.
@@ -68,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	guarded("GET /api/tv/tvdb/{tvdb}", s.seriesByTvdb)
 	guarded("GET /api/movie/{id}", s.movie)
 	guarded("GET /api/movie/tmdb/{tmdb}", s.movieByTmdb)
+	guarded("PUT /api/languages/{kind}/{id}/{which}", s.putLanguages)
 	guarded("POST /api/tv/{id}/episodes", s.seriesEpisodes)
 	guarded("PATCH /api/{kind}/{id}", s.patchTitle)
 	guarded("DELETE /api/{kind}/{id}", s.removeTitle)
@@ -303,7 +305,7 @@ func (s *Server) statusBody(services map[string]serviceStatus) map[string]any {
 	st := s.app.Settings.Get().Import
 	return map[string]any{"services": services, "version": Version, "importMode": st.Mode, "standalone": st.OwnsLibrary(),
 		"library":        map[string]string{"tv": s.app.LibraryApp("tv"), "movie": s.app.LibraryApp("movie")},
-		"seerrAutoFetch": s.app.SeerrAutoFetch()}
+		"seerrAutoFetch": s.app.SeerrAutoFetch(), "languages": verify.LanguageNames()}
 }
 
 func baseOf(ok bool, f func() string) string {
@@ -354,7 +356,9 @@ func (s *Server) series(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, statusFor(err), err)
 		return
 	}
-	writeJSON(w, 200, d)
+	cp := *d
+	cp.Languages = s.app.Languages("tv", d.TvdbID)
+	writeJSON(w, 200, cp)
 }
 
 func (s *Server) seriesByTvdb(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +369,9 @@ func (s *Server) seriesByTvdb(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, statusFor(err), err)
 		return
 	}
-	writeJSON(w, 200, d)
+	cp := *d
+	cp.Languages = s.app.Languages("tv", d.TvdbID)
+	writeJSON(w, 200, cp)
 }
 
 func (s *Server) movie(w http.ResponseWriter, r *http.Request) {
@@ -375,7 +381,9 @@ func (s *Server) movie(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, statusFor(err), err)
 		return
 	}
-	writeJSON(w, 200, d)
+	cp := *d
+	cp.Languages = s.app.Languages("movie", d.TmdbID)
+	writeJSON(w, 200, cp)
 }
 
 func (s *Server) movieByTmdb(w http.ResponseWriter, r *http.Request) {
@@ -385,7 +393,29 @@ func (s *Server) movieByTmdb(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, statusFor(err), err)
 		return
 	}
-	writeJSON(w, 200, d)
+	cp := *d
+	cp.Languages = s.app.Languages("movie", d.TmdbID)
+	writeJSON(w, 200, cp)
+}
+
+// putLanguages: PUT /api/languages/{kind}/{id}/{audio|subtitles}
+// {"languages": [...] | null} picks the audio or subtitle languages of one
+// show (TVDB id) or movie (TMDB id); null goes back to the default.
+func (s *Server) putLanguages(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	var in struct {
+		Languages []string `json:"languages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	kind := r.PathValue("kind")
+	if err := s.app.SetLanguages(kind, id, r.PathValue("which"), in.Languages); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 200, s.app.Languages(kind, id))
 }
 
 // ---------------------------------------------------------------------------

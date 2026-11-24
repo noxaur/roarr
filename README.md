@@ -82,7 +82,6 @@ environment variable is locked there.
 | `CACHE_MINUTES` | `20` | How long indexer answers are reused. |
 | `PORT` | `3847` | |
 | `VERIFY_MEDIA` | `auto` | Check finished downloads with ffprobe/ffmpeg. `auto` is on when `ffprobe` is installed (`FFPROBE_PATH`, `FFMPEG_PATH` override the lookup, for the AV1 converter too). |
-| `VERIFY_AUTO_REGRAB` | `false` | When a download fails the checks, blocklist it and grab the next best release. |
 | `VERIFY_PATH_MAP` | — | `client=roarr` path prefixes, comma-separated, when roarr sees qBittorrent's files under another path (`/downloads=/data/downloads`). |
 
 ### AV1 converter (optional, off by default)
@@ -225,10 +224,15 @@ a pack is checked as soon as its first episode is complete. roarr:
 3. Compares the release name with the streams: resolution, codec, HDR,
    10-bit, audio languages (MULTi, GERMAN DL, VFF) and subtitles (ENG SUBS,
    VOSTFR), including subtitle tracks that are empty.
+4. Fails a file whose audio is all in languages you did not pick, or that
+   lacks full subtitles in a language you need. The defaults are under
+   Admin → Release rules (English audio, no subtitles needed out of the
+   box); a show or movie can pick its own next to **Get**.
 
-A failed release is hidden from roarr's picks. `GET /api/verify` lists
-verdicts; `POST /api/verify/{hash}/regrab` deletes the download and anything
-it imported and grabs the next best. Needs ffmpeg in the container and the
+A failed download is blocklisted, deleted with anything it imported, and
+replaced with the next best release at once. `GET /api/verify` lists
+verdicts; `POST /api/verify/{hash}/regrab` does the same for a download you
+want gone. Needs ffmpeg in the container and the
 download folder mounted.
 
 ## Native import

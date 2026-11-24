@@ -906,7 +906,9 @@ func (n *Native) importReady(ctx context.Context, j *NativeJob, t qbit.Torrent, 
 		p.Video.Path = n.resolve(t, p.Video.Rel)
 		p.Subtitles = finishedSubs(f)
 		replace := j.Kind == "movie" || n.wanted(j, p)
-		res, err := im.Import(ctx, importer.Request{Title: title, Placement: p, Release: j.Release, Hash: j.Hash, Replace: replace})
+		// Verification judges subtitles by name and size, so ones still
+		// downloading count.
+		res, err := im.Import(ctx, importer.Request{Title: title, Placement: p, Release: j.Release, Hash: j.Hash, Replace: replace, Subtitles: f.Placement.Subtitles})
 		n.mu.Lock()
 		ff := &j.Files[i]
 		switch {

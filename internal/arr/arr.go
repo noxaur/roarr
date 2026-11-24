@@ -348,11 +348,13 @@ type QueueRecord struct {
 	} `json:"episode"`
 	Series *struct {
 		ID     int     `json:"id"`
+		TvdbID int     `json:"tvdbId"`
 		Title  string  `json:"title"`
 		Images []Image `json:"images"`
 	} `json:"series"`
 	Movie *struct {
 		ID     int     `json:"id"`
+		TmdbID int     `json:"tmdbId"`
 		Title  string  `json:"title"`
 		Year   int     `json:"year"`
 		Images []Image `json:"images"`

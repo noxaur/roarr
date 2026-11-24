@@ -23,7 +23,7 @@ import { TORRENT_OPTION, useConfirm } from "@/components/Confirm";
 import { ManageMenu, MonitorToggle, RowMenu, SelectionBar } from "@/components/Manage";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
 import { VerdictBadge, useVerdictActions } from "@/components/Verdict";
-import { Crumbs, GetCard, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
+import { Crumbs, GetCard, TitleHead, TitleLayout, TitleSkeleton, useTitleLanguages, type GetOption } from "@/components/Title";
 
 export function SeriesPage({ id, tvdb, tmdb }: { id?: number; tvdb?: number; tmdb?: number }) {
   const { library } = useStore();
@@ -172,7 +172,8 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
     return out.filter((s) => s.episodes !== "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selKey, prefs.prefetch, d.key]);
-  const search = useSearch(d.key, streams);
+  const langs = useTitleLanguages("tv", d.tvdbId, d);
+  const search = useSearch(`${d.key}|${langs.key}`, streams);
 
   const relevant = useCallback(
     (r: Release) => {
@@ -604,6 +605,7 @@ function SeriesView({ d, reload, prefs }: { d: SeriesDetail; reload: () => void;
             plan={plan}
             wantedCount={n}
             onChoose={() => setSheet(true)}
+            languages={langs}
           />
         }
         body={

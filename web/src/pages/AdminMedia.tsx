@@ -301,12 +301,12 @@ const VMODES = [
 ] as const;
 
 export function ChecksTab({ s, locked, update }: Edit) {
-  const v = s.verify ?? { autoRegrab: false };
+  const v = s.verify ?? {};
   const [st] = usePoll(api.verify, 5000);
   const tools = st?.tools;
   const set = (f: (x: NonNullable<Settings["verify"]>) => void) =>
     update((x) => {
-      x.verify ??= { autoRegrab: false };
+      x.verify ??= {};
       f(x.verify);
     });
 
@@ -330,11 +330,6 @@ export function ChecksTab({ s, locked, update }: Edit) {
             <span className={cn("truncate", !tools.ffmpeg && "text-miss")}>{tools.ffmpeg || "missing, no frame check"}</span>
           </div>
         )}
-      </Field>
-      <Field label="Failed downloads">
-        <Toggle checked={v.autoRegrab} disabled={locked.VERIFY_AUTO_REGRAB} onChange={(b) => set((x) => (x.autoRegrab = b))}>
-          Re-grab automatically
-        </Toggle>
       </Field>
       <Field label="Path map" hint="Client path = roarr path">
         <PathMap value={v.pathMap} locked={locked.VERIFY_PATH_MAP} placeholder="/downloads=/data/downloads" onChange={(p) => set((x) => (x.pathMap = p))} />

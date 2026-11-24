@@ -35,7 +35,6 @@ func (s *Server) verifyList(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"enabled": v.Enabled(), "items": items}
 	if v != nil {
 		out["tools"] = v.Tools()
-		out["autoRegrab"] = v.Settings().AutoRegrab
 	}
 	writeJSON(w, 200, out)
 }

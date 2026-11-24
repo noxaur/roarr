@@ -47,6 +47,7 @@ type App struct {
 	Native *Native
 	// Hooks run around every native import; importHooks registers them.
 	Hooks *importer.Hooks
+	langs *titleLanguages
 
 	bypassMu sync.Mutex // serializes temporary quality profile swaps
 	detailMu sync.Mutex
@@ -55,7 +56,7 @@ type App struct {
 
 // New builds the app and starts background loops.
 func New(ctx context.Context, store *config.Store, dataDir string) *App {
-	a := &App{Settings: store, DataDir: dataDir, details: map[string]cachedDetail{}, Hooks: &importer.Hooks{}}
+	a := &App{Settings: store, DataDir: dataDir, details: map[string]cachedDetail{}, Hooks: &importer.Hooks{}, langs: openTitleLanguages(dataDir)}
 	a.rebuild(store.Get())
 	store.Subscribe(func(s config.Settings) {
 		a.rebuild(s)

@@ -123,10 +123,10 @@ const settings = {
     qbittorrent: { url: "http://qbit:8080", username: "admin", password: "x" },
     authMode: "none",
     jellyfinAdminOnly: true,
-    prefs: { resolutions: [1080, 2160, 720], videoCodecs: ["av1", "x265", "x264"], audioCodecs: ["Opus", "DDP", "AAC"], size: "balanced", allowRemux: false, allowHdr: true, maxGbPerHour: 12, minSeeders: 1, language: "English", preferDualAudio: false, preferredGroups: null, blockedTerms: null },
+    prefs: { resolutions: [1080, 2160, 720], videoCodecs: ["av1", "x265", "x264"], audioCodecs: ["Opus", "DDP", "AAC"], size: "balanced", allowRemux: false, allowHdr: true, maxGbPerHour: 12, minSeeders: 1, languages: ["English"], subtitleLanguages: [], preferDualAudio: false, preferredGroups: null, blockedTerms: null },
     behaviour: { watchFirst: true, prefetch: true, indexerTimeout: 30, cacheMinutes: 20, seerrAutoFetch: false },
     transcode: { enabled: true, concurrency: 1, nice: 10, crf: 0, preset: 8, filmGrain: 0, minSavings: 15, pathMap: "/tv=/media/tv,/movies=/media/movies", schedule: [{ days: [1, 2, 3, 4, 5], from: "22:00", to: "07:00" }, { days: [6, 0], from: "00:00", to: "24:00" }] },
-    verify: { autoRegrab: false, pathMap: "/downloads=/data/downloads" },
+    verify: { pathMap: "/downloads=/data/downloads" },
     import: { mode: "arr", transfer: "hardlink", category: "roarr", missingSearchHours: 24 },
   },
   locked: { PROWLARR_URL: true, PROWLARR_API_KEY: true, TRANSCODE_NICE: true },
@@ -452,6 +452,21 @@ createServer((req, res) => (LATENCY ? setTimeout(() => handle(req, res), LATENCY
   console.log(`mock roarr API on http://localhost:${PORT}`),
 );
 
+const LANGUAGES = ["Arabic", "Chinese", "Czech", "Danish", "Dutch", "English", "Finnish", "French", "German", "Greek", "Hebrew", "Hindi", "Hungarian", "Italian", "Japanese", "Korean", "Norwegian", "Polish", "Portuguese", "Russian", "Spanish", "Swedish", "Tamil", "Telugu", "Turkish", "Ukrainian"];
+// Languages picked per title, "tv:<tvdb>" / "movie:<tmdb>" -> { audio, subtitles }, as in languages.json.
+const titleLanguages = new Map();
+const languagesOf = (kind, id) => {
+  const pick = titleLanguages.get(`${kind}:${id}`) ?? {};
+  const p = settings.settings.prefs;
+  return {
+    audioLanguages: pick.audio ?? p.languages,
+    customAudio: pick.audio != null || undefined,
+    subtitleLanguages: pick.subtitles ?? p.subtitleLanguages,
+    customSubtitles: pick.subtitles != null || undefined,
+  };
+};
+const withLanguages = (kind, d) => ({ ...d, ...languagesOf(kind, kind === "tv" ? d.tvdbId : d.tmdbId) });
+
 // The routes of internal/server/server.go that the UI calls. Anything else is a 404.
 function handle(req, res) {
   const u = new URL(req.url, "http://x");
@@ -477,7 +492,7 @@ function handle(req, res) {
     return;
   }
   if (route === "GET /api/settings") return json(res, settings);
-  if (route === "GET /api/verify") return json(res, { enabled: true, items: verifyRecs, tools: { ffprobe: "/usr/bin/ffprobe", ffmpeg: "/usr/bin/ffmpeg" }, autoRegrab: !!settings.settings.verify?.autoRegrab });
+  if (route === "GET /api/verify") return json(res, { enabled: true, items: verifyRecs, tools: { ffprobe: "/usr/bin/ffprobe", ffmpeg: "/usr/bin/ffmpeg" } });
   if ((m = route.match(/^(?:GET \/api\/verify\/([^/]+)|POST \/api\/verify\/([^/]+)\/(recheck|regrab|dismiss))$/))) {
     const r = findRec(m[1] ?? m[2]);
     if (!r) return notFound(res, "download not verified");
@@ -524,7 +539,7 @@ function handle(req, res) {
     startTakeover();
     return json(res, takeoverPlan(), 202);
   }
-  if (route === "GET /api/status") return json(res, { version: "mock", importMode: settings.settings.import.mode, standalone: !!settings.settings.import.standalone, library: keepers(), seerrAutoFetch: settings.settings.behaviour.seerrAutoFetch || !!settings.settings.import.standalone, services: { prowlarr: { configured: true, ok: true, version: "2.0", ms: 12 }, sonarr: { configured: true, ok: true, version: "4.0", ms: 20 }, radarr: { configured: true, ok: true, version: "6.0", ms: 18 }, seerr: { configured: false, ok: false }, jellyfin: { configured: false, ok: false }, qbittorrent: { configured: true, ok: false, error: "connection refused" } } });
+  if (route === "GET /api/status") return json(res, { version: "mock", importMode: settings.settings.import.mode, standalone: !!settings.settings.import.standalone, library: keepers(), seerrAutoFetch: settings.settings.behaviour.seerrAutoFetch || !!settings.settings.import.standalone, languages: LANGUAGES, services: { prowlarr: { configured: true, ok: true, version: "2.0", ms: 12 }, sonarr: { configured: true, ok: true, version: "4.0", ms: 20 }, radarr: { configured: true, ok: true, version: "6.0", ms: 18 }, seerr: { configured: false, ok: false }, jellyfin: { configured: false, ok: false }, qbittorrent: { configured: true, ok: false, error: "connection refused" } } });
   if (route === "GET /api/requests") return json(res, { items: [], configured: false });
   if (/^POST \/api\/requests\/\d+\/(approve|decline)$/.test(route)) return json(res, { error: "seerr is not configured" }, 424);
   if ((m = route.match(/^GET \/api\/profiles\/(tv|movie)$/)) && keepers()[m[1]] === "roarr") return json(res, { error: "roarr has no quality profiles" }, 424);
@@ -533,11 +548,18 @@ function handle(req, res) {
 
   if ((m = route.match(/^GET \/api\/tv\/tvdb\/(\d+)$/))) {
     const d = showByTvdb(+m[1]);
-    return d ? json(res, d) : json(res, { error: `sonarr found nothing for tvdb:${m[1]}` }, 500);
+    return d ? json(res, withLanguages("tv", d)) : json(res, { error: `sonarr found nothing for tvdb:${m[1]}` }, 500);
   }
   if ((m = route.match(/^GET \/api\/movie\/tmdb\/(\d+)$/))) {
     const d = movieByTmdb(+m[1]);
-    return d ? json(res, d) : notFound(res, "movie not found");
+    return d ? json(res, withLanguages("movie", d)) : notFound(res, "movie not found");
+  }
+  if ((m = route.match(/^PUT \/api\/languages\/(tv|movie)\/(\d+)\/(audio|subtitles)$/))) {
+    const key = `${m[1]}:${m[2]}`;
+    return void readBody(req).then(({ languages }) => {
+      titleLanguages.set(key, { ...titleLanguages.get(key), [m[3]]: languages });
+      json(res, languagesOf(m[1], +m[2]));
+    });
   }
   // A title of the library, and the things done to it.
   if ((m = route.match(/^(GET|PATCH|DELETE|POST) \/api\/(tv|movie)\/(\d+)(\/episodes|\/file|\/command\/(?:refresh|search))?$/))) {
@@ -546,7 +568,7 @@ function handle(req, res) {
     if (!d) return notFound(res, `${kind === "tv" ? "series" : "movie"} not found`);
     const item = library.items.find((x) => x.key === d.key);
     const op = `${method} ${sub ?? ""}`;
-    if (op === "GET ") return json(res, d);
+    if (op === "GET ") return json(res, withLanguages(kind, d));
     if (op === "DELETE ") {
       library.items = library.items.filter((x) => x !== item);
       return json(res, { ok: true });

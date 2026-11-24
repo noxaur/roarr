@@ -28,9 +28,20 @@ type Prefs struct {
 	MaxGBPerHour float64 `json:"maxGbPerHour"`
 	// MinSeeders rejects torrents with fewer seeders.
 	MinSeeders int `json:"minSeeders"`
-	// Language is the audio language the user wants ("English").
-	// Releases explicitly tagged with only other languages are rejected.
-	Language string `json:"language"`
+	// Languages are the audio languages the user understands ("English"),
+	// as named by Info.Languages; empty allows any. Releases tagged with only
+	// other languages are rejected, and verification fails a file with
+	// none of them.
+	Languages []string `json:"languages"`
+	// SubtitleLanguages are the subtitle languages the user needs; empty
+	// needs none. Search rejects releases tagged with only other subtitle
+	// languages (app's annotator, with verify's parser), and verification
+	// fails a file whose subtitles are all in other languages, or that has
+	// none.
+	SubtitleLanguages []string `json:"subtitleLanguages"`
+	// Language is the single language of settings saved before Languages;
+	// "" allowed any. The settings store moves it into Languages.
+	Language *string `json:"language,omitempty"`
 	// PreferDualAudio boosts dual-audio/MULTi releases (anime viewers).
 	PreferDualAudio bool `json:"preferDualAudio"`
 	// PreferredGroups get a bonus; BlockedTerms reject on substring match.
@@ -59,7 +70,7 @@ func DefaultPrefs() Prefs {
 		AllowHDR:     true,
 		MaxGBPerHour: 12,
 		MinSeeders:   1,
-		Language:     "English",
+		Languages:    []string{"English"},
 	}
 }
 
@@ -163,7 +174,7 @@ func Score(c Candidate, p Prefs, runtimeMin float64) Verdict {
 	}
 
 	// Language: reject foreign-only releases.
-	if p.Language != "" && len(i.Languages) > 0 && !i.Multi && !i.DualAudio && !contains(i.Languages, p.Language) {
+	if len(p.Languages) > 0 && len(i.Languages) > 0 && !i.Multi && !i.DualAudio && !containsAny(i.Languages, p.Languages) {
 		reject(strings.Join(i.Languages, "/") + " audio")
 	}
 	if p.PreferDualAudio && (i.DualAudio || i.Multi) {

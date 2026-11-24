@@ -33,6 +33,10 @@ type Request struct {
 	// library even when it is not better: the user picked this release
 	// for these episodes.
 	Replace bool
+	// Subtitles are every subtitle file of the download that belongs to the
+	// video, downloaded or not, for before-import hooks. Nil means the
+	// placement's.
+	Subtitles []SubtitleRef
 }
 
 // Result is what an import did.
@@ -232,7 +236,10 @@ func (im *Importer) Import(ctx context.Context, req Request) (Result, error) {
 		return Result{Skipped: true, Reason: keeps}, nil
 	}
 
-	cand := Candidate{Title: t, Season: p.Season, Episodes: p.Episodes, Source: src, Dest: dest, Release: req.Release, Hash: req.Hash, Replacing: replace}
+	cand := Candidate{Title: t, Season: p.Season, Episodes: p.Episodes, Source: src, Dest: dest, Release: req.Release, Hash: req.Hash, Replacing: replace, Subtitles: req.Subtitles}
+	if cand.Subtitles == nil {
+		cand.Subtitles = p.Subtitles
+	}
 	if err := im.hooks.runBefore(ctx, cand); err != nil {
 		return Result{}, err
 	}

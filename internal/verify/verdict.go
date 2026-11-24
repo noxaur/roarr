@@ -9,7 +9,9 @@
 //  2. the picture: frames sampled across the file show real, changing
 //     images, not black, flat or one static slate;
 //  3. the claims: resolution, codec, audio languages and subtitles named in
-//     the release title exist in the file's streams.
+//     the release title exist in the file's streams;
+//  4. the languages: the audio is in a language the user understands, and
+//     subtitles the user needs are there.
 package verify
 
 import "time"

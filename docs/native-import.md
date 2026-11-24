@@ -386,9 +386,7 @@ polling Sonarr and Radarr, which see nothing of a native import.
   reaches the importer is verified, and its verdict counts for the whole
   download, as in arr mode. A `fail` keeps every file of the download out
   of the library, stops the download, and replaces it with another release
-  (see [Failed downloads](#failed-downloads-and-the-blocklist)), whatever
-  `VERIFY_AUTO_REGRAB` says: the fake never reached the library, so there
-  is nothing a person must look at first. `warn` and `skip` do not hold a file back, and
+  (see [Failed downloads](#failed-downloads-and-the-blocklist)). `warn` and `skip` do not hold a file back, and
   nothing is checked when verification is off. A dismissed verdict lets a
   later import of the download through.
   - Arr mode cannot hold a file back, because Sonarr and Radarr import it

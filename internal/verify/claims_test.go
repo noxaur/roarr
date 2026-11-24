@@ -203,3 +203,124 @@ func TestProbeRules(t *testing.T) {
 		t.Errorf("duration = %v, want the longest stream's", d)
 	}
 }
+
+func TestCheckLanguage(t *testing.T) {
+	probe := func(tracks ...string) *Probe {
+		p := &Probe{}
+		for i, l := range tracks {
+			s := Stream{Index: i, CodecType: "audio"}
+			if l != "" {
+				s.Tags = map[string]string{"language": l}
+			}
+			p.Streams = append(p.Streams, s)
+		}
+		return p
+	}
+	cases := []struct {
+		name  string
+		p     *Probe
+		want  []string
+		level Level
+		ran   bool
+	}{
+		{"French and Japanese, English wanted", probe("fre", "jpn"), []string{"English"}, Fail, true},
+		{"English among others", probe("fre", "eng"), []string{"English"}, Pass, true},
+		{"either of two", probe("jpn"), []string{"English", "Japanese"}, Pass, true},
+		{"untagged", probe("fre", ""), []string{"English"}, "", false},
+		{"any language", probe("fre"), nil, "", false},
+		{"no audio", probe(), []string{"English"}, "", false},
+	}
+	for _, c := range cases {
+		got, ran := CheckLanguage(c.p, c.want)
+		if ran != c.ran || got.Level != c.level {
+			t.Errorf("%s: got %+v (ran %v), want %s (ran %v)", c.name, got, ran, c.level, c.ran)
+		}
+	}
+	if got, _ := CheckLanguage(probe("fre", "jpn"), []string{"English"}); got.Reason != "audio is French, Japanese, not English" {
+		t.Errorf("reason = %q", got.Reason)
+	}
+}
+
+func TestCheckSubtitleLanguage(t *testing.T) {
+	probe := func(tracks ...string) *Probe {
+		p := &Probe{}
+		for i, l := range tracks {
+			s := Stream{Index: i, CodecType: "subtitle", Tags: map[string]string{}}
+			if l, forced := strings.CutSuffix(l, "!"); forced {
+				s.Disposition = map[string]int{"forced": 1}
+				s.Tags["language"] = l
+			} else if l != "" {
+				s.Tags["language"] = l
+			}
+			p.Streams = append(p.Streams, s)
+		}
+		return p
+	}
+	en := []string{"English"}
+	cases := []struct {
+		name  string
+		p     *Probe
+		sc    Sidecars
+		hard  bool
+		want  []string
+		level Level
+		ran   bool
+	}{
+		{"only French", probe("fre"), Sidecars{}, false, en, Fail, true},
+		{"none at all", probe(), Sidecars{}, false, en, Fail, true},
+		{"English embedded", probe("fre", "eng"), Sidecars{}, false, en, Pass, true},
+		{"English sidecar", probe("fre"), Sidecars{Matched: []Sidecar{{Name: "Show.en.srt", Lang: "eng", Size: 4000}}}, false, en, Pass, true},
+		{"forced English only", probe("eng!"), Sidecars{}, false, en, Fail, true},
+		{"untagged track", probe("fre", ""), Sidecars{}, false, en, "", false},
+		{"unmatched sidecar", probe("fre"), Sidecars{Other: 1}, false, en, "", false},
+		{"hardsubbed", probe(), Sidecars{}, true, en, "", false},
+		{"none needed", probe("fre"), Sidecars{}, false, nil, "", false},
+	}
+	for _, c := range cases {
+		got, ran := CheckSubtitleLanguage(c.p, c.sc, c.hard, c.want)
+		if ran != c.ran || got.Level != c.level {
+			t.Errorf("%s: got %+v (ran %v), want %s (ran %v)", c.name, got, ran, c.level, c.ran)
+		}
+	}
+	if got, _ := CheckSubtitleLanguage(probe("fre"), Sidecars{}, false, en); got.Reason != "subtitles are French, not English" {
+		t.Errorf("reason = %q", got.Reason)
+	}
+}
+
+func TestCheckSubtitleLanguageIgnoresUntaggedForced(t *testing.T) {
+	p := &Probe{Streams: []Stream{
+		{Index: 0, CodecType: "subtitle", Tags: map[string]string{"language": "fre"}},
+		{Index: 1, CodecType: "subtitle", Disposition: map[string]int{"forced": 1}},
+	}}
+	if got, ran := CheckSubtitleLanguage(p, Sidecars{}, false, []string{"English"}); !ran || got.Level != Fail {
+		t.Fatalf("got %+v (ran %v), want a failure", got, ran)
+	}
+}
+
+func TestSubtitleTagsFromScene(t *testing.T) {
+	for title, want := range map[string][]string{
+		"Film.2020.1080p.WEB.x264.FRENCHSUBS.VOSTA-GRP": {"fra", "eng"},
+		"Film.2020.1080p.WEB.x264.FRENCH.SUBS-GRP":      {"fra"},
+	} {
+		cl := ParseClaims(title)
+		if !reflect.DeepEqual(cl.Subs, want) || len(cl.Audio) != 0 {
+			t.Errorf("%s: subs %v audio %v, want subs %v and no audio", title, cl.Subs, cl.Audio, want)
+		}
+	}
+}
+
+func TestCheckSubtitleLanguageEdges(t *testing.T) {
+	en := []string{"English"}
+	forced := &Probe{Streams: []Stream{{Index: 0, CodecType: "subtitle", Disposition: map[string]int{"forced": 1}}}}
+	if _, ran := CheckSubtitleLanguage(forced, Sidecars{}, true, en); ran {
+		t.Error("hardsubbed file with only a forced track was judged")
+	}
+	idx := Sidecars{Matched: []Sidecar{{Name: "Film.en.idx", Lang: "eng", Size: 900}}}
+	if got, ran := CheckSubtitleLanguage(&Probe{}, idx, false, en); !ran || got.Level != Fail {
+		t.Errorf("idx without .sub: %+v (ran %v), want a failure", got, ran)
+	}
+	idx.Matched = append(idx.Matched, Sidecar{Name: "Film.en.sub", Lang: "eng", Size: 4e6})
+	if got, _ := CheckSubtitleLanguage(&Probe{}, idx, false, en); got.Level != Pass {
+		t.Errorf("idx with .sub: %+v, want a pass", got)
+	}
+}

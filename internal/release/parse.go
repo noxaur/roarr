@@ -538,6 +538,15 @@ func isUpper(s string) bool {
 	return s == strings.ToUpper(s)
 }
 
+func containsAny(xs, ys []string) bool {
+	for _, y := range ys {
+		if contains(xs, y) {
+			return true
+		}
+	}
+	return false
+}
+
 func contains(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {

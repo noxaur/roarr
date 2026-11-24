@@ -29,7 +29,8 @@ var (
 	// ESub, SUBITA, NLSubs.
 	subPrefix = regexp.MustCompile(`(?i)^subs?([a-z]{2,10})$`)
 	subSuffix = regexp.MustCompile(`(?i)^([a-z]{1,10})subs?$`)
-	// "VOSTFR", "VOST" = original audio with French subtitles.
+	// "VOSTFR", "VOST" = original audio with French subtitles; "VOSTA"
+	// with English ones.
 	vost = regexp.MustCompile(`(?i)^vost(fr)?$`)
 )
 
@@ -85,7 +86,10 @@ func ParseClaims(title string) Claims {
 		case vost.MatchString(t):
 			addSub("fra")
 			continue
-		case frenchAudio[t]:
+		case t == "vosta":
+			addSub("eng")
+			continue
+		case frenchAudio[t] && !(t == "french" && isSub(i+1)): // "FRENCH SUBS" names subtitles
 			addAudio("fra")
 			if t == "vf2" {
 				c.Multi = true
@@ -317,6 +321,116 @@ func compareAudio(cl Claims, p *Probe) Check {
 		c.Reason = desc
 	}
 	return c
+}
+
+// CheckLanguage checks that the file has audio in one of the languages the
+// user understands (names or codes). Like a subtitle claim, it fails only
+// when that is certain: every audio track is tagged with another language.
+// It reports nothing when it cannot tell.
+func CheckLanguage(p *Probe, want []string) (Check, bool) {
+	ok := map[string]bool{}
+	var names []string
+	for _, w := range want {
+		if l := NormLang(w); l != "" && !ok[l] {
+			ok[l] = true
+			names = append(names, LangName(l))
+		}
+	}
+	var found []string
+	untagged := 0
+	for _, a := range p.Kind("audio") {
+		if a.IsCommentary() {
+			continue
+		}
+		l := a.Lang()
+		switch {
+		case l == "":
+			untagged++
+		case ok[l]:
+			return Check{Name: "language", Level: Pass, Reason: LangName(l) + " audio"}, true
+		case !containsStr(found, LangName(l)):
+			found = append(found, LangName(l))
+		}
+	}
+	// An untagged track is usually the original audio and proves nothing
+	// either way; the audio check already counts it. Warning on it would
+	// flag most single-track files.
+	if len(ok) == 0 || len(found) == 0 || untagged > 0 {
+		return Check{}, false
+	}
+	return Check{Name: "language", Level: Fail, Reason: fmt.Sprintf("audio is %s, not %s", strings.Join(found, ", "), strings.Join(names, " or "))}, true
+}
+
+// CheckSubtitleLanguage checks that the file has full subtitles (not forced,
+// not empty) in one of the languages the user needs, embedded or as a
+// sidecar. It fails only when that is certain: every track is tagged and no
+// subtitle file in the download is unexplained. Hardsubs may be in a wanted
+// language, so a hardsubbed file without tracks is not judged.
+func CheckSubtitleLanguage(p *Probe, sc Sidecars, hardsubbed bool, want []string) (Check, bool) {
+	ok := map[string]bool{}
+	var names []string
+	for _, w := range want {
+		if l := NormLang(w); l != "" && !ok[l] {
+			ok[l] = true
+			names = append(names, LangName(l))
+		}
+	}
+	if len(ok) == 0 {
+		return Check{}, false
+	}
+	var srcs []subSource
+	for _, s := range p.Kind("subtitle") {
+		srcs = append(srcs, subSource{lang: s.Lang(), forced: s.Is("forced"), empty: s.Frames() == 0})
+	}
+	for _, f := range sc.Matched {
+		srcs = append(srcs, subSource{lang: f.Lang, forced: f.Forced, empty: f.Size == 0, sidecar: path.Base(f.Name)})
+	}
+	unsure := sc.Other > 0
+	var full []subSource
+	for _, s := range srcs {
+		switch {
+		case s.forced || s.empty || orphanIdx(s.sidecar, sc):
+		case s.lang == "":
+			unsure = true
+		case ok[s.lang]:
+			msg := LangName(s.lang) + " subtitles"
+			if s.sidecar != "" {
+				msg += " (sidecar " + s.sidecar + ")"
+			}
+			return Check{Name: "sublanguage", Level: Pass, Reason: msg}, true
+		default:
+			full = append(full, s)
+		}
+	}
+	if unsure || hardsubbed && len(full) == 0 {
+		return Check{}, false
+	}
+	wanted := strings.Join(names, " or ")
+	c := Check{Name: "sublanguage", Level: Fail}
+	switch {
+	case len(full) > 0:
+		c.Reason = "subtitles are " + subLangList(full) + ", not " + wanted
+	case len(srcs) > 0:
+		c.Reason = "no full " + wanted + " subtitles, only forced or empty tracks"
+	default:
+		c.Reason = "no subtitles, " + wanted + " needed"
+	}
+	return c, true
+}
+
+// orphanIdx reports a VobSub index without its .sub, which holds the
+// subtitles themselves.
+func orphanIdx(name string, sc Sidecars) bool {
+	if !strings.EqualFold(path.Ext(name), ".idx") {
+		return false
+	}
+	sub := strings.TrimSuffix(name, path.Ext(name)) + ".sub"
+	for _, f := range sc.Matched {
+		if strings.EqualFold(path.Base(f.Name), sub) && f.Size > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // subSource is one subtitle track, embedded or a sidecar file.
