@@ -1,5 +1,8 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
+import { toast } from "sonner";
+import { api, type Kind, type TitleLanguages } from "@/lib/api";
+import { errText } from "@/lib/actions";
 import { bytes } from "@/lib/format";
 import type { LivePlan } from "@/lib/releases";
 import { Link } from "@/lib/router";
@@ -8,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "./kit";
+import { LanguagePicker } from "./LanguagePicker";
 import { PosterImg } from "./Poster";
 
 /** Head | sticky "get" panel; body below the head. On phones the panel follows the head. */
@@ -97,6 +101,7 @@ export function GetCard({
   wantedCount,
   onChoose,
   chooseLabel = "Pick releases manually",
+  languages,
 }: {
   options: GetOption[];
   value: string;
@@ -109,6 +114,8 @@ export function GetCard({
   wantedCount: number;
   onChoose: () => void;
   chooseLabel?: string;
+  /** The title's language pickers (useTitleLanguages). */
+  languages?: { audio: ReactNode; subtitles: ReactNode };
 }) {
   return (
     <div className="rounded-[2px] bg-card p-4">
@@ -129,6 +136,19 @@ export function GetCard({
         </RadioGroup>
       )}
 
+      {languages && (
+        <div className="mb-3 space-y-2 text-[13px] text-muted-foreground">
+          <div className="flex items-center justify-between gap-3">
+            Audio
+            {languages.audio}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            Subtitles
+            {languages.subtitles}
+          </div>
+        </div>
+      )}
+
       <Button size="lg" className="w-full justify-between" disabled={disabled || busy} onClick={onGet}>
         <span className="flex min-w-0 items-center gap-2 truncate">
           {busy && <Spinner className="size-4" />}
@@ -141,6 +161,34 @@ export function GetCard({
       </Button>
     </div>
   );
+}
+
+/**
+ * The audio and subtitle languages one title is grabbed and verified in. A
+ * change is saved on the server, which scores the next search with it, so
+ * `key` changes with it to start the search over.
+ */
+export function useTitleLanguages(kind: Kind, id: number | undefined, d: TitleLanguages) {
+  const pick = (x: TitleLanguages): TitleLanguages => ({ audioLanguages: x.audioLanguages, customAudio: x.customAudio, subtitleLanguages: x.subtitleLanguages, customSubtitles: x.customSubtitles });
+  const [st, setSt] = useState(() => pick(d));
+  const from = JSON.stringify(pick(d));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setSt(pick(d)), [from]);
+  const save = (which: "audio" | "subtitles") => async (languages: string[] | null) => {
+    if (!id) return;
+    try {
+      setSt(await api.setLanguages(kind, id, which, languages));
+    } catch (e) {
+      toast.error(errText(e));
+    }
+  };
+  return {
+    key: `${(st.audioLanguages ?? []).join(",")}/${(st.subtitleLanguages ?? []).join(",")}`,
+    audio: <LanguagePicker value={st.audioLanguages} onChange={save("audio")} onReset={st.customAudio ? () => save("audio")(null) : undefined} disabled={!id} className="w-40" />,
+    subtitles: (
+      <LanguagePicker value={st.subtitleLanguages} onChange={save("subtitles")} onReset={st.customSubtitles ? () => save("subtitles")(null) : undefined} emptyLabel="None needed" disabled={!id} className="w-40" />
+    ),
+  };
 }
 
 /**

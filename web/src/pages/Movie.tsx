@@ -19,7 +19,7 @@ import { TORRENT_OPTION, useConfirm } from "@/components/Confirm";
 import { FileFacts, ManageMenu } from "@/components/Manage";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
 import { VerdictActions, VerdictChecks } from "@/components/Verdict";
-import { Crumbs, GetCard, TitleHead, TitleLayout, TitleSkeleton, type GetOption } from "@/components/Title";
+import { Crumbs, GetCard, TitleHead, TitleLayout, TitleSkeleton, useTitleLanguages, type GetOption } from "@/components/Title";
 
 export function MoviePage({ id, tmdb }: { id?: number; tmdb?: number }) {
   const { library } = useStore();
@@ -91,7 +91,8 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
   const selKey = selArr.join(",");
 
   const streams = useMemo(() => selArr.map((t) => ({ kind: "movie", tmdb: String(t) })), [selArr]);
-  const search = useSearch(`movie:${d.tmdbId}`, streams);
+  const langs = useTitleLanguages("movie", d.tmdbId, d);
+  const search = useSearch(`movie:${d.tmdbId}|${langs.key}`, streams);
   const relevant = useCallback((r: Release) => r.movieTmdb !== undefined && sel.has(r.movieTmdb), [sel]);
   const plan = useLivePlan(search, relevant, selArr, "movie");
 
@@ -289,6 +290,7 @@ function MovieView({ d, reload }: { d: MovieDetail; reload: () => void }) {
             wantedCount={n}
             onChoose={() => setSheet(true)}
             chooseLabel={n === 1 ? "Pick release manually" : "Pick releases manually"}
+            languages={langs}
           />
         }
         body={

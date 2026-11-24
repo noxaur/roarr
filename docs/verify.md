@@ -15,6 +15,8 @@ download is verified when its first file is imported; the reasons are in
 | duration | The length fits the expected runtime | ffprobe |
 | picture | Frames sampled across the file are real, changing images | ffmpeg |
 | claims | Resolution, codec, HDR, bit depth, audio and subtitles named in the release exist in the file | ffprobe, and ffmpeg to count subtitle cues |
+| language | The audio is in a language the user picked for the title | ffprobe |
+| sublanguage | Full subtitles in a language the user needs are there, embedded or as a sidecar | ffprobe, and ffmpeg to count subtitle cues |
 
 - The payload check runs first and alone because it needs no access to the
   files. An executable is a failure even when roarr cannot see the disk.
@@ -29,6 +31,47 @@ download is verified when its first file is imported; the reasons are in
   flat or identical frames throughout are not.
 - A subtitle claim fails only when the absence is certain: every track is
   tagged and no subtitle file in the download is left unexplained.
+
+- Language: it fails only when every audio track is tagged and none is a
+  picked language. An untagged track is usually the original audio, so it
+  says nothing either way, and the check stays silent; warning on it would
+  flag most single-track files.
+- Subtitle language: forced and empty tracks do not count, since they do
+  not subtitle the whole film. It fails only when every track is tagged and
+  every subtitle file in the download is matched; a hardsubbed file without
+  tracks is not judged, because the burned-in subtitles may be the wanted
+  ones.
+
+## Audio and subtitle languages
+
+A title has two lists: audio languages, any of which will do, and subtitle
+languages, one of which must be there (empty needs none). The defaults are
+`Prefs.Languages` and `Prefs.SubtitleLanguages`. A title's own pick lives
+in `languages.json`, a show by TVDB id and a movie by TMDB id, the ids its
+page, the *arr queue and a native job all know. Each list is picked or reset
+on its own, so `null` keeps the default and `[]` is a pick. The same lists
+reject releases whose names tag only other languages before a grab and fail
+the file after it, so the replacement search already skips what failed. One
+set of lists for both was chosen over a separate verify setting: a language
+you would reject in a file is one you would skip in a name.
+
+The two lists stay independent. Making subtitles needed only when the audio
+is not in a picked language (anime in Japanese with English subtitles) was
+rejected for now: it is one more rule to explain, and picking Japanese audio
+plus English subtitles for that show already gets it.
+
+A per-title pick lives in its own file rather than in settings, because the
+Admin page saves the whole settings object and would overwrite a pick made
+on a title page while Admin was open.
+
+## A failed download is replaced at once
+
+A `fail` blocklists the release, removes the download and anything it
+imported, and grabs the next best, with no one asked. The switch that made
+this optional (`VERIFY_AUTO_REGRAB`) is gone: a fake or a download in the
+wrong language is never what was asked for, and waiting for a person only
+delays the right file. A recheck someone starts by hand does not re-grab;
+they decide what to do with its verdict.
 
 ## A check that could not run is not a pass
 

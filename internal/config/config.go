@@ -152,8 +152,6 @@ type Verify struct {
 	// Enabled turns the checks on or off; unset means on when ffprobe is
 	// installed.
 	Enabled *bool `json:"enabled,omitempty"`
-	// AutoRegrab blocklists a release that fails and grabs the next best.
-	AutoRegrab bool `json:"autoRegrab"`
 	// PathMap rewrites download-client paths to paths roarr can read,
 	// "client=roarr" pairs separated by commas:
 	// "/downloads=/data/downloads,D:\\Torrents=/torrents".
@@ -218,7 +216,6 @@ var envSpec = []struct {
 			s.Verify.Enabled = &on
 		}
 	}},
-	{"VERIFY_AUTO_REGRAB", func(s *Settings, v string) { s.Verify.AutoRegrab = truthy(v) }},
 	{"VERIFY_PATH_MAP", func(s *Settings, v string) { s.Verify.PathMap = v }},
 	{"IMPORT_MODE", func(s *Settings, v string) { s.Import.Mode = strings.ToLower(v) }},
 	{"TV_ROOT", func(s *Settings, v string) { s.Import.TVRoot = v }},
@@ -333,6 +330,9 @@ func (s *Store) recompute() {
 	}
 	if cur.Import.Category == "" {
 		cur.Import.Category = "roarr"
+	}
+	if cur.Prefs.Language != "" {
+		cur.Prefs.Languages, cur.Prefs.Language = []string{cur.Prefs.Language}, ""
 	}
 	if len(cur.Prefs.Resolutions) == 0 {
 		cur.Prefs.Resolutions = release.DefaultPrefs().Resolutions

@@ -68,7 +68,16 @@ export interface SeasonDetail {
   episodes: EpisodeDetail[];
 }
 
-export interface SeriesDetail extends LibraryItem {
+/** The languages a title is grabbed and verified in (app.Languages). */
+export interface TitleLanguages {
+  audioLanguages: string[] | null;
+  /** The audio languages were picked for this title, not taken from the default. */
+  customAudio?: boolean;
+  subtitleLanguages: string[] | null;
+  customSubtitles?: boolean;
+}
+
+export interface SeriesDetail extends LibraryItem, TitleLanguages {
   inLibrary: boolean;
   overview?: string;
   fanart?: string;
@@ -92,7 +101,7 @@ export interface CollectionMovie {
   hasFile: boolean;
 }
 
-export interface MovieDetail extends LibraryItem {
+export interface MovieDetail extends LibraryItem, TitleLanguages {
   inLibrary: boolean;
   hasFile: boolean;
   queued?: boolean;
@@ -299,7 +308,10 @@ export interface Prefs {
   allowHdr: boolean;
   maxGbPerHour: number;
   minSeeders: number;
-  language: string;
+  /** Audio languages the user understands; empty allows any. */
+  languages: string[] | null;
+  /** Subtitle languages the user needs; empty needs none. */
+  subtitleLanguages: string[] | null;
   preferDualAudio: boolean;
   preferredGroups: string[] | null;
   blockedTerms: string[] | null;
@@ -365,7 +377,6 @@ export interface ScheduleWindow {
 export interface VerifySettings {
   /** Unset (absent or null) means on when ffprobe is installed. */
   enabled?: boolean | null;
-  autoRegrab: boolean;
   pathMap?: string;
 }
 
@@ -433,7 +444,6 @@ export interface VerifyList {
   enabled: boolean;
   items: VerifyRecord[];
   tools?: { ffprobe: string; ffmpeg: string };
-  autoRegrab?: boolean;
 }
 
 export type TranscodeState = "queued" | "running" | "done" | "skipped" | "failed";
@@ -577,6 +587,8 @@ export interface AppStatus {
   library: LibraryKeepers;
   /** On when the setting is on or roarr runs the library. */
   seerrAutoFetch: boolean;
+  /** Every audio language roarr can tell apart, by name. */
+  languages: string[];
 }
 
 export interface AutoResult {
@@ -653,6 +665,9 @@ export const api = {
   }) => call<GrabResult>("POST", "/api/grab", body),
   auto: (body: { kind: Kind; seriesId?: number; tvdbId?: number; tmdbId?: number; episodeIds?: number[]; seasons?: number[]; movies?: number[] }) =>
     call<AutoResult>("POST", "/api/auto", body),
+  /** Picks the audio or subtitle languages of a show (TVDB id) or movie (TMDB id); null goes back to the default. */
+  setLanguages: (kind: Kind, id: number, which: "audio" | "subtitles", languages: string[] | null) =>
+    call<TitleLanguages>("PUT", `/api/languages/${kind}/${id}/${which}`, { languages }),
   activity: () => call<{ items: ActivityItem[]; errors: Record<string, string> }>("GET", "/api/activity"),
   removeActivity: (id: string, blocklist: boolean) =>
     call<{ ok: boolean }>("DELETE", `/api/activity/${encodeURIComponent(id)}${blocklist ? "?blocklist=1" : ""}`),

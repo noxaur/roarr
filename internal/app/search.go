@@ -151,16 +151,20 @@ func hasAired(s SeasonDetail) bool {
 
 // annotator scores raw results for one target.
 type annotator struct {
-	t       Target
-	show    release.Show
-	prefs   release.Prefs
-	runtime float64 // minutes per episode
-	movies  map[int]*MovieDetail
+	t          Target
+	show       release.Show
+	prefs      release.Prefs
+	runtime    float64 // minutes per episode
+	movies     map[int]*MovieDetail
+	movieLangs map[int]Languages // per movie (TMDB id)
 }
 
-func newAnnotator(t Target, prefs release.Prefs) *annotator {
-	a := &annotator{t: t, prefs: prefs, movies: map[int]*MovieDetail{}}
+// newAnnotator scores with prefs, and with the languages langs returns for
+// each title (App.Languages).
+func newAnnotator(t Target, prefs release.Prefs, langs func(kind string, id int) Languages) *annotator {
+	a := &annotator{t: t, prefs: prefs, movies: map[int]*MovieDetail{}, movieLangs: map[int]Languages{}}
 	if t.Series != nil {
+		a.prefs = langs("tv", t.Series.TvdbID).apply(a.prefs)
 		a.show = showForMatching(t.Series)
 		a.runtime = float64(t.Series.Runtime)
 		if a.runtime == 0 {
@@ -172,6 +176,7 @@ func newAnnotator(t Target, prefs release.Prefs) *annotator {
 	}
 	for _, m := range t.Movies {
 		a.movies[m.TmdbID] = m
+		a.movieLangs[m.TmdbID] = langs("movie", m.TmdbID)
 	}
 	return a
 }
@@ -219,7 +224,11 @@ func (an *annotator) annotate(r arr.SearchResult, movie *MovieDetail) Release {
 		if rt == 0 {
 			rt = 115
 		}
-		v := release.Score(cand, an.prefs, rt)
+		p := an.prefs
+		if l, ok := an.movieLangs[movie.TmdbID]; ok {
+			p = l.apply(p)
+		}
+		v := release.Score(cand, p, rt)
 		rel.Score, rel.Rejected, rel.Reasons, rel.Notes = v.Score, v.Rejected, v.Reasons, v.Notes
 		if !rel.Match {
 			rel.Rejected = true
@@ -342,7 +351,7 @@ func (a *App) Search(ctx context.Context, t Target, sc Scope, emit func(SearchEv
 	if c.Search == nil {
 		return nil, fmt.Errorf("prowlarr %w", ErrNotConfigured)
 	}
-	an := newAnnotator(t, a.Settings.Get().Prefs)
+	an := newAnnotator(t, a.Settings.Get().Prefs, a.Languages)
 	sess := newSession()
 	start := time.Now()
 	var emitMu sync.Mutex

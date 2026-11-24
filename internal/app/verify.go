@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/noxaur/roarr/internal/arr"
-	"github.com/noxaur/roarr/internal/config"
 	"github.com/noxaur/roarr/internal/httpx"
 	"github.com/noxaur/roarr/internal/importer"
 	"github.com/noxaur/roarr/internal/qbit"
@@ -29,9 +28,9 @@ import (
 // files are on disk, then checked with ffprobe/ffmpeg (internal/verify). A
 // pack is judged by its first episode as soon as that file is complete, so a
 // fake is caught long before the whole pack has downloaded. A release that
-// fails is hidden from roarr's picks; it can be re-grabbed, automatically
-// when Verify.AutoRegrab is on. A native download is judged by beforeImport
-// instead, on the first of its files to reach the importer.
+// fails is thrown away, blocklisted and re-grabbed at once. A native
+// download is judged by beforeImport instead, on the first of its files to
+// reach the importer, and the native backend replaces a failed one.
 
 // VerifyRecord is one download followed by the verifier.
 type VerifyRecord struct {
@@ -40,7 +39,8 @@ type VerifyRecord struct {
 	Kind       string          `json:"kind"`   // tv | movie
 	SeriesID   int             `json:"seriesId,omitempty"`
 	MovieID    int             `json:"movieId,omitempty"`
-	TmdbID     int             `json:"tmdbId,omitempty"` // native imports, which have no *arr id
+	TvdbID     int             `json:"tvdbId,omitempty"`
+	TmdbID     int             `json:"tmdbId,omitempty"` // movies, and native imports, which have no *arr id
 	EpisodeIDs []int           `json:"episodeIds,omitempty"`
 	Title      string          `json:"title"`
 	Release    string          `json:"release"`
@@ -67,7 +67,7 @@ func (r VerifyRecord) Blocked() bool { return r.Rejected || r.Failed() }
 // VerifyRegrab records a replacement grab.
 type VerifyRegrab struct {
 	At      time.Time   `json:"at"`
-	Auto    bool        `json:"auto"` // started by AutoRegrab, not a person
+	Auto    bool        `json:"auto"` // started by a failing verdict, not a person
 	Message string      `json:"message"`
 	Note    string      `json:"note,omitempty"` // which library files were deleted or kept
 	Error   string      `json:"error,omitempty"`
@@ -341,12 +341,12 @@ func (v *Verification) learn(source string, q []arr.QueueRecord) {
 			if source == "sonarr" {
 				r.Kind, r.SeriesID = "tv", it.SeriesID
 				if it.Series != nil {
-					r.Title = it.Series.Title
+					r.Title, r.TvdbID = it.Series.Title, it.Series.TvdbID
 				}
 			} else {
 				r.Kind, r.MovieID = "movie", it.MovieID
 				if it.Movie != nil {
-					r.Title = it.Movie.Title
+					r.Title, r.TmdbID = it.Movie.Title, it.Movie.TmdbID
 				}
 			}
 			v.recs[hash] = r
@@ -450,7 +450,8 @@ func (v *Verification) run(ctx context.Context, hash string, files []verify.File
 	}
 	v.update(hash, func(rec *VerifyRecord) { rec.State = "checking" })
 	vf := &verify.Verifier{Tools: v.tools, Run: v.runner}
-	vd := vf.Verify(ctx, verify.Target{Release: r.Release, Kind: r.Kind, RuntimeMin: v.runtime(ctx, r), Files: files})
+	langs := v.languages(r)
+	vd := vf.Verify(ctx, verify.Target{Release: r.Release, Kind: r.Kind, RuntimeMin: v.runtime(ctx, r), Languages: langs.AudioLanguages, Subtitles: langs.SubtitleLanguages, Files: files})
 	if ctx.Err() != nil {
 		v.update(hash, func(rec *VerifyRecord) { rec.State = "pending" })
 		return nil
@@ -466,7 +467,7 @@ func (v *Verification) run(ctx context.Context, hash string, files []verify.File
 	default:
 		slog.Info("media verified", attrs...)
 	}
-	if auto && vd.Level == verify.Fail && v.app.Settings.Get().Verify.AutoRegrab {
+	if auto && vd.Level == verify.Fail {
 		go func() {
 			gctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
@@ -490,7 +491,7 @@ func (v *Verification) beforeImport(ctx context.Context, c importer.Candidate) e
 	v.mu.Lock()
 	r, ok := v.recs[hash]
 	if !ok {
-		r = &VerifyRecord{Hash: hash, Source: "roarr", Kind: c.Title.Kind, TmdbID: c.Title.TmdbID, Title: c.Title.Title, Release: c.Release, Added: time.Now(), State: "pending"}
+		r = &VerifyRecord{Hash: hash, Source: "roarr", Kind: c.Title.Kind, TmdbID: c.Title.TmdbID, TvdbID: c.Title.TvdbID, Title: c.Title.Title, Release: c.Release, Added: time.Now(), State: "pending"}
 		v.recs[hash] = r
 	}
 	judged := r.Verdict != nil
@@ -511,6 +512,15 @@ func (v *Verification) beforeImport(ctx context.Context, c importer.Candidate) e
 		return importer.BadRelease("failed verification: " + r.Verdict.Summary)
 	}
 	return nil
+}
+
+// languages are the languages the download must have.
+func (v *Verification) languages(r VerifyRecord) Languages {
+	id := r.TmdbID
+	if r.Kind == "tv" {
+		id = r.TvdbID
+	}
+	return v.app.Languages(r.Kind, id)
 }
 
 // runtime is the expected minutes per episode or for the movie.
@@ -924,6 +934,3 @@ func walkFiles(root string) []verify.File {
 	})
 	return out
 }
-
-// verifySettings is the effective configuration, for the API.
-func (v *Verification) Settings() config.Verify { return v.app.Settings.Get().Verify }

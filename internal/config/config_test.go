@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -66,20 +68,37 @@ func TestTranscodeScheduleCleaned(t *testing.T) {
 
 func TestVerifyEnv(t *testing.T) {
 	t.Setenv("VERIFY_MEDIA", "auto")
-	t.Setenv("VERIFY_AUTO_REGRAB", "true")
 	t.Setenv("VERIFY_PATH_MAP", "/downloads=/data")
 	s, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	v := s.Get().Verify
-	if v.Enabled != nil || !v.AutoRegrab || v.PathMap != "/downloads=/data" {
+	if v.Enabled != nil || v.PathMap != "/downloads=/data" {
 		t.Fatalf("auto: %+v", v)
 	}
 	t.Setenv("VERIFY_MEDIA", "false")
 	s, _ = Open(t.TempDir())
 	if v := s.Get().Verify; v.Enabled == nil || *v.Enabled {
 		t.Fatalf("off: %+v", v)
+	}
+}
+
+func TestLegacyLanguage(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"prefs":{"language":"German"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := s.Get().Prefs; !reflect.DeepEqual(p.Languages, []string{"German"}) || p.Language != "" {
+		t.Fatalf("languages = %q, language = %q", p.Languages, p.Language)
+	}
+	s, _ = Open(t.TempDir())
+	if p := s.Get().Prefs; !reflect.DeepEqual(p.Languages, []string{"English"}) {
+		t.Fatalf("default languages = %q", p.Languages)
 	}
 }
 

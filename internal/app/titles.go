@@ -89,6 +89,7 @@ type SeriesDetail struct {
 	Seasons   []SeasonDetail `json:"seasons"`
 	Path      string         `json:"path,omitempty"`
 	ProfileID int            `json:"qualityProfileId,omitempty"`
+	Languages
 	// Synthetic is true when episodes come from TMDB counts rather than
 	// Sonarr (title not in the library yet). Episode IDs are then negative.
 	Synthetic bool `json:"synthetic,omitempty"`
@@ -111,6 +112,7 @@ type MovieDetail struct {
 	File       *FileInfo       `json:"file,omitempty"`
 	Path       string          `json:"path,omitempty"`
 	ProfileID  int             `json:"qualityProfileId,omitempty"`
+	Languages
 	// queueErr is set when the queue could not be loaded: Queued is then
 	// unknown, not false.
 	queueErr error

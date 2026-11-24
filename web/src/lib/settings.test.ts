@@ -4,17 +4,17 @@ import { badPathPairs, countChanges, setVerifyMode, verifyMode } from "./setting
 
 describe("verify mode", () => {
   it("reads the tri-state", () => {
-    expect(verifyMode({ autoRegrab: false })).toBe("auto");
-    expect(verifyMode({ autoRegrab: false, enabled: null })).toBe("auto");
-    expect(verifyMode({ autoRegrab: false, enabled: true })).toBe("on");
-    expect(verifyMode({ autoRegrab: false, enabled: false })).toBe("off");
+    expect(verifyMode({})).toBe("auto");
+    expect(verifyMode({ enabled: null })).toBe("auto");
+    expect(verifyMode({ enabled: true })).toBe("on");
+    expect(verifyMode({ enabled: false })).toBe("off");
   });
   it("auto drops the key so the server sees it unset, and keeps the other fields", () => {
-    const v: VerifySettings = { enabled: false, autoRegrab: true, pathMap: "/a=/b" };
+    const v: VerifySettings = { enabled: false, pathMap: "/a=/b" };
     setVerifyMode(v, "auto");
-    expect(JSON.parse(JSON.stringify(v))).toEqual({ autoRegrab: true, pathMap: "/a=/b" });
+    expect(JSON.parse(JSON.stringify(v))).toEqual({ pathMap: "/a=/b" });
     setVerifyMode(v, "off");
-    expect(v).toEqual({ autoRegrab: true, pathMap: "/a=/b", enabled: false });
+    expect(v).toEqual({ pathMap: "/a=/b", enabled: false });
   });
 });
 
@@ -31,8 +31,8 @@ describe("badPathPairs", () => {
 
 describe("countChanges", () => {
   it("counts leaves, including a key going from unset to false", () => {
-    const a = { verify: { autoRegrab: false }, import: { mode: "arr" } };
-    const b = { verify: { autoRegrab: false, enabled: false }, import: { mode: "native" } };
+    const a = { verify: {}, import: { mode: "arr" } };
+    const b = { verify: { enabled: false }, import: { mode: "native" } };
     expect(countChanges(a, b)).toBe(2);
     expect(countChanges(a, structuredClone(a))).toBe(0);
   });

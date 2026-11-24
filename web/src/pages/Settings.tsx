@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SectionHead, Spinner } from "@/components/kit";
 import { Field, LockedInput, Num, Segmented, Sub, Toggle } from "@/components/AdminFields";
+import { LanguagePicker } from "@/components/LanguagePicker";
 import { ChecksTab, ImportTab, TranscodeTab } from "./AdminMedia";
 
 type ServiceKey = "prowlarr" | "sonarr" | "radarr" | "seerr" | "jellyfin" | "qbittorrent";
@@ -178,8 +179,11 @@ export function SettingsPage() {
           <Field label="File size" hint={SIZES.find(([k]) => k === (p.size || "balanced"))?.[2]}>
             <Segmented label="File size" value={p.size || "balanced"} options={SIZES.map(([k, name]) => [k, name] as const)} onChange={(k) => update((x) => (x.prefs.size = k))} />
           </Field>
-          <Field label="Audio language">
-            <Input value={p.language} onChange={(e) => update((x) => (x.prefs.language = e.target.value))} placeholder="English" className="max-w-60" />
+          <Field label="Audio languages" hint="Releases tagged with only other languages are skipped, and a download whose audio is all in other languages is thrown away and re-grabbed. Each title can pick its own next to Get.">
+            <LanguagePicker value={p.languages} onChange={(v) => update((x) => (x.prefs.languages = v))} className="w-60" />
+          </Field>
+          <Field label="Subtitle languages" hint="Leave empty if you need none. Otherwise releases tagged with only other subtitles are skipped, and a download without full subtitles in one of them is thrown away and re-grabbed.">
+            <LanguagePicker value={p.subtitleLanguages} onChange={(v) => update((x) => (x.prefs.subtitleLanguages = v))} emptyLabel="None needed" className="w-60" />
           </Field>
           <Field label="Max size" hint="Gigabytes per hour of video. 0 means no limit.">
             <Num min={0} step={0.5} unit="GB / hour" value={p.maxGbPerHour} onChange={(v) => update((x) => (x.prefs.maxGbPerHour = v))} />

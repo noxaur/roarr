@@ -45,7 +45,7 @@ func TestBuildRequestPrioritisesScope(t *testing.T) {
 
 func TestAnnotateCoverageAndWrongShow(t *testing.T) {
 	d := testShow()
-	an := newAnnotator(Target{Kind: "tv", Series: d}, release.DefaultPrefs())
+	an := newAnnotator(Target{Kind: "tv", Series: d}, release.DefaultPrefs(), noLanguages)
 	seeders := 50
 	pack := an.annotate(arr.SearchResult{Title: "The.Expanse.S02.1080p.WEB-DL.DDP5.1.H.264-NTb", Size: 30e9, Seeders: &seeders, PublishDate: time.Now()}, nil)
 	if pack.Kind != "season" || len(pack.Covers) != 10 || pack.Covers[0] != 11 || pack.Rejected {
@@ -61,7 +61,7 @@ func TestAnnotateCoverageAndWrongShow(t *testing.T) {
 // (Anime Tosho). Sonarr refuses a pushed magnetUrl that is not a magnet, so
 // only real magnets stay magnets.
 func TestAnnotateKeepsOnlyRealMagnets(t *testing.T) {
-	an := newAnnotator(Target{Kind: "tv", Series: testShow()}, release.DefaultPrefs())
+	an := newAnnotator(Target{Kind: "tv", Series: testShow()}, release.DefaultPrefs(), noLanguages)
 	proxy := "http://prowlarr:9696/20/download?apikey=k&link=x"
 	magnet := "magnet:?xt=urn:btih:a11a9843ea05296de1978e9804f07c9e4e648c97"
 	for name, tc := range map[string]struct{ dl, magnet, wantDL, wantMagnet string }{
@@ -82,4 +82,8 @@ func TestReleaseKeyMergesCrossPosts(t *testing.T) {
 	if releaseKey(a) != releaseKey(b) {
 		t.Fatalf("%s != %s", releaseKey(a), releaseKey(b))
 	}
+}
+
+func noLanguages(string, int) Languages {
+	return Languages{AudioLanguages: release.DefaultPrefs().Languages}
 }

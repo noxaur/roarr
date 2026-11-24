@@ -18,7 +18,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	// Environment values override the file; keep them out of the comparison.
 	for _, k := range []string{"SONARR_URL", "SONARR_API_KEY", "QBIT_URL", "QBIT_USERNAME", "QBIT_PASSWORD", "AUTH_MODE", "AUTH_PASSWORD",
 		"SEERR_AUTO_FETCH", "TRANSCODE", "TRANSCODE_CONCURRENCY", "TRANSCODE_NICE", "TRANSCODE_CRF", "TRANSCODE_PRESET", "TRANSCODE_FILM_GRAIN",
-		"TRANSCODE_MIN_SAVINGS", "TRANSCODE_PATH_MAP", "VERIFY_MEDIA", "VERIFY_AUTO_REGRAB", "VERIFY_PATH_MAP", "IMPORT_MODE", "TV_ROOT",
+		"TRANSCODE_MIN_SAVINGS", "TRANSCODE_PATH_MAP", "VERIFY_MEDIA", "VERIFY_PATH_MAP", "IMPORT_MODE", "TV_ROOT",
 		"MOVIES_ROOT", "IMPORT_TRANSFER", "QBIT_PATH_MAP", "QBIT_CATEGORY", "QBIT_SAVE_PATH"} {
 		t.Setenv(k, "")
 	}
@@ -32,9 +32,10 @@ func TestSettingsRoundTrip(t *testing.T) {
 		s.QBit = config.Service{URL: "http://qbit:8080", Username: "admin", Password: "qbit-pass"}
 		s.AuthMode, s.AuthPassword = "password", "secret"
 		s.Behaviour.SeerrAutoFetch = true
+		s.Prefs.Languages = []string{"English", "Japanese"}
 		s.Transcode = config.Transcode{Enabled: true, Concurrency: 3, Nice: 5, CRF: 28, Preset: 8, FilmGrain: 12, MinSavings: 20, PathMap: "/tv=/media/tv",
 			Schedule: []config.Window{{Days: []int{1, 2, 3, 4, 5}, From: "22:00", To: "07:00"}, {From: "00:00", To: "24:00"}}}
-		s.Verify = config.Verify{Enabled: &off, AutoRegrab: true, PathMap: "/downloads=/data/downloads"}
+		s.Verify = config.Verify{Enabled: &off, PathMap: "/downloads=/data/downloads"}
 		s.Import = config.Import{Mode: "native", TVRoot: "/media/tv", MovieRoot: "/media/movies", Transfer: "copy", PathMap: "/dl=/data/dl", Category: "films", SavePath: "/dl/roarr"}
 	})
 	if err != nil {
@@ -69,7 +70,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	_ = json.Unmarshal(get.Body.Bytes(), &got)
 	put = httptest.NewRecorder()
 	s.putSettings(put, httptest.NewRequest("PUT", "/api/settings", bytes.NewReader(got.Settings)))
-	if v := store.Get().Verify; v.Enabled != nil || !v.AutoRegrab {
+	if v := store.Get().Verify; v.Enabled != nil || v.PathMap == "" {
 		t.Fatalf("verify after auto round trip: %+v", v)
 	}
 }

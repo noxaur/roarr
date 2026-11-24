@@ -18,9 +18,11 @@ import (
 
 // Target is one finished download to verify.
 type Target struct {
-	Release    string // release title as grabbed
-	Kind       string // tv | movie
-	RuntimeMin int    // expected minutes per episode (tv) or for the movie; 0 = unknown
+	Release    string   // release title as grabbed
+	Kind       string   // tv | movie
+	RuntimeMin int      // expected minutes per episode (tv) or for the movie; 0 = unknown
+	Languages  []string // audio languages the user understands; empty = any
+	Subtitles  []string // subtitle languages the user needs; empty = none
 	Files      []File
 }
 
@@ -125,8 +127,19 @@ func (v *Verifier) Verify(ctx context.Context, t Target) (vd Verdict) {
 
 	cl := ParseClaims(t.Release)
 	cl = mergeClaims(cl, ParseClaims(base))
-	if cl.AnySubs && v.Tools.FFmpeg != "" {
-		v.countSubs(ctx, primary.Path, p, cl, dur)
+	if (cl.AnySubs || len(t.Subtitles) > 0) && v.Tools.FFmpeg != "" {
+		// Count the claimed and the needed languages; a vague claim
+		// ("Subs") counts every track.
+		var langs []string
+		if len(cl.Subs) > 0 || !cl.AnySubs {
+			langs = append(langs, cl.Subs...)
+			for _, l := range t.Subtitles {
+				if c := NormLang(l); c != "" && !containsStr(langs, c) {
+					langs = append(langs, c)
+				}
+			}
+		}
+		v.countSubs(ctx, primary.Path, p, langs, dur)
 	}
 	sc := FindSidecars(t.Files, primary, len(videos))
 	for _, f := range sc.Matched {
@@ -141,6 +154,12 @@ func (v *Verifier) Verify(ctx context.Context, t Target) (vd Verdict) {
 		vd.Media.Subtitles = append(vd.Media.Subtitles, desc)
 	}
 	for _, c := range CompareClaims(cl, p, sc) {
+		vd.add(c)
+	}
+	if c, ok := CheckLanguage(p, t.Languages); ok {
+		vd.add(c)
+	}
+	if c, ok := CheckSubtitleLanguage(p, sc, cl.HardSubbed, t.Subtitles); ok {
 		vd.add(c)
 	}
 	vd.finish()
@@ -269,8 +288,8 @@ func (v *Verifier) frame(ctx context.Context, file string, stream int, at float6
 
 // countSubs fills in cue/packet counts for subtitle streams that carry no
 // count in their tags, reading at most SubWindow of the file. Only tracks
-// that matter for the claims are read.
-func (v *Verifier) countSubs(ctx context.Context, file string, p *Probe, cl Claims, dur float64) {
+// in langs, or untagged, are read; empty langs reads every track.
+func (v *Verifier) countSubs(ctx context.Context, file string, p *Probe, langs []string, dur float64) {
 	window := v.subWindow()
 	whole := dur > 0 && window >= dur*0.9
 	counted := 0
@@ -279,7 +298,7 @@ func (v *Verifier) countSubs(ctx context.Context, file string, p *Probe, cl Clai
 		if s.CodecType != "subtitle" || s.Frames() >= 0 || counted >= 8 {
 			continue
 		}
-		if len(cl.Subs) > 0 && s.Lang() != "" && !containsStr(cl.Subs, s.Lang()) {
+		if len(langs) > 0 && s.Lang() != "" && !containsStr(langs, s.Lang()) {
 			continue
 		}
 		counted++

@@ -1,6 +1,9 @@
 package verify
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Languages are compared as ISO 639-2/T codes ("eng", "fra", "deu").
 // Stream tags use 639-2/B ("fre", "ger"), 639-1 ("en") or, rarely, a name;
@@ -62,4 +65,14 @@ func LangName(code string) string {
 		return "untagged"
 	}
 	return code
+}
+
+// LanguageNames lists every language roarr can tell apart, by name, sorted.
+func LanguageNames() []string {
+	out := make([]string, 0, len(langNames))
+	for _, n := range langNames {
+		out = append(out, n)
+	}
+	slices.Sort(out)
+	return out
 }
